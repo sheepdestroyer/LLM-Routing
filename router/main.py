@@ -37,12 +37,17 @@ stats = {
     "total_requests": 0,
     "simple_requests": 0,
     "complex_requests": 0,
+    "cache_hits": 0,
     "last_triage_decision": "None",
     "avg_triage_latency_ms": 0.0,
     "avg_proxy_latency_ms": 0.0,
     "total_triage_time_ms": 0.0,
     "total_proxy_time_ms": 0.0,
 }
+
+# Triage Decision Cache (In-Memory dictionary mapping normalized prompt -> (classification, timestamp))
+triage_cache = {}
+CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 
 app = FastAPI(title="LLM Triage Router")
 
@@ -67,7 +72,20 @@ async def check_http_endpoint(url: str) -> bool:
         return False
 
 async def classify_request(prompt: str) -> tuple[str, float]:
-    """Queries the local fast Qwen instance to classify request complexity."""
+    """Queries the local fast Qwen instance to classify request complexity with TTL caching."""
+    global triage_cache, stats
+    
+    # Normalize the prompt text for cache mapping
+    normalized_prompt = prompt.strip().lower()
+    
+    # 1. Check in-memory TTL cache
+    if normalized_prompt in triage_cache:
+        cached_decision, cached_time = triage_cache[normalized_prompt]
+        if time.time() - cached_time < CACHE_TTL_SECONDS:
+            logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
+            stats["cache_hits"] += 1
+            return cached_decision, 0.0  # 0.0ms classification latency
+            
     start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -104,10 +122,14 @@ async def classify_request(prompt: str) -> tuple[str, float]:
             
             # Sanitize response
             classification_clean = classification.replace("`", "").replace('"', '').replace("'", "").strip()
+            
+            decision = "agent-complex-core"
             if "agent-simple-core" in classification_clean:
-                return "agent-simple-core", latency
-            else:
-                return "agent-complex-core", latency
+                decision = "agent-simple-core"
+                
+            # Store in cache
+            triage_cache[normalized_prompt] = (decision, time.time())
+            return decision, latency
                 
     except Exception as e:
         latency = (time.time() - start_time) * 1000.0
@@ -431,15 +453,9 @@ async def get_dashboard():
 
             .metrics-grid {{
                 display: grid;
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
                 gap: 20px;
                 margin-bottom: 30px;
-            }}
-
-            @media (max-width: 600px) {{
-                .metrics-grid {{
-                    grid-template-columns: 1fr;
-                }}
             }}
 
             .metric-box {{
@@ -580,6 +596,10 @@ async def get_dashboard():
                     <div class="metric-box">
                         <span class="metric-value">{stats["avg_proxy_latency_ms"]:.1f}ms</span>
                         <span class="metric-label">Avg Gateway proxy latency</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-value" style="color: #34d399;">{stats["cache_hits"]}</span>
+                        <span class="metric-label">Triage Cache Hits</span>
                     </div>
                 </div>
 
