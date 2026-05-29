@@ -65,7 +65,7 @@ async def check_tcp_port(ip: str, port: int) -> bool:
 async def check_http_endpoint(url: str) -> bool:
     """Verifies if an HTTP endpoint is responsive."""
     try:
-        async with httpx.AsyncClient(timeout=0.5) as client:
+        async with httpx.AsyncClient(timeout=3.0) as client:
             r = await client.get(url)
             return r.status_code < 500
     except Exception:
