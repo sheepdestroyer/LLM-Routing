@@ -220,6 +220,17 @@ Self-hosted Langfuse acts as your agentic telemetry server. The LiteLLM Gateway 
   * Host Address: `http://127.0.0.1:3000`
 * **Features**: View hierarchical execution graphs, latency profiles, exact inputs/outputs, cost estimations, and performance benchmarks for simple vs complex prompt splits over time.
 
+### Web Console & Dashboard Directory
+
+For convenient access, the unified stack binds all dashboard controls, status checkers, and tracing endpoints to your host's local loopback interface:
+
+| Web Portal / Service | URL Address | Bound Port | Core Operational Purpose |
+| :--- | :--- | :---: | :--- |
+| **System Control Dashboard** | [http://localhost:5000/dashboard](http://localhost:5000/dashboard) | `5000` | Real-time health-checks, triage stats, cache hits, and navigation shortcuts. |
+| **Langfuse Monitoring UI** | [http://localhost:3000](http://localhost:3000) | `3000` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
+| **LiteLLM Admin Console** | [http://localhost:4000/ui](http://localhost:4000/ui) | `4000` | Gateway fallback configurations, models inventory, and active proxy stats. |
+| **Llama-Server Playground** | [http://localhost:8080](http://localhost:8080) | `8080` | Local llama.cpp prompt sandbox, dynamic model stats, and API endpoint details. |
+
 ---
 
 ## 9. Performance & Triage Optimization Metrics
