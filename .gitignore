@@ -1,0 +1,14 @@
+# Exclude local environment files containing API keys
+.env
+
+# Exclude Podman runtime file generated dynamically at startup
+pod-run.yaml
+
+# Exclude persistent database and cache storages
+postgres-data/
+langfuse-data/
+valkey-data/
+
+# OS-specific clutter
+.DS_Store
+Thumbs.db
