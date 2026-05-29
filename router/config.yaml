@@ -20,7 +20,7 @@ classification_rules:
 backends:
   - name: "agent-simple-core"
     api_base: "http://127.0.0.1:4000/v1"
-    api_key: "gateway-pass"
+    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "agent-complex-core"
     api_base: "http://127.0.0.1:4000/v1"
-    api_key: "gateway-pass"
+    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"

@@ -47,12 +47,22 @@ if [ -z "$ACTIVE_OAUTH" ]; then
     echo "Gemini models may fail. Please ensure you are logged into Antigravity."
 fi
 
-# 3. Generate dynamic deployment definition with secrets injected in memory
+# 3. Generate a random LiteLLM master key for this session
+LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
+
+# 4. Generate dynamic deployment definition with secrets injected in memory
 cp pod.yaml pod-run.yaml
 
 # Use | as delimiter to handle possible special characters in keys/tokens
+sed -i "s|DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER|$LITELLM_MASTER_KEY|g" pod-run.yaml
 sed -i "s|DYNAMIC_GEMINI_TOKEN_PLACEHOLDER|$ACTIVE_OAUTH|g" pod-run.yaml
 sed -i "s|DYNAMIC_OPENROUTER_KEY_PLACEHOLDER|$OPENROUTER_API_KEY|g" pod-run.yaml
+sed -i "s|DYNAMIC_LANGFUSE_PUBLIC_KEY_PLACEHOLDER|$LANGFUSE_PUBLIC_KEY|g" pod-run.yaml
+sed -i "s|DYNAMIC_LANGFUSE_SECRET_KEY_PLACEHOLDER|$LANGFUSE_SECRET_KEY|g" pod-run.yaml
+
+# Also inject the master key into the router's bind-mounted config
+cp router/config.yaml router/config.yaml.tpl
+sed -i "s|DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER|$LITELLM_MASTER_KEY|g" router/config.yaml
 
 echo "🔨 Building custom local triage router image..."
 podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
@@ -64,12 +74,16 @@ podman pod rm agent-router-pod 2>/dev/null || true
 echo "🚀 Deploying rootless triage pod via Podman..."
 podman play kube pod-run.yaml
 
-# 4. Immediately scrub the temporary runtime file containing keys from disk
+# 5. Immediately scrub temporary runtime files containing keys from disk
 rm -f pod-run.yaml
-echo "🧹 Cleaned up temporary deployment manifest from disk."
+sleep 3  # Wait for router container to read bind-mounted config before restoring template
+mv router/config.yaml.tpl router/config.yaml
+echo "🧹 Cleaned up temporary deployment files from disk."
 
 echo "========================================================================"
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
 echo "📍 Entry endpoint  : http://localhost:5000/v1"
-echo "🔑 Authorization API Key : gateway-pass"
+echo "🔑 Gateway API Key : gateway-pass"
+echo "🔐 LiteLLM Admin UI: http://localhost:4000/ui"
+echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
 echo "========================================================================"

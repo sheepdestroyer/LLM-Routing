@@ -18,14 +18,22 @@ spec:
       image: ghcr.io/berriai/litellm:latest
       args: ["--config", "/app/config.yaml", "--port", "4000"]
       env:
+        - name: LITELLM_MASTER_KEY
+          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+        - name: UI_USERNAME
+          value: "admin"
+        - name: UI_PASSWORD
+          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+        - name: DATABASE_URL
+          value: "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres"
         - name: GEMINI_OAUTH_TOKEN
           value: "DYNAMIC_GEMINI_TOKEN_PLACEHOLDER"
         - name: OPENROUTER_API_KEY
           value: "DYNAMIC_OPENROUTER_KEY_PLACEHOLDER"
         - name: LANGFUSE_PUBLIC_KEY
-          value: "pk-lf-gateway-token"
+          value: "DYNAMIC_LANGFUSE_PUBLIC_KEY_PLACEHOLDER"
         - name: LANGFUSE_SECRET_KEY
-          value: "sk-lf-gateway-token"
+          value: "DYNAMIC_LANGFUSE_SECRET_KEY_PLACEHOLDER"
         - name: LANGFUSE_HOST
           value: "http://127.0.0.1:3000"
       volumeMounts:

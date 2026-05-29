@@ -12,3 +12,4 @@ valkey-data/
 # OS-specific clutter
 .DS_Store
 Thumbs.db
+router/config.yaml.tpl

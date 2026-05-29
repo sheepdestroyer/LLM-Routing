@@ -243,7 +243,7 @@ async def get_dashboard():
     # 1. Run live health checks
     triage_router_status = True
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
-    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/health")
+    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
     llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3000")
 
