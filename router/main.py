@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import time
 import socket
 import logging
@@ -136,6 +137,25 @@ async def classify_request(prompt: str) -> tuple[str, float]:
         logger.error(f"Exception during classification: {e}")
         return "agent-complex-core", latency
 
+def get_live_gemini_oauth_token() -> str | None:
+    try:
+        creds_path = "/config/gemini_auth/oauth_creds.json"
+        if os.path.exists(creds_path):
+            with open(creds_path, "r") as f:
+                data = json.load(f)
+                access_token = data.get("access_token")
+                expiry_ms = data.get("expiry_date", 0)
+                # Convert current time to milliseconds
+                current_ms = int(time.time() * 1000)
+                if access_token and current_ms < expiry_ms:
+                    logger.info("🔑 Found valid, unexpired Gemini OAuth token from host!")
+                    return access_token
+                else:
+                    logger.warning("⚠️ Gemini OAuth token on disk is expired or missing.")
+    except Exception as e:
+        logger.error(f"Failed to read live OAuth token: {e}")
+    return None
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     global stats
@@ -171,6 +191,71 @@ async def chat_completions(request: Request):
         stats["simple_requests"] += 1
     else:
         stats["complex_requests"] += 1
+
+    # --- GOOGLE OAUTH DIRECT ROUTE WITH FALLBACK ---
+    oauth_token = get_live_gemini_oauth_token()
+    if oauth_token:
+        google_model = "gemini-2.5-pro" if target_model == "agent-complex-core" else "gemini-2.0-flash"
+        logger.info(f"🔄 Direct Gemini OAuth Route: Mapping '{target_model}' to Google '{google_model}'...")
+        
+        google_body = body.copy()
+        google_body["model"] = google_model
+        
+        google_headers = {
+            "Authorization": f"Bearer {oauth_token}",
+            "Content-Type": "application/json"
+        }
+        google_api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
+        
+        # Test connection first to ensure 200 before streaming/responding
+        test_client = httpx.AsyncClient(timeout=10.0)
+        try:
+            # We perform a lightweight probe check (or try direct completions)
+            # If the user requests stream, we probe with stream=False or just attempt stream immediately
+            logger.info("Attempting direct Google Gemini API call...")
+            
+            if body.get("stream", False):
+                # For streaming, we can perform the request directly
+                client = httpx.AsyncClient(timeout=3600.0)
+                r = await client.post(
+                    f"{google_api_base}/chat/completions",
+                    json=google_body,
+                    headers=google_headers
+                )
+                if r.status_code == 200:
+                    async def google_stream_generator():
+                        try:
+                            async with client.stream(
+                                "POST",
+                                f"{google_api_base}/chat/completions",
+                                json=google_body,
+                                headers=google_headers
+                            ) as response:
+                                async for chunk in response.aiter_bytes():
+                                    yield chunk
+                        except Exception as ex:
+                            logger.error(f"Stream generation error on direct Google call: {ex}")
+                        finally:
+                            await client.aclose()
+                    return StreamingResponse(google_stream_generator(), media_type="text/event-stream")
+                else:
+                    logger.warning(f"Direct Google stream call failed with status {r.status_code}. Falling back to default LiteLLM path.")
+                    await client.aclose()
+            else:
+                client = httpx.AsyncClient(timeout=3600.0)
+                r = await client.post(
+                    f"{google_api_base}/chat/completions",
+                    json=google_body,
+                    headers=google_headers
+                )
+                await client.aclose()
+                if r.status_code == 200:
+                    return r.json()
+                else:
+                    logger.warning(f"Direct Google completion call failed with status {r.status_code}. Falling back to default LiteLLM path.")
+        except Exception as e:
+            logger.error(f"Direct Google call encountered exception: {e}. Falling back to default LiteLLM path.")
+            await test_client.aclose()
 
     # Resolve backend connection parameters
     backend_conf = backends.get(target_model)

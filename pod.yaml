@@ -51,6 +51,8 @@ spec:
         - name: router-config
           mountPath: /config/config.yaml
           subPath: config.yaml
+        - name: gemini-secrets
+          mountPath: /config/gemini_auth
 
     # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
     - name: postgres-db
@@ -112,3 +114,6 @@ spec:
     - name: langfuse-storage
       hostPath:
         path: /home/gpav/Vrac/LAB/AI/LLM-Routing/langfuse-data
+    - name: gemini-secrets
+      hostPath:
+        path: /home/gpav/.gemini
