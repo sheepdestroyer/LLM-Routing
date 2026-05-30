@@ -320,10 +320,11 @@ async def get_llamacpp_metrics() -> dict:
             if r2.status_code == 200:
                 props = r2.json()
                 result["build"] = props.get("build_info", "unknown")
-            # Fetch slots for the loaded model
+            # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
             loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
-            if loaded:
-                r3 = await client.get(f"http://127.0.0.1:8080/slots?model={loaded[0]}")
+            slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
+            if slot_model:
+                r3 = await client.get(f"http://127.0.0.1:8080/slots?model={slot_model}")
                 if r3.status_code == 200:
                     slots_data = r3.json()
                     for s in slots_data:
@@ -427,42 +428,38 @@ async def chat_completions(request: Request):
         }
         google_api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
         
-        test_client = httpx.AsyncClient(timeout=10.0)
         try:
             logger.info("Attempting direct Google Gemini API call...")
             
             if body.get("stream", False):
                 client = httpx.AsyncClient(timeout=3600.0)
-                r = await client.post(
+                req = client.build_request(
+                    "POST",
                     f"{google_api_base}/chat/completions",
                     json=google_body,
                     headers=google_headers
                 )
+                r = await client.send(req, stream=True)
                 if r.status_code == 200:
                     async def google_stream_generator():
                         completion_chars = 0
                         request_tokens = len(json.dumps(google_body)) // 4
                         try:
-                            async with client.stream(
-                                "POST",
-                                f"{google_api_base}/chat/completions",
-                                json=google_body,
-                                headers=google_headers
-                            ) as response:
-                                async for chunk in response.aiter_bytes():
-                                    completion_chars += len(chunk)
-                                    yield chunk
-                            
+                            async for chunk in r.aiter_bytes():
+                                completion_chars += len(chunk)
+                                yield chunk
                             # Log tool metrics
                             latency_ms = (time.time() - start_time) * 1000.0
                             record_tool_usage(active_tool, request_tokens, completion_chars // 4, google_model, latency_ms, route="google_oauth_direct")
                         except Exception as ex:
                             logger.error(f"Stream generation error on direct Google call: {ex}")
                         finally:
+                            await r.aclose()
                             await client.aclose()
                     return StreamingResponse(google_stream_generator(), media_type="text/event-stream")
                 else:
                     logger.warning(f"Direct Google stream call failed with status {r.status_code}. Falling back to default LiteLLM path.")
+                    await r.aclose()
                     await client.aclose()
             else:
                 client = httpx.AsyncClient(timeout=3600.0)
@@ -484,7 +481,6 @@ async def chat_completions(request: Request):
                     logger.warning(f"Direct Google completion call failed with status {r.status_code}. Falling back to default LiteLLM path.")
         except Exception as e:
             logger.error(f"Direct Google call encountered exception: {e}. Falling back to default LiteLLM path.")
-            await test_client.aclose()
 
     # Resolve backend connection parameters
     backend_conf = backends.get(target_model)
