@@ -1,15 +1,20 @@
 model_list:
   # =========================================================================
-  # COMPLEX TIERS: OpenRouter Nemotron (Free) -> Local Qwen MoE (Optimized)
+  # COMPLEX TIERS: OpenRouter Kimi K2.6 (Free) -> Local Qwen MoE (Optimized)
   # =========================================================================
   - model_name: agent-complex-core
     litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      model: openrouter/moonshotai/kimi-k2.6:free
+      api_key: "os.environ/OPENROUTER_API_KEY"
+
+  - model_name: openrouter/*
+    litellm_params:
+      model: openrouter/*
       api_key: "os.environ/OPENROUTER_API_KEY"
 
   - model_name: local-qwen-3.6-complex
     litellm_params:
-      model: openai/qwen-35b-q5kxl
+      model: openai/qwen-35b-q4ks
       api_base: http://127.0.0.1:8080/v1
       api_key: local-token
       request_timeout: 300

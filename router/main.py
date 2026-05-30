@@ -373,6 +373,81 @@ async def get_llamacpp_metrics() -> dict:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
     return result
 
+# In-Memory Cache for OpenRouter Free Model list to prevent slow page renders
+free_model_cache = {
+    "data": None,
+    "last_fetched": 0.0
+}
+FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
+
+AGENTIC_INDEX_SCORES = {
+    "moonshotai/kimi-k2.6:free": 82.5,
+    "nvidia/nemotron-3-super-120b-a12b:free": 78.4,
+    "google/gemma-4-31b-it:free": 75.2,
+    "google/gemma-4-26b-a4b-it:free": 72.8,
+    "deepseek/deepseek-v4-flash:free": 72.1,
+    "poolside/laguna-m.1:free": 68.3,
+    "minimax/minimax-m2.5:free": 66.5,
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 65.0,
+    "poolside/laguna-xs.2:free": 61.2,
+    "liquid/lfm-2.5-1.2b-thinking:free": 59.8,
+    "liquid/lfm-2.5-1.2b-instruct:free": 55.4,
+}
+
+async def get_best_free_model() -> dict:
+    """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
+    global free_model_cache
+    now = time.time()
+    
+    # Check if cache is still valid
+    if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
+        return free_model_cache["data"]
+        
+    fallback_best = {
+        "id": "moonshotai/kimi-k2.6:free",
+        "name": "MoonshotAI: Kimi K2.6 (free)",
+        "score": 82.5,
+        "context_length": 131072,
+        "is_fallback": True
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get("https://openrouter.ai/api/v1/models")
+            if r.status_code == 200:
+                data = r.json().get("data", [])
+                best_model = None
+                max_score = -1.0
+                
+                for m in data:
+                    mid = m.get("id", "")
+                    pricing = m.get("pricing", {})
+                    # Standard pricing is string or float
+                    p_prompt = pricing.get("prompt")
+                    p_comp = pricing.get("completion")
+                    
+                    # Verify if it is free
+                    if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
+                        score = AGENTIC_INDEX_SCORES.get(mid, 50.0) # Default to 50 if unknown free model
+                        if score > max_score:
+                            max_score = score
+                            best_model = {
+                                "id": mid,
+                                "name": m.get("name", mid),
+                                "score": score,
+                                "context_length": m.get("context_length", 0),
+                                "is_fallback": False
+                            }
+                if best_model:
+                    free_model_cache["data"] = best_model
+                    free_model_cache["last_fetched"] = now
+                    logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
+                    return best_model
+    except Exception as e:
+        logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
+        
+    return fallback_best
+
 def get_pie_chart_gradient() -> str:
     """Computes a CSS conic-gradient representing the dynamic token distribution across developer tools."""
     total_tokens = sum(stats["tool_tokens"].values())
@@ -523,73 +598,122 @@ async def chat_completions(request: Request):
     if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
         backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
 
-    # Modify incoming payload to use the triaged model name
-    body["model"] = target_model
+    # Build models cascade
+    cascade = []
+    if target_model == "agent-complex-core":
+        best_free_model = await get_best_free_model()
+        best_free_id = best_free_model.get("id")
+        if best_free_id:
+            cascade.append(f"openrouter/{best_free_id}")
+        
+        # Include Kimi K2.6 as robust fallback if it's not already the first option
+        kimi_model = "openrouter/moonshotai/kimi-k2.6:free"
+        if kimi_model not in cascade:
+            cascade.append(kimi_model)
+            
+        # Local fallback
+        cascade.append("local-qwen-3.6-complex")
+    else:  # agent-simple-core
+        cascade.append("openrouter/google/gemma-4-31b-it:free")
+        cascade.append("local-qwen-3.6-simple")
+
+    logger.info(f"Using models cascade for {target_model}: {cascade}")
 
     # Set up outgoing proxy request
     client = httpx.AsyncClient(timeout=3600.0)
     headers = {"Authorization": f"Bearer {backend_api_key}"}
 
-    # Handle streaming vs non-streaming proxying
+    # Handle streaming vs non-streaming proxying with cascade failover
     if body.get("stream", False):
-        async def stream_generator():
-            proxy_start = time.time()
-            completion_chars = 0
-            request_tokens = len(json.dumps(body)) // 4
+        proxy_start = time.time()
+        for model_to_try in cascade:
             try:
-                async with client.stream(
+                logger.info(f"Attempting cascade model (streaming): {model_to_try}")
+                body_to_send = body.copy()
+                body_to_send["model"] = model_to_try
+                
+                # Inject custom trace name for Langfuse
+                if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
+                    body_to_send["metadata"] = {}
+                body_to_send["metadata"]["trace_name"] = "agent-completion-cascade"
+                
+                req = client.build_request(
                     "POST",
                     f"{backend_api_base}/chat/completions",
-                    json=body,
+                    json=body_to_send,
                     headers=headers
-                ) as r:
-                    if r.status_code != 200:
-                        logger.error(f"Backend streaming failed with status {r.status_code}")
-                        yield f"data: {{\"error\": \"Backend returned status {r.status_code}\"}}\n\n".encode("utf-8")
-                        return
-                    async for chunk in r.aiter_bytes():
-                        completion_chars += len(chunk)
-                        yield chunk
-                
-                # Update proxy metrics on completion
-                proxy_latency = (time.time() - proxy_start) * 1000.0
-                stats["total_proxy_time_ms"] += proxy_latency
-                stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                
-                record_tool_usage(active_tool, request_tokens, completion_chars // 4, target_model, proxy_latency, route="litellm_fallback")
+                )
+                r = await client.send(req, stream=True)
+                if r.status_code == 200:
+                    async def stream_generator():
+                        completion_chars = 0
+                        request_tokens = len(json.dumps(body_to_send)) // 4
+                        try:
+                            async for chunk in r.aiter_bytes():
+                                completion_chars += len(chunk)
+                                yield chunk
+                            # Update proxy metrics on completion
+                            proxy_latency = (time.time() - proxy_start) * 1000.0
+                            stats["total_proxy_time_ms"] += proxy_latency
+                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                            
+                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_to_try, proxy_latency, route="litellm_fallback")
+                        except Exception as ex:
+                            logger.error(f"Stream generation error on model {model_to_try}: {ex}")
+                        finally:
+                            await r.aclose()
+                            await client.aclose()
+                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                else:
+                    logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}.")
+                    await r.aclose()
             except Exception as e:
-                logger.error(f"Streaming connection error: {e}")
-                yield f"data: {{\"error\": \"Proxy streaming exception: {e}\"}}\n\n".encode("utf-8")
-            finally:
-                await client.aclose()
-
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                logger.error(f"Exception during cascade stream attempt for model '{model_to_try}': {e}")
+        
+        await client.aclose()
+        logger.error("All models in the streaming cascade failed.")
+        raise HTTPException(status_code=502, detail="Bad Gateway: All models in the fallback cascade failed.")
     else:
-        try:
-            proxy_start = time.time()
-            response = await client.post(
-                f"{backend_api_base}/chat/completions",
-                json=body,
-                headers=headers
-            )
-            await client.aclose()
-            
-            # Update proxy metrics
-            proxy_latency = (time.time() - proxy_start) * 1000.0
-            stats["total_proxy_time_ms"] += proxy_latency
-            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-            
-            resp_json = response.json()
-            usage = resp_json.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body)) // 4)
-            completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
-            record_tool_usage(active_tool, prompt_tokens, completion_tokens, target_model, proxy_latency, route="litellm_fallback")
-            
-            return resp_json
-        except Exception as e:
-            await client.aclose()
-            logger.error(f"Backend connection error: {e}")
-            raise HTTPException(status_code=502, detail=f"Bad Gateway proxying connection: {e}")
+        proxy_start = time.time()
+        for model_to_try in cascade:
+            try:
+                logger.info(f"Attempting cascade model (non-streaming): {model_to_try}")
+                body_to_send = body.copy()
+                body_to_send["model"] = model_to_try
+                
+                # Inject custom trace name for Langfuse
+                if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
+                    body_to_send["metadata"] = {}
+                body_to_send["metadata"]["trace_name"] = "agent-completion-cascade"
+                
+                response = await client.post(
+                    f"{backend_api_base}/chat/completions",
+                    json=body_to_send,
+                    headers=headers
+                )
+                if response.status_code == 200:
+                    await client.aclose()
+                    
+                    # Update proxy metrics
+                    proxy_latency = (time.time() - proxy_start) * 1000.0
+                    stats["total_proxy_time_ms"] += proxy_latency
+                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                    
+                    resp_json = response.json()
+                    usage = resp_json.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
+                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_to_try, proxy_latency, route="litellm_fallback")
+                    
+                    return resp_json
+                else:
+                    logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}.")
+            except Exception as e:
+                logger.error(f"Exception during cascade attempt for model '{model_to_try}': {e}")
+        
+        await client.aclose()
+        logger.error("All models in the non-streaming cascade failed.")
+        raise HTTPException(status_code=502, detail="Bad Gateway: All models in the fallback cascade failed.")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -598,6 +722,9 @@ async def get_dashboard():
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
     llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3000")
+
+    # 1b. Fetch top free model from OpenRouter
+    best_free_model = await get_best_free_model()
 
     # 2. Query Goose Sessions SQLite DB
     goose_sessions = get_goose_sessions()
@@ -1209,8 +1336,8 @@ async def get_dashboard():
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
                         <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
                         <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 14px;">
-                            <span>Simple Splits (Lite / Gemma)</span>
-                            <span>Complex Splits (Gemini / Qwen)</span>
+                            <span>Simple Core Splits (Lite / Gemma)</span>
+                            <span>Complex Core Splits (Gemini / Qwen)</span>
                         </div>
                         <div class="ratio-container">
                             <div class="ratio-simple" style="width: {simple_ratio}%"></div>
@@ -1311,6 +1438,27 @@ async def get_dashboard():
 
             <!-- RIGHT COLUMN: INFRASTRUCTURE & ACTIVE GOOSE SESSIONS -->
             <div style="display: flex; flex-direction: column;">
+                <!-- Frontier Free Model widget -->
+                <div class="glass-card" style="background: rgba(16, 185, 129, 0.03); border-color: rgba(16, 185, 129, 0.15); margin-bottom: 30px;">
+                    <div class="section-title" style="margin-bottom: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.15); padding-bottom: 12px;">
+                        <span>{src_badge('INTELLECT', '#34d399')} Frontier Free Model</span>
+                        <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">agentic index score</span>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 12px; padding: 16px 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: 800; font-size: 16px; color: #fff;">{best_free_model['name']}</span>
+                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {best_free_model['score']:.1f}</span>
+                        </div>
+                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
+                            ID: {best_free_model['id']}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
+                            <span>📐 context {best_free_model['context_length']:,} tok</span>
+                            <span style="color: #34d399; font-weight: bold;">{ "LIVE" if not best_free_model.get('is_fallback') else "FALLBACK" }</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Infrastructure nodes card -->
                 <div class="glass-card status-container">
                     <div class="section-title" style="margin-bottom: 10px;">{src_badge('ROUTER', '#818cf8')} Infrastructure Nodes</div>
