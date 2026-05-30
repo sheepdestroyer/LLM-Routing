@@ -1,26 +1,8 @@
 model_list:
   # =========================================================================
-  # COMPLEX TIERS: Gemini 3.5 (High/Med/Low) -> Nemotron -> Local Qwen MTP
+  # COMPLEX TIERS: OpenRouter Nemotron (Free) -> Local Qwen MoE (Optimized)
   # =========================================================================
   - model_name: agent-complex-core
-    litellm_params:
-      model: gemini/gemini-3.5-flash
-      api_key: "os.environ/GEMINI_OAUTH_TOKEN"
-      reasoning_effort: high
-
-  - model_name: gemini-3.5-medium
-    litellm_params:
-      model: gemini/gemini-3.5-flash
-      api_key: "os.environ/GEMINI_OAUTH_TOKEN"
-      reasoning_effort: medium
-
-  - model_name: gemini-3.5-low
-    litellm_params:
-      model: gemini/gemini-3.5-flash
-      api_key: "os.environ/GEMINI_OAUTH_TOKEN"
-      reasoning_effort: minimal
-
-  - model_name: openrouter-nemotron
     litellm_params:
       model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
       api_key: "os.environ/OPENROUTER_API_KEY"
@@ -33,14 +15,9 @@ model_list:
       request_timeout: 300
 
   # =========================================================================
-  # SIMPLE TIERS: Gemini 3.1 Lite -> OpenRouter Gemma MoE -> Local Qwen Fast
+  # SIMPLE TIERS: OpenRouter Gemma 4 -> Local Qwen Fast (Optimized)
   # =========================================================================
   - model_name: agent-simple-core
-    litellm_params:
-      model: gemini/gemini-3.1-flash-lite-preview
-      api_key: "os.environ/GEMINI_OAUTH_TOKEN"
-
-  - model_name: openrouter-gemma4
     litellm_params:
       model: openrouter/google/gemma-4-26b-a4b-it:free
       api_key: "os.environ/OPENROUTER_API_KEY"
@@ -60,15 +37,15 @@ router_settings:
   cooldown_time: 45
   allowed_fails: 1
   retry_after_cooldown: true
+  fallbacks:
+    - agent-complex-core: ["local-qwen-3.6-complex"]
+    - agent-simple-core: ["local-qwen-3.6-simple"]
 
 litellm_settings:
   callbacks: ["langfuse"]
-  drop_params: true  # Strip reasoning_effort when falling back to models that don't support it
+  drop_params: true
   caching: true
   caching_backend: "redis"
-  fallbacks:
-    - agent-complex-core: ["gemini-3.5-medium", "gemini-3.5-low", "openrouter-nemotron", "local-qwen-3.6-complex"]
-    - agent-simple-core: ["openrouter-gemma4", "local-qwen-3.6-simple"]
 
 # Shared local Valkey cache connection profile
 redis_settings:

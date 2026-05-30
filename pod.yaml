@@ -44,6 +44,9 @@ spec:
     # --- CORE TIER 3: CUSTOM LLMROUTER ---
     - name: llm-triage-router
       image: localhost/llm-triage-router:latest
+      env:
+        - name: LITELLM_MASTER_KEY
+          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
       volumeMounts:
         - name: router-config
           mountPath: /config/config.yaml

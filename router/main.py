@@ -180,6 +180,8 @@ async def chat_completions(request: Request):
 
     backend_api_base = backend_conf["api_base"]
     backend_api_key = backend_conf["api_key"]
+    if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
+        backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
 
     # Modify incoming payload to use the triaged model name
     body["model"] = target_model
