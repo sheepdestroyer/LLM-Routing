@@ -195,7 +195,7 @@ async def chat_completions(request: Request):
     # --- GOOGLE OAUTH DIRECT ROUTE WITH FALLBACK ---
     oauth_token = get_live_gemini_oauth_token()
     if oauth_token:
-        google_model = "gemini-2.5-pro" if target_model == "agent-complex-core" else "gemini-2.0-flash"
+        google_model = "gemini-3.5-flash" if target_model == "agent-complex-core" else "gemini-3.1-flash-lite"
         logger.info(f"🔄 Direct Gemini OAuth Route: Mapping '{target_model}' to Google '{google_model}'...")
         
         google_body = body.copy()
