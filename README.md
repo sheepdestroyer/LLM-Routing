@@ -32,7 +32,7 @@ graph TD
 
     subgraph Backend Routing Cascade
         LiteLLM -->|Tier 1 - OR Free| OpenRouter[OpenRouter Free Models <br> Nemotron / Gemma 4]
-        LiteLLM -->|Tier 2 - Host GPU| QwenLocal[Local speculative MoE Qwen <br> qwen-35b-q5kxl / qwen-35b-q4ks]
+        LiteLLM -->|Tier 2 - Host GPU| QwenLocal[Local speculative MoE Qwen <br> qwen-35b-q4ks]
     end
 
     subgraph Observability
@@ -148,7 +148,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
 - **Primary Cascading Fallback Chains**:
-  - **`agent-complex-core` (Complex tier)**: `OpenRouter Nemotron 120b (Free)` ➔ `Local Qwen-35b-q5kxl (Speculative MoE)`.
+  - **`agent-complex-core` (Complex tier)**: `OpenRouter Nemotron 120b (Free)` ➔ `Local Qwen-35b-q4ks (Speculative MoE)`.
   - **`agent-simple-core` (Simple tier)**: `OpenRouter Gemma 4 26b (Free)` ➔ `Local Qwen-35b-q4ks (High-speed Fast)`.
 *Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
