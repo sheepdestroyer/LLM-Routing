@@ -53,6 +53,8 @@ spec:
           subPath: config.yaml
         - name: gemini-secrets
           mountPath: /config/gemini_auth
+        - name: goose-sessions
+          mountPath: /config/goose_sessions
 
     # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
     - name: postgres-db
@@ -117,3 +119,6 @@ spec:
     - name: gemini-secrets
       hostPath:
         path: /home/gpav/.gemini
+    - name: goose-sessions
+      hostPath:
+        path: /home/gpav/.local/share/goose

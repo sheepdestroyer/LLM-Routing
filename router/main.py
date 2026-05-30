@@ -44,6 +44,14 @@ stats = {
     "avg_proxy_latency_ms": 0.0,
     "total_triage_time_ms": 0.0,
     "total_proxy_time_ms": 0.0,
+    "tool_tokens": {
+        "tree": 0,
+        "shell": 0,
+        "write": 0,
+        "view": 0,
+        "other": 0
+    },
+    "timeline": []
 }
 
 # Triage Decision Cache (In-Memory dictionary mapping normalized prompt -> (classification, timestamp))
@@ -156,6 +164,82 @@ def get_live_gemini_oauth_token() -> str | None:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
 
+def detect_active_tool(body: dict) -> str:
+    """Inspects request payload messages to identify which developer tool is currently being invoked."""
+    messages = body.get("messages", [])
+    for msg in reversed(messages):
+        role = msg.get("role")
+        if role in ("tool", "function"):
+            name = msg.get("name") or "other"
+            if "__" in name:
+                name = name.split("__")[-1]
+            return name
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if tool_calls and isinstance(tool_calls, list):
+                for tc in tool_calls:
+                    name = tc.get("function", {}).get("name") or "other"
+                    if "__" in name:
+                        name = name.split("__")[-1]
+                    return name
+    # Fallback to keyphrase scanning in the user message
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = str(msg.get("content", "")).lower()
+            if "tree" in content or "files" in content:
+                return "tree"
+            elif "shell" in content or "run" in content or "cmd" in content:
+                return "shell"
+            elif "write" in content or "create file" in content:
+                return "write"
+            elif "view" in content or "read" in content or "cat" in content:
+                return "view"
+    return "none"
+
+def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float):
+    """Accumulates token counts in memory for active tools and tracks request timelines."""
+    if tool_name == "none":
+        tool_name = "other"
+    
+    total = prompt_tokens + completion_tokens
+    stats["tool_tokens"][tool_name] = stats["tool_tokens"].get(tool_name, 0) + total
+    
+    # Append to timeline event stack
+    event = {
+        "timestamp": time.strftime("%H:%M:%S"),
+        "tool": tool_name,
+        "model": model,
+        "tokens": total,
+        "latency_ms": int(latency_ms)
+    }
+    stats["timeline"].append(event)
+    if len(stats["timeline"]) > 15:
+        stats["timeline"].pop(0)
+
+def get_goose_sessions() -> list:
+    """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
+    sessions_list = []
+    db_path = "/config/goose_sessions/sessions/sessions.db"
+    if not os.path.exists(db_path):
+        return []
+    try:
+        import sqlite3
+        conn = sqlite3.connect(db_path, timeout=1.0)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, name, description, created_at, updated_at, accumulated_total_tokens, goose_mode 
+            FROM sessions 
+            ORDER BY updated_at DESC 
+            LIMIT 5
+        """)
+        for row in cursor.fetchall():
+            sessions_list.append(dict(row))
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to query goose sessions SQLite DB: {e}")
+    return sessions_list
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     global stats
@@ -169,6 +253,9 @@ async def chat_completions(request: Request):
     messages = body.get("messages", [])
     if not messages:
         raise HTTPException(status_code=400, detail="Empty messages list")
+
+    # Detect current active developer tool from request body
+    active_tool = detect_active_tool(body)
 
     # Extract last user message for complexity triage
     last_user_message = ""
@@ -207,15 +294,11 @@ async def chat_completions(request: Request):
         }
         google_api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
         
-        # Test connection first to ensure 200 before streaming/responding
         test_client = httpx.AsyncClient(timeout=10.0)
         try:
-            # We perform a lightweight probe check (or try direct completions)
-            # If the user requests stream, we probe with stream=False or just attempt stream immediately
             logger.info("Attempting direct Google Gemini API call...")
             
             if body.get("stream", False):
-                # For streaming, we can perform the request directly
                 client = httpx.AsyncClient(timeout=3600.0)
                 r = await client.post(
                     f"{google_api_base}/chat/completions",
@@ -224,6 +307,8 @@ async def chat_completions(request: Request):
                 )
                 if r.status_code == 200:
                     async def google_stream_generator():
+                        completion_chars = 0
+                        request_tokens = len(json.dumps(google_body)) // 4
                         try:
                             async with client.stream(
                                 "POST",
@@ -232,7 +317,12 @@ async def chat_completions(request: Request):
                                 headers=google_headers
                             ) as response:
                                 async for chunk in response.aiter_bytes():
+                                    completion_chars += len(chunk)
                                     yield chunk
+                            
+                            # Log tool metrics
+                            latency_ms = (time.time() - start_time) * 1000.0
+                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, google_model, latency_ms)
                         except Exception as ex:
                             logger.error(f"Stream generation error on direct Google call: {ex}")
                         finally:
@@ -250,7 +340,13 @@ async def chat_completions(request: Request):
                 )
                 await client.aclose()
                 if r.status_code == 200:
-                    return r.json()
+                    resp_json = r.json()
+                    usage = resp_json.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(google_body)) // 4)
+                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+                    latency_ms = (time.time() - start_time) * 1000.0
+                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, google_model, latency_ms)
+                    return resp_json
                 else:
                     logger.warning(f"Direct Google completion call failed with status {r.status_code}. Falling back to default LiteLLM path.")
         except Exception as e:
@@ -272,13 +368,15 @@ async def chat_completions(request: Request):
     body["model"] = target_model
 
     # Set up outgoing proxy request
-    client = httpx.AsyncClient(timeout=3600.0)  # 1-hour timeout matching llama-server timeout
+    client = httpx.AsyncClient(timeout=3600.0)
     headers = {"Authorization": f"Bearer {backend_api_key}"}
 
     # Handle streaming vs non-streaming proxying
     if body.get("stream", False):
         async def stream_generator():
             proxy_start = time.time()
+            completion_chars = 0
+            request_tokens = len(json.dumps(body)) // 4
             try:
                 async with client.stream(
                     "POST",
@@ -291,12 +389,15 @@ async def chat_completions(request: Request):
                         yield f"data: {{\"error\": \"Backend returned status {r.status_code}\"}}\n\n".encode("utf-8")
                         return
                     async for chunk in r.aiter_bytes():
+                        completion_chars += len(chunk)
                         yield chunk
                 
                 # Update proxy metrics on completion
                 proxy_latency = (time.time() - proxy_start) * 1000.0
                 stats["total_proxy_time_ms"] += proxy_latency
                 stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                
+                record_tool_usage(active_tool, request_tokens, completion_chars // 4, target_model, proxy_latency)
             except Exception as e:
                 logger.error(f"Streaming connection error: {e}")
                 yield f"data: {{\"error\": \"Proxy streaming exception: {e}\"}}\n\n".encode("utf-8")
@@ -319,7 +420,13 @@ async def chat_completions(request: Request):
             stats["total_proxy_time_ms"] += proxy_latency
             stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
             
-            return response.json()
+            resp_json = response.json()
+            usage = resp_json.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body)) // 4)
+            completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+            record_tool_usage(active_tool, prompt_tokens, completion_tokens, target_model, proxy_latency)
+            
+            return resp_json
         except Exception as e:
             await client.aclose()
             logger.error(f"Backend connection error: {e}")
@@ -328,25 +435,115 @@ async def chat_completions(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
     # 1. Run live health checks
-    triage_router_status = True
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
     llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3000")
 
-    # Calculative metrics
+    # 2. Query Goose Sessions SQLite DB
+    goose_sessions = get_goose_sessions()
+
+    # 3. Calculative metrics
     simple_ratio = 0.0
     complex_ratio = 0.0
     if stats["total_requests"] > 0:
         simple_ratio = (stats["simple_requests"] / stats["total_requests"]) * 100.0
         complex_ratio = (stats["complex_requests"] / stats["total_requests"]) * 100.0
 
+    # 4. Generate tool tokens HTML
+    tool_tokens_html = ""
+    max_tool_val = max(stats["tool_tokens"].values()) if max(stats["tool_tokens"].values()) > 0 else 1
+    
+    # Stylized labels and color palettes
+    tool_colors = {
+        "tree": "linear-gradient(90deg, #34d399, #10b981)", # Green
+        "shell": "linear-gradient(90deg, #fbbf24, #f59e0b)", # Amber/Orange
+        "write": "linear-gradient(90deg, #a78bfa, #818cf8)", # Violet
+        "view": "linear-gradient(90deg, #60a5fa, #3b82f6)", # Blue
+        "other": "linear-gradient(90deg, #f472b6, #ec4899)", # Pink
+    }
+    
+    for tool_name, token_count in stats["tool_tokens"].items():
+        pct = (token_count / max_tool_val) * 100.0
+        color = tool_colors.get(tool_name, "linear-gradient(90deg, #cbd5e1, #94a3b8)")
+        tool_tokens_html += f"""
+        <div style="margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
+                <span style="font-weight: 600; text-transform: capitalize;">🛠️ {tool_name}</span>
+                <span style="opacity: 0.8; font-weight: bold;">{token_count:,} tokens</span>
+            </div>
+            <div style="height: 10px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden;">
+                <div style="width: {pct}%; height: 100%; background: {color}; border-radius: 10px; transition: width 0.5s ease;"></div>
+            </div>
+        </div>
+        """
+
+    # 5. Generate timeline HTML
+    timeline_html = ""
+    if not stats["timeline"]:
+        timeline_html = "<div style='opacity: 0.5; font-size: 14px;'>Waiting for active tool executions...</div>"
+    else:
+        for ev in reversed(stats["timeline"]):
+            timeline_html += f"""
+            <div style="display: flex; gap: 15px; margin-bottom: 15px; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 20px; position: relative;">
+                <div style="width: 10px; height: 10px; background: #818cf8; border-radius: 50%; position: absolute; left: -6px; top: 6px; box-shadow: 0 0 8px #818cf8;"></div>
+                <div style="flex-grow: 1;">
+                    <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px;">
+                        <span style="font-weight: 600; text-transform: uppercase; color: #a5b4fc;">🔧 {ev['tool']}</span>
+                        <span style="opacity: 0.5; font-family: monospace;">{ev['timestamp']}</span>
+                    </div>
+                    <div style="font-size: 14px; opacity: 0.9;">
+                        Processed <strong>{ev['tokens']:,} tokens</strong> on <span style="color: #c084fc;">{ev['model']}</span>
+                    </div>
+                    <div style="font-size: 12px; opacity: 0.5; margin-top: 2px;">
+                        Latency: {ev['latency_ms']} ms
+                    </div>
+                </div>
+            </div>
+            """
+
+    # 6. Generate Goose Sessions HTML
+    goose_html = ""
+    if not goose_sessions:
+        goose_html = """
+        <div style="background: rgba(255,255,255,0.02); border-radius: 12px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.05); font-size: 14px; opacity: 0.6;">
+            ⚠️ No active Goose session database detected at mountpoint.
+        </div>
+        """
+    else:
+        for idx, sess in enumerate(goose_sessions):
+            is_active = (idx == 0)
+            badge_style = "background: rgba(129, 140, 248, 0.15); color: #c084fc; border: 1px solid rgba(129, 140, 248, 0.3);" if is_active else "background: rgba(255,255,255,0.03); color: #fff; border: 1px solid rgba(255,255,255,0.05);"
+            active_label = "<span style='font-size: 10px; background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;'>ACTIVE</span>" if is_active else ""
+            
+            desc = sess.get('description') or sess.get('name') or "Interactive session"
+            tokens = sess.get('accumulated_total_tokens', 0) or 0
+            
+            goose_html += f"""
+            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 15px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center;">
+                        {active_label}
+                        <span style="font-weight: 600; font-size: 15px;">Session {sess['id']}</span>
+                    </div>
+                    <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {badge_style}">{sess.get('goose_mode', 'auto').upper()}</span>
+                </div>
+                <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {desc}
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
+                    <span>📅 {sess['updated_at']}</span>
+                    <span style="font-weight: bold; color: #a5b4fc;">{tokens:,} total tokens</span>
+                </div>
+            </div>
+            """
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=device-width, initial-scale=initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>LLM Triage Gateway - Control Center</title>
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
         <style>
@@ -356,8 +553,8 @@ async def get_dashboard():
                 --emerald-500: #10b981;
                 --rose-500: #f43f5e;
                 --text-main: #f8fafc;
-                --glass-bg: rgba(255, 255, 255, 0.05);
-                --glass-border: rgba(255, 255, 255, 0.1);
+                --glass-bg: rgba(255, 255, 255, 0.03);
+                --glass-border: rgba(255, 255, 255, 0.08);
             }}
 
             * {{
@@ -379,7 +576,7 @@ async def get_dashboard():
 
             header {{
                 width: 100%;
-                max-width: 1200px;
+                max-width: 1400px;
                 margin: 0 auto;
                 padding: 30px 20px;
                 display: flex;
@@ -418,7 +615,7 @@ async def get_dashboard():
 
             main {{
                 width: 100%;
-                max-width: 1200px;
+                max-width: 1400px;
                 margin: 0 auto;
                 padding: 0 20px 50px 20px;
                 flex-grow: 1;
@@ -427,7 +624,7 @@ async def get_dashboard():
                 gap: 30px;
             }}
 
-            @media (max-width: 900px) {{
+            @media (max-width: 1000px) {{
                 main {{
                     grid-template-columns: 1fr;
                 }}
@@ -435,22 +632,23 @@ async def get_dashboard():
 
             .glass-card {{
                 background: var(--glass-bg);
-                backdrop-filter: blur(12px);
+                backdrop-filter: blur(20px);
                 border: 1px solid var(--glass-border);
-                border-radius: 20px;
+                border-radius: 24px;
                 padding: 30px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
                 transition: transform 0.3s ease, border-color 0.3s ease;
+                margin-bottom: 30px;
             }}
 
             .glass-card:hover {{
-                border-color: rgba(255, 255, 255, 0.2);
+                border-color: rgba(255, 255, 255, 0.15);
             }}
 
             .status-container {{
                 display: flex;
                 flex-direction: column;
-                gap: 20px;
+                gap: 16px;
             }}
 
             .section-title {{
@@ -461,16 +659,18 @@ async def get_dashboard():
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                border-bottom: 1px solid rgba(255,255,255,0.05);
+                padding-bottom: 12px;
             }}
 
             .service-row {{
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 15px 20px;
-                background: rgba(255, 255, 255, 0.02);
+                padding: 12px 20px;
+                background: rgba(255, 255, 255, 0.01);
                 border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.04);
             }}
 
             .service-info {{
@@ -481,7 +681,7 @@ async def get_dashboard():
 
             .service-name {{
                 font-weight: 600;
-                font-size: 16px;
+                font-size: 15px;
             }}
 
             .service-port {{
@@ -494,9 +694,9 @@ async def get_dashboard():
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 600;
-                padding: 6px 14px;
+                padding: 5px 12px;
                 border-radius: 50px;
                 text-transform: uppercase;
                 letter-spacing: 1px;
@@ -540,14 +740,14 @@ async def get_dashboard():
 
             .metrics-grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
                 gap: 20px;
                 margin-bottom: 30px;
             }}
 
             .metric-box {{
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                background: rgba(255, 255, 255, 0.01);
+                border: 1px solid rgba(255, 255, 255, 0.04);
                 border-radius: 16px;
                 padding: 20px;
                 display: flex;
@@ -556,13 +756,13 @@ async def get_dashboard():
             }}
 
             .metric-value {{
-                font-size: 32px;
+                font-size: 28px;
                 font-weight: 800;
                 color: #fff;
             }}
 
             .metric-label {{
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 600;
                 text-transform: uppercase;
                 letter-spacing: 1px;
@@ -599,33 +799,34 @@ async def get_dashboard():
             .btn-group {{
                 display: flex;
                 flex-direction: column;
-                gap: 15px;
-                margin-top: 20px;
+                gap: 12px;
+                margin-top: 15px;
             }}
 
             .btn {{
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 16px 24px;
-                background: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                padding: 14px 20px;
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.05);
                 border-radius: 12px;
                 color: #fff;
                 text-decoration: none;
                 font-weight: 600;
                 transition: all 0.3s ease;
+                font-size: 14px;
             }}
 
             .btn:hover {{
-                background: rgba(255, 255, 255, 0.08);
-                border-color: rgba(129, 140, 248, 0.4);
-                transform: translateX(5px);
+                background: rgba(255, 255, 255, 0.06);
+                border-color: rgba(129, 140, 248, 0.3);
+                transform: translateX(4px);
             }}
 
             .btn-arrow {{
                 opacity: 0.5;
-                font-size: 18px;
+                font-size: 16px;
                 transition: transform 0.3s ease;
             }}
 
@@ -644,10 +845,10 @@ async def get_dashboard():
             }}
         </style>
         <script>
-            // Auto refresh the metrics/health states every 5 seconds
+            // Auto refresh metrics, tool usages, timelines and active sessions every 3 seconds
             setInterval(() => {{
                 window.location.reload();
-            }}, 5000);
+            }}, 3000);
         </script>
     </head>
     <body>
@@ -656,66 +857,87 @@ async def get_dashboard():
                 <div class="logo-dot"></div>
                 <div class="logo-text">Antigravity Gateway</div>
             </div>
-            <div class="dashboard-title">Control Center</div>
+            <div class="dashboard-title">System Control Center</div>
         </header>
 
         <main>
-            <!-- LEFT SECTION: SERVICE STATS & METRICS -->
-            <div class="glass-card">
-                <div class="section-title">
-                    <span>Performance Analytics</span>
-                    <span style="font-size: 12px; opacity: 0.5;">Auto-refreshing 5s</span>
+            <!-- LEFT COLUMN: LIVE TELEMETRY, METERS & TIMELINES -->
+            <div>
+                <!-- Analytics Card -->
+                <div class="glass-card">
+                    <div class="section-title">
+                        <span>Gateway Performance Telemetry</span>
+                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Live 3s update</span>
+                    </div>
+
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <span class="metric-value">{stats["total_requests"]}</span>
+                            <span class="metric-label">Total API Calls</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-value" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{stats["last_triage_decision"]}</span>
+                            <span class="metric-label">Last Triage Split</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-value">{stats["avg_triage_latency_ms"]:.1f} ms</span>
+                            <span class="metric-label">Avg Triage Time</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-value">{stats["avg_proxy_latency_ms"]:.1f} ms</span>
+                            <span class="metric-label">Avg Proxy Time</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-value" style="color: #34d399;">{stats["cache_hits"]}</span>
+                            <span class="metric-label">Triage Cache Hits</span>
+                        </div>
+                    </div>
+
+                    <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
+                        <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 14px;">
+                            <span>Simple Splits (Lite / Gemma)</span>
+                            <span>Complex Splits (Gemini / Qwen)</span>
+                        </div>
+                        <div class="ratio-container">
+                            <div class="ratio-simple" style="width: {simple_ratio}%"></div>
+                            <div class="ratio-complex" style="width: {complex_ratio}%"></div>
+                        </div>
+                        <div class="ratio-legend">
+                            <span>{stats["simple_requests"]} requests ({simple_ratio:.1f}%)</span>
+                            <span>{stats["complex_requests"]} requests ({complex_ratio:.1f}%)</span>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="metrics-grid">
-                    <div class="metric-box">
-                        <span class="metric-value">{stats["total_requests"]}</span>
-                        <span class="metric-label">Total Requests</span>
+                <!-- Live Meters for Tool Tokens Card -->
+                <div class="glass-card">
+                    <div class="section-title">
+                        <span>Live Developer Tool Token Usage</span>
+                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Token meters per extension tool</span>
                     </div>
-                    <div class="metric-box">
-                        <span class="metric-value" style="color: #c084fc;">{stats["last_triage_decision"]}</span>
-                        <span class="metric-label">Last Triage Split</span>
-                    </div>
-                    <div class="metric-box">
-                        <span class="metric-value">{stats["avg_triage_latency_ms"]:.1f}ms</span>
-                        <span class="metric-label">Avg Triage Latency</span>
-                    </div>
-                    <div class="metric-box">
-                        <span class="metric-value">{stats["avg_proxy_latency_ms"]:.1f}ms</span>
-                        <span class="metric-label">Avg Gateway proxy latency</span>
-                    </div>
-                    <div class="metric-box">
-                        <span class="metric-value" style="color: #34d399;">{stats["cache_hits"]}</span>
-                        <span class="metric-label">Triage Cache Hits</span>
+                    <div>
+                        {tool_tokens_html}
                     </div>
                 </div>
 
-                <div class="section-title" style="margin-top: 40px; margin-bottom: 10px;">
-                    <span>Triage Distribution</span>
-                </div>
-                <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.03); padding: 25px; border-radius: 16px;">
-                    <div style="display: flex; justify-content: space-between; font-weight: 600;">
-                        <span>Simple Tasks (Lite / Gemma)</span>
-                        <span>Complex Tasks (Gemini / Qwen)</span>
+                <!-- Timelines Card -->
+                <div class="glass-card" style="margin-bottom: 0;">
+                    <div class="section-title">
+                        <span>Gateway Request Timeline</span>
+                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Recent completions cascade</span>
                     </div>
-                    <div class="ratio-container">
-                        <div class="ratio-simple" style="width: {simple_ratio}%"></div>
-                        <div class="ratio-complex" style="width: {complex_ratio}%"></div>
-                    </div>
-                    <div class="ratio-legend">
-                        <span>{stats["simple_requests"]} requests ({simple_ratio:.1f}%)</span>
-                        <span>{stats["complex_requests"]} requests ({complex_ratio:.1f}%)</span>
+                    <div style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
+                        {timeline_html}
                     </div>
                 </div>
             </div>
 
-            <!-- RIGHT SECTION: SERVICE STATUSES & WEB SERVICES LINKS -->
-            <div style="display: flex; flex-direction: column; gap: 30px;">
-                <!-- health card -->
+            <!-- RIGHT COLUMN: INFRASTRUCTURE & ACTIVE GOOSE SESSIONS -->
+            <div style="display: flex; flex-direction: column;">
+                <!-- Infrastructure nodes card -->
                 <div class="glass-card status-container">
                     <div class="section-title" style="margin-bottom: 10px;">Infrastructure Nodes</div>
                     
-                    <!-- triage -->
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Triage Router</span>
@@ -724,7 +946,6 @@ async def get_dashboard():
                         <span class="badge badge-online"><span class="pulse-dot"></span>Online</span>
                     </div>
 
-                    <!-- litellm -->
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">LiteLLM Proxy</span>
@@ -735,7 +956,6 @@ async def get_dashboard():
                         </span>
                     </div>
 
-                    <!-- valkey -->
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Valkey Cache</span>
@@ -746,7 +966,6 @@ async def get_dashboard():
                         </span>
                     </div>
 
-                    <!-- llama-server -->
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Llama-Server</span>
@@ -757,7 +976,6 @@ async def get_dashboard():
                         </span>
                     </div>
 
-                    <!-- langfuse -->
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
@@ -769,7 +987,15 @@ async def get_dashboard():
                     </div>
                 </div>
 
-                <!-- navigation links card -->
+                <!-- Goose active sessions and status card -->
+                <div class="glass-card">
+                    <div class="section-title" style="margin-bottom: 10px;">Goose Session Directory</div>
+                    <div style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
+                        {goose_html}
+                    </div>
+                </div>
+
+                <!-- Quick console links card -->
                 <div class="glass-card status-container">
                     <div class="section-title" style="margin-bottom: 10px;">Quick Console Links</div>
                     <div class="btn-group">
