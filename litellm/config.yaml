@@ -19,7 +19,7 @@ model_list:
   # =========================================================================
   - model_name: agent-simple-core
     litellm_params:
-      model: openrouter/google/gemma-4-26b-a4b-it:free
+      model: openrouter/google/gemma-4-31b-it:free
       api_key: "os.environ/OPENROUTER_API_KEY"
 
   - model_name: local-qwen-3.6-simple

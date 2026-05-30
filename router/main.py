@@ -1393,11 +1393,6 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <!-- Goose Dashboard link -->
-                        <a href="https://block.github.io/goose/" target="_blank" class="btn" style="background: rgba(129, 140, 248, 0.05); border-color: rgba(129, 140, 248, 0.2);">
-                            <span>🐦 Goose Official Portal Dashboard</span>
-                            <span class="btn-arrow">→</span>
-                        </a>
                         <a href="http://localhost:3000" target="_blank" class="btn">
                             <span>{src_badge('LANGFUSE', '#e879f9')} Observability UI</span>
                             <span class="btn-arrow">→</span>
