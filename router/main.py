@@ -203,24 +203,54 @@ def get_live_gemini_oauth_token() -> str | None:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
 
+def map_tool_to_category(tool_name: str) -> str:
+    """Groups low-level developer tool names into the five high-level dashboard metrics."""
+    name = tool_name.lower().strip()
+    if "__" in name:
+        name = name.split("__")[-1]
+    
+    if "tree" in name or "list_dir" in name or "list-dir" in name:
+        return "tree"
+    elif "shell" in name or "command" in name or "cmd" in name or "execute" in name or "run" in name:
+        return "shell"
+    elif "write" in name or "edit" in name or "create" in name or "patch" in name or "replace" in name or "save" in name:
+        return "write"
+    elif "view" in name or "read" in name or "cat" in name or "grep" in name or "search" in name or "find" in name:
+        return "view"
+    return "other"
+
 def detect_active_tool(body: dict) -> str:
     """Inspects request payload messages to identify which developer tool is currently being invoked."""
     messages = body.get("messages", [])
-    for msg in reversed(messages):
+    
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
         role = msg.get("role")
         if role in ("tool", "function"):
-            name = msg.get("name") or "other"
-            if "__" in name:
-                name = name.split("__")[-1]
-            return name
+            name = msg.get("name")
+            if not name:
+                # Look backwards for the assistant tool request that holds the matching id
+                tool_call_id = msg.get("tool_call_id")
+                if tool_call_id:
+                    for prev_msg in reversed(messages[:idx]):
+                        if prev_msg.get("role") == "assistant":
+                            tcalls = prev_msg.get("tool_calls") or []
+                            for tc in tcalls:
+                                if tc.get("id") == tool_call_id:
+                                    name = tc.get("function", {}).get("name")
+                                    break
+                        if name:
+                            break
+            name = name or "other"
+            return map_tool_to_category(name)
+            
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")
             if tool_calls and isinstance(tool_calls, list):
                 for tc in tool_calls:
                     name = tc.get("function", {}).get("name") or "other"
-                    if "__" in name:
-                        name = name.split("__")[-1]
-                    return name
+                    return map_tool_to_category(name)
+                    
     # Fallback to keyphrase scanning in the user message
     for msg in reversed(messages):
         if msg.get("role") == "user":
