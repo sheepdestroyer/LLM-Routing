@@ -14,34 +14,34 @@ The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host 
 
 ```mermaid
 graph TD
-    Client[Agent / CLI Client] -->|Port 5000| Router[FastAPI Triage Router]
+    Client[goose-cli / Client] -->|Port 5000| Router[FastAPI Triage Router]
     
     subgraph FastAPI Router
-        Router -->|1. TCP Socket Checks| Health[Health Daemon]
+        Router -->|1. Token Expiry Check| Creds[(~/.gemini/oauth_creds.json <br> mounted via HostPath)]
         Router -->|2. Zero-Shot Complexity| LlamaServer[Local Llama-Server <br> Port 8080]
-        Router -->|3. Route Proxy| TargetRoute{Complexity Triage}
+        Router -->|3. Route Selector| RouteDecision{Token Valid?}
     end
 
-    TargetRoute -->|"agent-simple-core"| LiteLLM[LiteLLM Gateway <br> Port 4000]
-    TargetRoute -->|"agent-complex-core"| LiteLLM
-
+    RouteDecision -->|Yes - Direct Route| Gemini[Google Gemini API <br> gemini-3.5-flash / gemini-3.1-flash-lite]
+    RouteDecision -->|No - Fallback Route| LiteLLM[LiteLLM Gateway <br> Port 4000]
+    
     subgraph LiteLLM Gateway
         LiteLLM -->|Exact & Semantic Cache| Valkey[(Valkey Cache <br> Port 6379)]
         LiteLLM -->|Telemetry Handlers| Langfuse[Langfuse Server <br> Port 3000]
     end
 
     subgraph Backend Routing Cascade
-        LiteLLM -->|Tier 1 - OAuth Auth| Gemini[Google Gemini 3.5 / 3.1]
-        LiteLLM -->|Tier 2 - OR Key| OpenRouter[OpenRouter Free Tiers]
-        LiteLLM -->|Tier 3 - Native GPU| QwenLocal[Local Qwen-35b-q5kxl]
+        LiteLLM -->|Tier 1 - OR Free| OpenRouter[OpenRouter Free Models <br> Nemotron / Gemma 4]
+        LiteLLM -->|Tier 2 - Host GPU| QwenLocal[Local speculative MoE Qwen <br> qwen-35b-q5kxl / qwen-35b-q4ks]
     end
 
-    subgraph Telemetry & Metrics
+    subgraph Observability
         Langfuse -->|Persistent Storage| Postgres[(PostgreSQL DB <br> Port 5432)]
     end
     
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
     style Router fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    style Gemini fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style LiteLLM fill:#f2f9f2,stroke:#85c285,stroke-width:2px;
     style Valkey fill:#fff0f0,stroke:#e06666,stroke-width:2px;
     style Langfuse fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
@@ -57,40 +57,57 @@ The following sequence diagram outlines the end-to-end synchronous flow of an LL
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Agent Client
+    actor Client as goose-cli Client
     participant Router as Triage Router (Port 5000)
     participant Llama as Llama-Server (Port 8080)
+    participant Google as Google Gemini API
     participant Proxy as LiteLLM (Port 4000)
     participant Cache as Valkey (Port 6379)
-    participant Provider as LLM Provider (Gemini/Cloud/Local)
-    participant Telemetry as Langfuse (Port 3000)
+    participant Provider as OpenRouter / Local Qwen
 
-    Client->>Router: POST /v1/chat/completions (model: agent-triage)
-    Note over Router: Extract payload & prompt
-    Router->>Llama: POST /v1/chat/completions (Check prompt complexity via qwen-0.8b-routing)
+    Client->>Router: POST /v1/chat/completions (model: agent-complex-core)
+    Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-0.8b-routing)
     Llama-->>Router: JSON Response (Identifier: agent-simple-core OR agent-complex-core)
     
-    Note over Router: Rewrite model parameter to triage decision
-    Router->>Proxy: POST /v1/chat/completions (Target model: simple/complex core)
+    Note over Router: Check expiry_date in mounted oauth_creds.json
     
-    Proxy->>Cache: Query exact/semantic prompt cache
-    alt Cache Hit
-        Cache-->>Proxy: Return cached response string
-        Proxy-->>Router: HTTP 200 OK (From Cache)
-        Router-->>Client: Return complete cached response
-    else Cache Miss
-        Cache-->>Proxy: Cache Miss
-        Note over Proxy: Load Google OAuth Token / OpenRouter Key
-        Proxy->>Provider: Forward request down the fallback cascade
-        Provider-->>Proxy: JSON completion output
-        Proxy->>Cache: Set cache key & serialized value
-        Proxy-->>Router: HTTP 200 OK
-        Router-->>Client: Return completion response
+    alt Token is Valid
+        Router->>Google: POST /openai/chat/completions (gemini-3.5-flash / gemini-3.1-flash-lite)
+        alt Google Call Succeeds (200 OK)
+            Google-->>Router: Return completion stream/response
+            Router-->>Client: Stream/return response to user
+        else Google Call Fails (401 Unauthorized / 429)
+            Note over Router: Intercept error and fallback silently
+            Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
+            Proxy->>Cache: Query semantic cache
+            alt Cache Hit
+                Cache-->>Proxy: Return cached response
+                Proxy-->>Router: Return response
+                Router-->>Client: Return response
+            else Cache Miss
+                Proxy->>Provider: Forward down fallback cascade
+                Provider-->>Proxy: Return completion
+                Proxy->>Cache: Set cache key
+                Proxy-->>Router: Return response
+                Router-->>Client: Return response
+            end
+        end
+    else Token is Expired or Missing
+        Note over Router: Direct local failover to LiteLLM path
+        Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
+        Proxy->>Cache: Query semantic cache
+        alt Cache Hit
+            Cache-->>Proxy: Return cached response
+            Proxy-->>Router: Return response
+            Router-->>Client: Return response
+        else Cache Miss
+            Proxy->>Provider: Forward down fallback cascade
+            Provider-->>Proxy: Return completion
+            Proxy->>Cache: Set cache key
+            Proxy-->>Router: Return response
+            Router-->>Client: Return response
+        end
     end
-
-    Note over Proxy: Fire Asynchronous Background Telemetry Hook
-    Proxy-)Telemetry: Ship traces, inputs, outputs & response latencies
-    Telemetry-)Telemetry: Persist nested logs to PostgreSQL
 ```
 
 ---
@@ -127,12 +144,13 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-Orchestrates routing fallback chains, token ingestion, Redis caching, and telemetry callbacks:
-- **`drop_params: true`**: Automatically strips unsupported arguments (e.g. `reasoning_effort`) when transitioning from premium models (Gemini 3.5) to open-weights models.
+Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
+- **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
-- **Cascading Fallback Chains**:
-  - **`agent-complex-core` (Complex tier)**: `Gemini 3.5 Flash (High)` ➔ `Gemini 3.5 (Medium)` ➔ `Gemini 3.5 (Low)` ➔ `OpenRouter Nemotron 120b (Free)` ➔ `Local Qwen-35b-q5kxl`.
-  - **`agent-simple-core` (Simple tier)**: `Gemini 3.1 Flash Lite` ➔ `OpenRouter Gemma 4 26b (Free)` ➔ `Local Qwen-35b-q4ks`.
+- **Primary Cascading Fallback Chains**:
+  - **`agent-complex-core` (Complex tier)**: `OpenRouter Nemotron 120b (Free)` ➔ `Local Qwen-35b-q5kxl (Speculative MoE)`.
+  - **`agent-simple-core` (Simple tier)**: `OpenRouter Gemma 4 26b (Free)` ➔ `Local Qwen-35b-q4ks (High-speed Fast)`.
+*Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
