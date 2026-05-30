@@ -39,9 +39,10 @@ model_list:
 # =========================================================================
 router_settings:
   enable_fallbacks: true
-  cooldown_time: 45
-  allowed_fails: 1
+  cooldown_time: 5
+  allowed_fails: 3
   retry_after_cooldown: true
+  num_retries: 1
   fallbacks:
     - agent-complex-core: ["local-qwen-3.6-complex"]
     - agent-simple-core: ["local-qwen-3.6-simple"]

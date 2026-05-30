@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import socket
+import asyncio
 import logging
 import yaml
 import httpx
@@ -518,7 +519,56 @@ async def chat_completions(request: Request):
         stats["complex_requests"] += 1
     save_persisted_stats()
 
-    # --- GOOGLE OAUTH DIRECT ROUTE WITH FALLBACK ---
+    # --- AGY PROXY ROUTE (3-TIER FALLBACK) ---
+    # Only for complex tasks; simple tasks go directly to LiteLLM
+    if target_model == "agent-complex-core":
+        try:
+            from agy_proxy import try_agy_proxy
+            
+            # Build the prompt from the user's last message
+            last_prompt = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    last_prompt = msg.get("content", "")
+                    break
+            
+            # Derive a stable session ID from conversation fingerprint
+            session_id = None
+            if len(messages) >= 2:
+                import hashlib
+                fingerprint_parts = []
+                for msg in messages[:4]:
+                    c = msg.get("content", "") or ""
+                    if c:
+                        fingerprint_parts.append(c[:200])
+                fingerprint = "|".join(fingerprint_parts)
+                session_id = hashlib.md5(fingerprint.encode()).hexdigest()
+            
+            if last_prompt:
+                agy_response = await try_agy_proxy(
+                    prompt=last_prompt,
+                    messages=messages,
+                    session_id=session_id,
+                    total_timeout=300.0
+                )
+                if agy_response:
+                    latency_ms = (time.time() - start_time) * 1000.0
+                    model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
+                    usage = agy_response.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    record_tool_usage(
+                        active_tool, prompt_tokens, completion_tokens,
+                        model_name, latency_ms, route="google_oauth_direct"
+                    )
+                    logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
+                    return agy_response
+        except ImportError:
+            logger.warning("agy_proxy module not available, falling back to direct API call")
+        except Exception as e:
+            logger.error(f"agy proxy failed: {e}, falling back to direct API call")
+    
+    # --- DIRECT GOOGLE OAUTH ROUTE (legacy fallback) ---
     oauth_token = get_live_gemini_oauth_token()
     if oauth_token:
         google_model = "gemini-3.5-flash" if target_model == "agent-complex-core" else "gemini-3.1-flash-lite"
@@ -553,7 +603,6 @@ async def chat_completions(request: Request):
                             async for chunk in r.aiter_bytes():
                                 completion_chars += len(chunk)
                                 yield chunk
-                            # Log tool metrics
                             latency_ms = (time.time() - start_time) * 1000.0
                             record_tool_usage(active_tool, request_tokens, completion_chars // 4, google_model, latency_ms, route="google_oauth_direct")
                         except Exception as ex:
@@ -665,8 +714,16 @@ async def chat_completions(request: Request):
                             await client.aclose()
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
-                    logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}.")
+                    # Read response body for diagnostic logging before closing
+                    try:
+                        error_body = await r.aread()
+                        logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}. Response: {error_body[:500]}")
+                    except Exception:
+                        logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}.")
                     await r.aclose()
+                    # On rate-limit (429), wait briefly before trying next model to stagger concurrent requests
+                    if r.status_code == 429:
+                        await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"Exception during cascade stream attempt for model '{model_to_try}': {e}")
         
@@ -707,7 +764,14 @@ async def chat_completions(request: Request):
                     
                     return resp_json
                 else:
-                    logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}.")
+                    try:
+                        error_detail = response.text[:500]
+                        logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}. Response: {error_detail}")
+                    except Exception:
+                        logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}.")
+                    # On rate-limit (429), wait briefly before trying next model
+                    if response.status_code == 429:
+                        await asyncio.sleep(2)
             except Exception as e:
                 logger.error(f"Exception during cascade attempt for model '{model_to_try}': {e}")
         

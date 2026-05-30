@@ -13,3 +13,9 @@ valkey-data/
 .DS_Store
 Thumbs.db
 router/config.yaml.tpl
+__pycache__/
+router/__pycache__/
+
+# Runtime data (regenerated on each run)
+router/router_stats.json
+router/quantization_report.txt

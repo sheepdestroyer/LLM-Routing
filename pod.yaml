@@ -54,8 +54,13 @@ spec:
           mountPath: /config/router_dir
         - name: gemini-secrets
           mountPath: /config/gemini_auth
+        - name: gemini-secrets
+          mountPath: /root/.gemini
         - name: goose-sessions
           mountPath: /config/goose_sessions
+        - name: agy-bin
+          mountPath: /usr/local/bin/agy
+          subPath: agy
 
     # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
     - name: postgres-db
@@ -123,3 +128,6 @@ spec:
     - name: goose-sessions
       hostPath:
         path: /home/gpav/.local/share/goose
+    - name: agy-bin
+      hostPath:
+        path: /home/gpav/.local/bin
