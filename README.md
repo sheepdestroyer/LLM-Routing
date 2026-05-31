@@ -18,7 +18,7 @@ graph TD
     
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
         Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-0.8b-routing)"]
-        Router -->|2. Exec Proxy (Complex Tiers)| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
+        Router -->|"2. Exec Proxy - Complex Tiers"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
         
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
         AgyProxy -->|Tier 2| AgySonnet["agy w/ override\n(Claude Sonnet 4.6)"]
