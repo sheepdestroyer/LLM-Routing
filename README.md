@@ -14,39 +14,44 @@ The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host 
 
 ```mermaid
 graph TD
-    Client[goose-cli / Client] -->|Port 5000| Router[FastAPI Triage Router]
+    Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
     
-    subgraph FastAPI Router
-        Router -->|1. Zero-Shot Complexity| LlamaServer[Local Llama-Server <br> Port 8080]
-        Router -->|2. agy Proxy (complex tasks)| Agy[antigravity CLI <br> /usr/local/bin/agy]
-        Router -->|3. Route Selector| RouteDecision{Daily quota?}
+    subgraph FastAPI Router ["FastAPI Router Pod Context"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-0.8b-routing)"]
+        Router -->|2. Exec Proxy (Complex Tiers)| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
+        
+        AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
+        AgyProxy -->|Tier 2| AgySonnet["agy w/ override\n(Claude Sonnet 4.6)"]
+        AgyProxy -->|Tier 3| AgyOpus["agy w/ override\n(Claude Opus 4.6)"]
     end
 
-    RouteDecision -->|Available - Tier 1| AgyGemini[agy --print <br> Gemini 3.5 Flash]
-    RouteDecision -->|Available - Tier 2| AgyClaude[agy --print w/ override <br> Claude Sonnet 4.6]
-    RouteDecision -->|Exhausted - Fallback| LiteLLM[LiteLLM Gateway <br> Port 4000]
-    
-    AgyGemini -->|Uses keyring auth| Google[Cloud Code Assist API <br> daily-cloudcode-pa.googleapis.com]
-    AgyClaude -->|Uses keyring auth| Google
+    AgyGemini -.->|Keyring Auth| Google["Cloud Code Assist API\n(daily-cloudcode-pa.googleapis.com)"]
+    AgySonnet -.->|Keyring Auth| Google
+    AgyOpus -.->|Keyring Auth| Google
 
-    subgraph LiteLLM Gateway
-        LiteLLM -->|Exact & Semantic Cache| Valkey[(Valkey Cache <br> Port 6379)]
-        LiteLLM -->|Telemetry Handlers| Langfuse[Langfuse Server <br> Port 3000]
+    Router -->|3. Fallback Route| RouteSelector{"Tiers Exhausted?"}
+    RouteSelector -->|Yes| LiteLLM["LiteLLM Gateway\n(Port 4000)"]
+    AgyProxy -->|Quota Exhausted| RouteSelector
+
+    subgraph LiteLLM Gateway ["LiteLLM Gateway Context"]
+        LiteLLM -->|Exact & Semantic Cache| Valkey[("Valkey Cache\n(Port 6379)")]
+        LiteLLM -->|Telemetry Handlers| Langfuse["Langfuse Server\n(Port 3000)"]
     end
 
-    subgraph Backend Routing Cascade
-        LiteLLM -->|Tier 1 - OR Free| OpenRouter [OpenRouter Free Models <br> Kimi K2.6 / Gemma 4]
-        LiteLLM -->|Tier 2 - Host GPU| QwenLocal[Local speculative MoE Qwen <br> qwen-35b-q4ks]
+    subgraph Backend Routing Cascade ["LiteLLM Backend Cascade"]
+        LiteLLM -->|Tier 1 - OR Dynamic| OpenRouter["OpenRouter Free Models\n(Dynamic Free / Kimi K2.6)"]
+        LiteLLM -->|Tier 2 - Host GPU| QwenLocal["Local speculative MoE Qwen\n(qwen-35b-q4ks)"]
     end
 
-    subgraph Observability
-        Langfuse -->|Persistent Storage| Postgres[(PostgreSQL DB <br> Port 5432)]
+    subgraph Observability ["Observability Backend"]
+        Langfuse -->|Persistent Storage| Postgres[("PostgreSQL DB\n(Port 5432)")]
     end
     
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
     style Router fill:#f9f9f9,stroke:#333,stroke-width:2px;
     style AgyGemini fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
-    style AgyClaude fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
+    style AgySonnet fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
+    style AgyOpus fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style LiteLLM fill:#f2f9f2,stroke:#85c285,stroke-width:2px;
     style Valkey fill:#fff0f0,stroke:#e06666,stroke-width:2px;
     style Langfuse fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
@@ -62,13 +67,13 @@ The following sequence diagram outlines the end-to-end synchronous flow of an LL
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as goose-cli Client
-    participant Router as Triage Router (Port 5000)
-    participant Llama as Llama-Server (Port 8080)
-    participant Agy as agy CLI (keyring auth)
-    participant Proxy as LiteLLM (Port 4000)
-    participant Cache as Valkey (Port 6379)
-    participant Provider as OpenRouter / Local Qwen
+    actor Client as "goose-cli Client"
+    participant Router as "Triage Router (Port 5000)"
+    participant Llama as "Llama-Server (Port 8080)"
+    participant Agy as "agy CLI (keyring auth)"
+    participant Proxy as "LiteLLM (Port 4000)"
+    participant Cache as "Valkey (Port 6379)"
+    participant Provider as "OpenRouter / Local Qwen"
 
     Client->>Router: POST /v1/chat/completions (model: agent-complex-core)
     Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-0.8b-routing)
@@ -83,25 +88,32 @@ sequenceDiagram
             Agy-->>Router: Gemini 3.5 Flash response (stdout)
             Router-->>Client: Return chat completion
         else Tier 1: quota exhausted (rc=0, stdout="")
-            Note over Router: Detect via empty stdout+stderr, cli.log check
-            Router->>Agy: retry: --conversation <id> --print "prompt" (with model override)
+            Note over Router: Detect empty output, query cli.log for 429
+            Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Sonnet override)
             alt Tier 2 Succeeds
                 Agy-->>Router: Claude Sonnet 4.6 response (stdout)
                 Router-->>Client: Return chat completion
             else Tier 2 also exhausted
-                Note over Router: Fall through to LiteLLM
-                Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
-                Proxy->>Cache: Query semantic cache
-                alt Cache Hit
-                    Cache-->>Proxy: Return cached response
-                    Proxy-->>Router: Return response
-                    Router-->>Client: Return response
-                else Cache Miss
-                    Proxy->>Provider: Forward down fallback cascade
-                    Provider-->>Proxy: Return completion
-                    Proxy->>Cache: Set cache key
-                    Proxy-->>Router: Return response
-                    Router-->>Client: Return response
+                Note over Router: Detect empty output, query cli.log for 429
+                Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Opus override)
+                alt Tier 3 Succeeds
+                    Agy-->>Router: Claude Opus 4.6 response (stdout)
+                    Router-->>Client: Return chat completion
+                else Tier 3 also exhausted
+                    Note over Router: Fall through to LiteLLM Gateway
+                    Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
+                    Proxy->>Cache: Query semantic cache
+                    alt Cache Hit
+                        Cache-->>Proxy: Return cached response
+                        Proxy-->>Router: Return response
+                        Router-->>Client: Return response
+                    else Cache Miss
+                        Proxy->>Provider: Forward down fallback cascade (OR Dynamic / Local MoE)
+                        Provider-->>Proxy: Return completion
+                        Proxy->>Cache: Set cache key
+                        Proxy-->>Router: Return response
+                        Router-->>Client: Return response
+                    end
                 end
             end
         end
@@ -114,7 +126,7 @@ sequenceDiagram
             Proxy-->>Router: Return response
             Router-->>Client: Return response
         else Cache Miss
-            Proxy->>Provider: Forward down fallback cascade
+            Proxy->>Provider: Forward down fallback cascade (Gemma 4 / Local Qwen)
             Provider-->>Proxy: Return completion
             Proxy->>Cache: Set cache key
             Proxy-->>Router: Return response
@@ -276,7 +288,7 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 
 ---
 
-## 9a. agy Proxy Integration (Session-Aware 2-Tier Fallback)
+## 9a. agy Proxy Integration (Session-Aware 3-Tier Fallback)
 
 The router includes an **agy proxy** layer that delegates complex tasks to the antigravity CLI
 (`agy --print`) before falling back to LiteLLM. This provides access to Gemini 3.5 Flash and
@@ -321,15 +333,18 @@ The proxy maintains conversation continuity across tier switches and subsequent 
 A session ID is derived from a hash of the message history fingerprint, ensuring requests from
 the same goose conversation reuse the same agy conversation.
 
-### Architecture: 2-Tier Fallback Chain
+### Architecture: 3-Tier Fallback Chain
 
 ```
-Tier 1: agy --print                          → Gemini 3.5 Flash (Cloud Code Assist quota)
-        ↓ (optional: model override)
-        CASCADE_DEFAULT_MODEL_OVERRIDE=      
-        claude-sonnet-4-6@default             → Claude Sonnet 4.6 (same shared quota)
-        ↓ (quota exhausted)
-Tier 2: LiteLLM (existing chain)              → OpenRouter free → local Qwen
+Tier 1: agy --print (Default)                → Gemini 3.5 Flash (Cloud Code Assist quota)
+        ↓ (quota exhausted / fail)
+Tier 2: CASCADE_DEFAULT_MODEL_OVERRIDE=      
+        claude-sonnet-4-6@default             → Claude Sonnet 4.6 (Anthropic via Vertex AI)
+        ↓ (quota exhausted / fail)
+Tier 3: CASCADE_DEFAULT_MODEL_OVERRIDE=      
+        claude-opus-4-6@default               → Claude Opus 4.6 (Premium Anthropic Tier)
+        ↓ (all agy tiers exhausted)
+Tier 4: LiteLLM Gateway Fallback Chain        → OpenRouter Dynamic Free / Kimi K2.6 → Local speculative MoE Qwen
 ```
 
 ### Quota Detection

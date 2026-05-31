@@ -7,6 +7,16 @@ model_list:
       model: openrouter/moonshotai/kimi-k2.6:free
       api_key: "os.environ/OPENROUTER_API_KEY"
 
+  - model_name: agent-complex-core-nemotron
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+      api_key: "os.environ/OPENROUTER_API_KEY"
+
+  - model_name: agent-complex-core-gptoss
+    litellm_params:
+      model: openrouter/openai/gpt-oss-120b:free
+      api_key: "os.environ/OPENROUTER_API_KEY"
+
   - model_name: openrouter/*
     litellm_params:
       model: openrouter/*
@@ -38,13 +48,12 @@ model_list:
 # GLOBAL SYSTEM POLICIES
 # =========================================================================
 router_settings:
-  enable_fallbacks: true
   cooldown_time: 5
   allowed_fails: 3
-  retry_after_cooldown: true
   num_retries: 1
+  routing_strategy: "simple-shuffle"
   fallbacks:
-    - agent-complex-core: ["local-qwen-3.6-complex"]
+    - agent-complex-core: ["agent-complex-core-nemotron", "agent-complex-core-gptoss", "local-qwen-3.6-complex"]
     - agent-simple-core: ["local-qwen-3.6-simple"]
 
 litellm_settings:

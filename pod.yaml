@@ -49,6 +49,8 @@ spec:
           value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
         - name: CONFIG_PATH
           value: "/config/router_dir/config.yaml"
+        - name: DBUS_SESSION_BUS_ADDRESS
+          value: "unix:path=/run/user/1000/bus"
       volumeMounts:
         - name: router-config
           mountPath: /config/router_dir
@@ -61,6 +63,12 @@ spec:
         - name: agy-bin
           mountPath: /usr/local/bin/agy
           subPath: agy
+        - name: dbus-socket
+          mountPath: /run/user/1000/bus
+        - name: keyring-store
+          mountPath: /root/.local/share/keyrings
+        - name: xdg-runtime
+          mountPath: /run/user/1000
 
     # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
     - name: postgres-db
@@ -131,3 +139,12 @@ spec:
     - name: agy-bin
       hostPath:
         path: /home/gpav/.local/bin
+    - name: dbus-socket
+      hostPath:
+        path: /run/user/1000/bus
+    - name: keyring-store
+      hostPath:
+        path: /home/gpav/.local/share/keyrings
+    - name: xdg-runtime
+      hostPath:
+        path: /run/user/1000
