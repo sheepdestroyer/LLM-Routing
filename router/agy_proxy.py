@@ -15,8 +15,7 @@ Session Architecture:
 
 Fallback Tiers (same conversation, different model):
   Tier 1: Default → Gemini 3.5 Flash  (Cloud Code Assist quota)
-  Tier 2: claude-sonnet-4-6@default   (separate quota allocation)
-  Tier 3: claude-opus-4-6@default     (premium tier)
+  Tier 2: claude-opus-4-6@default     (premium tier)
   Fallback: Existing LiteLLM chain (OpenRouter free → local Qwen)
 """
 
@@ -46,8 +45,7 @@ AGY_WORKSPACE = os.environ.get("AGY_WORKSPACE", os.getcwd())
 # Ordered fallback tiers
 AGY_FALLBACK_TIERS = [
     {"model_name": "gemini-3.5-flash",  "env_override": ""},                             # Tier 1: default
-    {"model_name": "claude-sonnet-4.6", "env_override": "claude-sonnet-4-6@default"},    # Tier 2
-    {"model_name": "claude-opus-4.6",   "env_override": "claude-opus-4-6@default"},      # Tier 3
+    {"model_name": "claude-opus-4.6",   "env_override": "claude-opus-4-6@default"},      # Tier 2
 ]
 
 AGY_TIMEOUT_SECS = 120
@@ -77,58 +75,38 @@ async def _run_agy_print(prompt: str, model_override: str = "",
                          conversation_id: Optional[str] = None,
                          timeout: float = AGY_TIMEOUT_SECS) -> tuple[int, str, str, Optional[str]]:
     """
-    Run agy with session preservation.
-    
-    Args:
-        prompt: The prompt text to send
-        model_override: CASCADE_DEFAULT_MODEL_OVERRIDE value
-        conversation_id: Existing conversation to continue, or None for new
-        timeout: Max seconds for this call
-    
-    Returns:
-        (returncode, stdout, stderr, conversation_id)
-        conversation_id is the new/continued conversation ID
+    Forward the agy execution request to the host-side agy daemon.
     """
-    env = os.environ.copy()
-    env.setdefault("HOME", "/root")
-    if model_override:
-        env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-    else:
-        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
-
-    cmd = [AGY_BINARY]
-    if conversation_id:
-        cmd.extend(["--conversation", conversation_id])
-    cmd.extend(["--print", prompt])
-
+    import httpx
+    
+    url = "http://127.0.0.1:5005/run"
+    payload = {
+        "prompt": prompt,
+        "model_override": model_override,
+        "conversation_id": conversation_id,
+        "timeout": timeout
+    }
+    
     model_tag = model_override if model_override else "default (gemini-3.5-flash)"
     conv_tag = f" (continuing {conversation_id[:8]}...)" if conversation_id else " (new)"
-    logger.info(f"agy proxy: [{model_tag}]{conv_tag} {prompt[:60]}...")
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-        stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
-        stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
-        returncode = proc.returncode or 0
-    except asyncio.TimeoutError:
-        proc.kill()
-        stdout = ""
-        stderr = "TIMEOUT: agy process exceeded timeout"
-        returncode = -1
-        logger.error(f"agy proxy: timeout after {timeout}s for {model_tag}")
-
-    # Capture the conversation ID from agy's cache after the call
-    result_conv_id = _get_last_conversation_id()
+    logger.info(f"agy proxy forwarding to host: [{model_tag}]{conv_tag} {prompt[:60]}...")
     
-    return returncode, stdout, stderr, result_conv_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout + 5.0) as client:
+            r = await client.post(url, json=payload)
+            if r.status_code == 200:
+                result = r.json()
+                return (
+                    result.get("returncode", 0),
+                    result.get("stdout", ""),
+                    result.get("stderr", ""),
+                    result.get("conversation_id", None)
+                )
+            else:
+                return -1, "", f"Daemon returned HTTP status {r.status_code}", None
+    except Exception as e:
+        logger.error(f"Failed to communicate with Host agy Daemon: {e}")
+        return -1, "", f"Daemon connection error: {e}", None
 
 
 # Track the last log check time to avoid hammering the file

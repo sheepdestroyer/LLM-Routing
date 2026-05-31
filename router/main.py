@@ -503,8 +503,16 @@ async def chat_completions(request: Request):
             last_user_message = msg.get("content", "")
             break
 
-    # Classify request
-    target_model, triage_latency = await classify_request(last_user_message)
+    # Prompt-length triage bypass: large prompts skip the 0.8B routing model
+    # Threshold: >2000 chars → automatically complex (saves routing tokens for big contexts)
+    PROMPT_LENGTH_THRESHOLD = 2000
+    if len(last_user_message) > PROMPT_LENGTH_THRESHOLD:
+        target_model = "agent-complex-core"
+        triage_latency = 0.0
+        logger.info(f"Triage bypass: prompt too long ({len(last_user_message)} chars > {PROMPT_LENGTH_THRESHOLD}), auto-classified as complex")
+    else:
+        # Classify request via local Qwen 0.8B
+        target_model, triage_latency = await classify_request(last_user_message)
     logger.info(f"Triage decision: Routing request to backend model -> '{target_model}'")
 
     # Update in-memory statistics
@@ -647,137 +655,76 @@ async def chat_completions(request: Request):
     if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
         backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
 
-    # Build models cascade
-    cascade = []
-    if target_model == "agent-complex-core":
-        best_free_model = await get_best_free_model()
-        best_free_id = best_free_model.get("id")
-        if best_free_id:
-            cascade.append(f"openrouter/{best_free_id}")
-        
-        # Include Kimi K2.6 as robust fallback if it's not already the first option
-        kimi_model = "openrouter/moonshotai/kimi-k2.6:free"
-        if kimi_model not in cascade:
-            cascade.append(kimi_model)
-            
-        # Local fallback
-        cascade.append("local-qwen-3.6-complex")
-    else:  # agent-simple-core
-        cascade.append("openrouter/google/gemma-4-31b-it:free")
-        cascade.append("local-qwen-3.6-simple")
-
-    logger.info(f"Using models cascade for {target_model}: {cascade}")
+    # Delegate to LiteLLM which handles internal fallback chain
+    # Router sends model=agent-complex-core (or agent-simple-core)
+    # LiteLLM maps this to Nemotron → Kimi → GPT-OSS → local Qwen
+    logger.info(f"Proxying to LiteLLM as model={target_model}")
 
     # Set up outgoing proxy request
     client = httpx.AsyncClient(timeout=3600.0)
     headers = {"Authorization": f"Bearer {backend_api_key}"}
 
-    # Handle streaming vs non-streaming proxying with cascade failover
-    if body.get("stream", False):
-        proxy_start = time.time()
-        for model_to_try in cascade:
-            try:
-                logger.info(f"Attempting cascade model (streaming): {model_to_try}")
-                body_to_send = body.copy()
-                body_to_send["model"] = model_to_try
-                
-                # Inject custom trace name for Langfuse
-                if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
-                    body_to_send["metadata"] = {}
-                body_to_send["metadata"]["trace_name"] = "agent-completion-cascade"
-                
-                req = client.build_request(
-                    "POST",
-                    f"{backend_api_base}/chat/completions",
-                    json=body_to_send,
-                    headers=headers
-                )
-                r = await client.send(req, stream=True)
-                if r.status_code == 200:
-                    async def stream_generator():
-                        completion_chars = 0
-                        request_tokens = len(json.dumps(body_to_send)) // 4
-                        try:
-                            async for chunk in r.aiter_bytes():
-                                completion_chars += len(chunk)
-                                yield chunk
-                            # Update proxy metrics on completion
-                            proxy_latency = (time.time() - proxy_start) * 1000.0
-                            stats["total_proxy_time_ms"] += proxy_latency
-                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                            
-                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_to_try, proxy_latency, route="litellm_fallback")
-                        except Exception as ex:
-                            logger.error(f"Stream generation error on model {model_to_try}: {ex}")
-                        finally:
-                            await r.aclose()
-                            await client.aclose()
-                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
-                else:
-                    # Read response body for diagnostic logging before closing
-                    try:
-                        error_body = await r.aread()
-                        logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}. Response: {error_body[:500]}")
-                    except Exception:
-                        logger.warning(f"Cascade model '{model_to_try}' stream call failed with status {r.status_code}.")
-                    await r.aclose()
-                    # On rate-limit (429), wait briefly before trying next model to stagger concurrent requests
-                    if r.status_code == 429:
-                        await asyncio.sleep(2)
-            except Exception as e:
-                logger.error(f"Exception during cascade stream attempt for model '{model_to_try}': {e}")
+    # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
+    proxy_start = time.time()
+    model_name = target_model  # LiteLLM handles fallback internally
+    
+    try:
+        body_to_send = body.copy()
+        body_to_send["model"] = model_name
+        if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
+            body_to_send["metadata"] = {}
+        body_to_send["metadata"]["trace_name"] = "agent-completion"
         
-        await client.aclose()
-        logger.error("All models in the streaming cascade failed.")
-        raise HTTPException(status_code=502, detail="Bad Gateway: All models in the fallback cascade failed.")
-    else:
-        proxy_start = time.time()
-        for model_to_try in cascade:
-            try:
-                logger.info(f"Attempting cascade model (non-streaming): {model_to_try}")
-                body_to_send = body.copy()
-                body_to_send["model"] = model_to_try
-                
-                # Inject custom trace name for Langfuse
-                if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
-                    body_to_send["metadata"] = {}
-                body_to_send["metadata"]["trace_name"] = "agent-completion-cascade"
-                
-                response = await client.post(
-                    f"{backend_api_base}/chat/completions",
-                    json=body_to_send,
-                    headers=headers
-                )
-                if response.status_code == 200:
-                    await client.aclose()
-                    
-                    # Update proxy metrics
-                    proxy_latency = (time.time() - proxy_start) * 1000.0
-                    stats["total_proxy_time_ms"] += proxy_latency
-                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                    
-                    resp_json = response.json()
-                    usage = resp_json.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
-                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
-                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_to_try, proxy_latency, route="litellm_fallback")
-                    
-                    return resp_json
-                else:
+        if body.get("stream", False):
+            logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
+            req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+            r = await client.send(req, stream=True)
+            if r.status_code == 200:
+                async def stream_generator():
+                    completion_chars = 0
+                    request_tokens = len(json.dumps(body_to_send)) // 4
                     try:
-                        error_detail = response.text[:500]
-                        logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}. Response: {error_detail}")
-                    except Exception:
-                        logger.warning(f"Cascade model '{model_to_try}' failed with status {response.status_code}.")
-                    # On rate-limit (429), wait briefly before trying next model
-                    if response.status_code == 429:
-                        await asyncio.sleep(2)
-            except Exception as e:
-                logger.error(f"Exception during cascade attempt for model '{model_to_try}': {e}")
-        
+                        async for chunk in r.aiter_bytes():
+                            completion_chars += len(chunk)
+                            yield chunk
+                        proxy_latency = (time.time() - proxy_start) * 1000.0
+                        stats["total_proxy_time_ms"] += proxy_latency
+                        stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                        record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
+                    except Exception as ex:
+                        logger.error(f"Stream error: {ex}")
+                    finally:
+                        await r.aclose()
+                        await client.aclose()
+                return StreamingResponse(stream_generator(), media_type="text/event-stream")
+            else:
+                error_body = await r.aread() if r else b""
+                logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
+                await r.aclose(); await client.aclose()
+                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {r.status_code}")
+        else:
+            logger.info(f"Proxying to LiteLLM as model={model_name}")
+            response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+            await client.aclose()
+            if response.status_code == 200:
+                proxy_latency = (time.time() - proxy_start) * 1000.0
+                stats["total_proxy_time_ms"] += proxy_latency
+                stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                resp_json = response.json()
+                usage = resp_json.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
+                completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+                record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
+                return resp_json
+            else:
+                logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
+                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {response.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Exception during LiteLLM proxy: {e}")
         await client.aclose()
-        logger.error("All models in the non-streaming cascade failed.")
-        raise HTTPException(status_code=502, detail="Bad Gateway: All models in the fallback cascade failed.")
+        raise HTTPException(status_code=502, detail="LiteLLM upstream failed")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -1599,8 +1546,8 @@ async def get_dashboard():
                     <div class="section-title" style="margin-bottom: 10px;">Quick Console Links</div>
                     <div class="btn-group">
                         <!-- Goose Dashboard local -->
-                        <a href="http://localhost:3001" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
-                            <span>{src_badge('GOOSE', '#fbbf24')} 🦢 Goose Local Dashboard</span>
+                        <a href="https://t.me/SheepBot?start=goose" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
+                            <span>{src_badge('GOOSE', '#fbbf24')} 🦢 Goose Telegram Bot</span>
                             <span class="btn-arrow">→</span>
                         </a>
                     </div>

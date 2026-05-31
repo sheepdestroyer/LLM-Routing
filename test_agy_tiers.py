@@ -14,7 +14,6 @@ CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversati
 
 TIERS = [
     {"name": "Gemini 3.5 Flash",    "override": ""},
-    {"name": "Claude Sonnet 4.6",   "override": "claude-sonnet-4-6@default"},
     {"name": "Claude Opus 4.6",     "override": "claude-opus-4-6@default"},
 ]
 

@@ -21,12 +21,10 @@ graph TD
         Router -->|"2. Exec Proxy - Complex Tiers"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
         
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
-        AgyProxy -->|Tier 2| AgySonnet["agy w/ override\n(Claude Sonnet 4.6)"]
-        AgyProxy -->|Tier 3| AgyOpus["agy w/ override\n(Claude Opus 4.6)"]
+        AgyProxy -->|Tier 2| AgyOpus["agy w/ override\n(Claude Opus 4.6)"]
     end
 
     AgyGemini -.->|Keyring Auth| Google["Cloud Code Assist API\n(daily-cloudcode-pa.googleapis.com)"]
-    AgySonnet -.->|Keyring Auth| Google
     AgyOpus -.->|Keyring Auth| Google
 
     Router -->|3. Fallback Route| RouteSelector{"Tiers Exhausted?"}
@@ -50,7 +48,6 @@ graph TD
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
     style Router fill:#f9f9f9,stroke:#333,stroke-width:2px;
     style AgyGemini fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
-    style AgySonnet fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style AgyOpus fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style LiteLLM fill:#f2f9f2,stroke:#85c285,stroke-width:2px;
     style Valkey fill:#fff0f0,stroke:#e06666,stroke-width:2px;
@@ -89,31 +86,24 @@ sequenceDiagram
             Router-->>Client: Return chat completion
         else Tier 1: quota exhausted (rc=0, stdout="")
             Note over Router: Detect empty output, query cli.log for 429
-            Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Sonnet override)
+            Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Opus override)
             alt Tier 2 Succeeds
-                Agy-->>Router: Claude Sonnet 4.6 response (stdout)
+                Agy-->>Router: Claude Opus 4.6 response (stdout)
                 Router-->>Client: Return chat completion
             else Tier 2 also exhausted
-                Note over Router: Detect empty output, query cli.log for 429
-                Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Opus override)
-                alt Tier 3 Succeeds
-                    Agy-->>Router: Claude Opus 4.6 response (stdout)
-                    Router-->>Client: Return chat completion
-                else Tier 3 also exhausted
-                    Note over Router: Fall through to LiteLLM Gateway
-                    Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
-                    Proxy->>Cache: Query semantic cache
-                    alt Cache Hit
-                        Cache-->>Proxy: Return cached response
-                        Proxy-->>Router: Return response
-                        Router-->>Client: Return response
-                    else Cache Miss
-                        Proxy->>Provider: Forward down fallback cascade (OR Dynamic / Local MoE)
-                        Provider-->>Proxy: Return completion
-                        Proxy->>Cache: Set cache key
-                        Proxy-->>Router: Return response
-                        Router-->>Client: Return response
-                    end
+                Note over Router: Fall through to LiteLLM Gateway
+                Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
+                Proxy->>Cache: Query semantic cache
+                alt Cache Hit
+                    Cache-->>Proxy: Return cached response
+                    Proxy-->>Router: Return response
+                    Router-->>Client: Return response
+                else Cache Miss
+                    Proxy->>Provider: Forward down fallback cascade (OR Dynamic / Local MoE)
+                    Provider-->>Proxy: Return completion
+                    Proxy->>Cache: Set cache key
+                    Proxy-->>Router: Return response
+                    Router-->>Client: Return response
                 end
             end
         end
@@ -333,18 +323,15 @@ The proxy maintains conversation continuity across tier switches and subsequent 
 A session ID is derived from a hash of the message history fingerprint, ensuring requests from
 the same goose conversation reuse the same agy conversation.
 
-### Architecture: 3-Tier Fallback Chain
+### Architecture: 2-Tier Fallback Chain
 
 ```
 Tier 1: agy --print (Default)                → Gemini 3.5 Flash (Cloud Code Assist quota)
         ↓ (quota exhausted / fail)
 Tier 2: CASCADE_DEFAULT_MODEL_OVERRIDE=      
-        claude-sonnet-4-6@default             → Claude Sonnet 4.6 (Anthropic via Vertex AI)
-        ↓ (quota exhausted / fail)
-Tier 3: CASCADE_DEFAULT_MODEL_OVERRIDE=      
         claude-opus-4-6@default               → Claude Opus 4.6 (Premium Anthropic Tier)
         ↓ (all agy tiers exhausted)
-Tier 4: LiteLLM Gateway Fallback Chain        → OpenRouter Dynamic Free / Kimi K2.6 → Local speculative MoE Qwen
+Tier 3: LiteLLM Gateway Fallback Chain        → OpenRouter Dynamic Free / Kimi K2.6 → Local speculative MoE Qwen
 ```
 
 ### Quota Detection
@@ -371,7 +358,6 @@ Additional mounts required in `pod.yaml`:
 | Model | Env Var Value | Backend |
 |-------|---------------|---------|
 | Gemini 3.5 Flash | `""` (auto-select) | Cloud Code Assist (default) |
-| Claude Sonnet 4.6 | `claude-sonnet-4-6@default` | Anthropic via Vertex AI |
 | Claude Opus 4.6 | `claude-opus-4-6@default` | Anthropic premium tier |
 | Claude Sonnet 4.5 | `claude-sonnet-4-5@20250929` | Anthropic via Vertex AI |
 | Claude Haiku 4.5 | `claude-haiku-4-5@20251001` | Anthropic lightweight |
@@ -383,7 +369,7 @@ Additional mounts required in `pod.yaml`:
 agy --print "Hello"
 
 # Test Claude model override
-CASCADE_DEFAULT_MODEL_OVERRIDE=claude-sonnet-4-6@default agy --print "Hello"
+CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-4-6@default agy --print "Hello"
 
 # Test session continuation
 agy --print "First message"                    # creates conversation
