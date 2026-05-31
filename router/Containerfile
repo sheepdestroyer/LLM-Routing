@@ -5,10 +5,6 @@ WORKDIR /app
 # Install dependencies
 RUN pip install fastapi uvicorn httpx pyyaml
 
-# Create mock pactl and mpv to prevent PulseAudio and media hangs in headless container
-RUN echo '#!/bin/sh\necho "Connection failure: Connection refused"\nexit 1' > /usr/local/bin/pactl && chmod +x /usr/local/bin/pactl \
-    && echo '#!/bin/sh\nexit 1' > /usr/local/bin/mpv && chmod +x /usr/local/bin/mpv
-
 # Copy router code
 COPY main.py /app/main.py
 COPY agy_proxy.py /app/agy_proxy.py

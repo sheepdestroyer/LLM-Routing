@@ -221,15 +221,6 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 context_parts.append(f"Assistant: {content}")
         proxy_prompt = "\n".join(context_parts[-6:])
 
-    # Force raw LLM pass-through behavior without agentic tool executions
-    system_directive = (
-        "[SYSTEM DIRECTIVE: You are acting as a strict raw text completion LLM. "
-        "DO NOT execute, suggest, or invoke any tools, functions, or shell commands under any circumstance. "
-        "Do not write, read, or edit any files. Do not run any subprocesses. "
-        "Only generate a direct text response to the user's last message.]\n\n"
-    )
-    proxy_prompt = system_directive + proxy_prompt
-
     # Check if we have an existing session with a conversation ID
     existing_conv_id = None
     start_tier_index = 0
