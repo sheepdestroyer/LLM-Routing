@@ -16,7 +16,7 @@ The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host 
 graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
     
-    subgraph FastAPI Router ["FastAPI Router Pod Context"]
+    subgraph FastAPIRouter ["FastAPI Router Pod Context"]
         Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-0.8b-routing)"]
         Router -->|2. Exec Proxy (Complex Tiers)| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
         
@@ -33,12 +33,12 @@ graph TD
     RouteSelector -->|Yes| LiteLLM["LiteLLM Gateway\n(Port 4000)"]
     AgyProxy -->|Quota Exhausted| RouteSelector
 
-    subgraph LiteLLM Gateway ["LiteLLM Gateway Context"]
+    subgraph LiteLLMGateway ["LiteLLM Gateway Context"]
         LiteLLM -->|Exact & Semantic Cache| Valkey[("Valkey Cache\n(Port 6379)")]
         LiteLLM -->|Telemetry Handlers| Langfuse["Langfuse Server\n(Port 3000)"]
     end
 
-    subgraph Backend Routing Cascade ["LiteLLM Backend Cascade"]
+    subgraph BackendRoutingCascade ["LiteLLM Backend Cascade"]
         LiteLLM -->|Tier 1 - OR Dynamic| OpenRouter["OpenRouter Free Models\n(Dynamic Free / Kimi K2.6)"]
         LiteLLM -->|Tier 2 - Host GPU| QwenLocal["Local speculative MoE Qwen\n(qwen-35b-q4ks)"]
     end
