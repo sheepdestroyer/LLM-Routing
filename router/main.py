@@ -7,7 +7,7 @@ import asyncio
 import logging
 import yaml
 import httpx
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 # Configure logging
@@ -96,6 +96,7 @@ load_persisted_stats()
 # Triage Decision Cache (In-Memory dictionary mapping normalized prompt -> (classification, timestamp))
 triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
+classification_lock = asyncio.Lock()
 
 app = FastAPI(title="LLM Triage Router")
 
@@ -119,15 +120,15 @@ async def check_http_endpoint(url: str) -> bool:
     except Exception:
         return False
 
-async def classify_request(prompt: str) -> tuple[str, float]:
+async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str, float]:
     """Queries the local fast Qwen instance to classify request complexity with TTL caching."""
     global triage_cache, stats
     
     # Normalize the prompt text for cache mapping
     normalized_prompt = prompt.strip().lower()
     
-    # 1. Check in-memory TTL cache
-    if normalized_prompt in triage_cache:
+    # 1. Check in-memory TTL cache (outside lock)
+    if not bypass_cache and normalized_prompt in triage_cache:
         cached_decision, cached_time = triage_cache[normalized_prompt]
         if time.time() - cached_time < CACHE_TTL_SECONDS:
             logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
@@ -136,54 +137,61 @@ async def classify_request(prompt: str) -> tuple[str, float]:
             return cached_decision, 0.0  # 0.0ms classification latency
             
     start_time = time.time()
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            payload = {
-                "model": router_model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.0,
-                "max_tokens": 15
-            }
-            headers = {"Authorization": f"Bearer {router_api_key}"}
-            
-            logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
-            response = await client.post(
-                f"{router_api_base}/chat/completions",
-                json=payload,
-                headers=headers
-            )
-            
+    
+    # 2. Query llama-server sequentially using a lock to prevent concurrent slot conflicts
+    async with classification_lock:
+        # Check cache again just in case a concurrent request finished and cached it while we waited
+        if not bypass_cache and normalized_prompt in triage_cache:
+            cached_decision, cached_time = triage_cache[normalized_prompt]
+            if time.time() - cached_time < CACHE_TTL_SECONDS:
+                logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
+                stats["cache_hits"] = stats.get("cache_hits", 0) + 1
+                save_persisted_stats()
+                return cached_decision, 0.0
+                
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                payload = {
+                    "model": router_model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.0,
+                    "max_tokens": 15,
+                    "grammar": 'root ::= "agent-simple-core" | "agent-complex-core"'
+                }
+                headers = {"Authorization": f"Bearer {router_api_key}"}
+                
+                logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
+                response = await client.post(
+                    f"{router_api_base}/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                
+                latency = (time.time() - start_time) * 1000.0
+                
+                if response.status_code != 200:
+                    logger.error(f"Classification failed with status {response.status_code}: {response.text}")
+                    return "agent-complex-core", latency
+                    
+                result = response.json()
+                message_obj = result["choices"][0]["message"]
+                content = message_obj.get("content") or ""
+                content_clean = content.strip()
+                logger.info(f"Raw classifier response: '{content_clean}'")
+                
+                decision = "agent-simple-core" if content_clean == "agent-simple-core" else "agent-complex-core"
+                    
+                # Store in cache
+                triage_cache[normalized_prompt] = (decision, time.time())
+                return decision, latency
+                    
+        except Exception as e:
             latency = (time.time() - start_time) * 1000.0
-            
-            if response.status_code != 200:
-                logger.error(f"Classification failed with status {response.status_code}: {response.text}")
-                return "agent-complex-core", latency
-                
-            result = response.json()
-            message_obj = result["choices"][0]["message"]
-            content = message_obj.get("content") or ""
-            reasoning = message_obj.get("reasoning_content") or ""
-            classification = (content + " " + reasoning).strip()
-            logger.info(f"Raw classifier response (content + reasoning): '{classification}'")
-            
-            # Sanitize response
-            classification_clean = classification.replace("`", "").replace('"', '').replace("'", "").strip()
-            
-            decision = "agent-complex-core"
-            if "agent-simple-core" in classification_clean:
-                decision = "agent-simple-core"
-                
-            # Store in cache
-            triage_cache[normalized_prompt] = (decision, time.time())
-            return decision, latency
-                
-    except Exception as e:
-        latency = (time.time() - start_time) * 1000.0
-        logger.error(f"Exception during classification: {e}")
-        return "agent-complex-core", latency
+            logger.error(f"Exception during classification: {e}")
+            return "agent-complex-core", latency
 
 def get_live_gemini_oauth_token() -> str | None:
     try:
@@ -203,6 +211,42 @@ def get_live_gemini_oauth_token() -> str | None:
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
+
+def get_gemini_oauth_status() -> dict:
+    """Returns structured OAuth status for the dashboard banner."""
+    creds_path = "/config/gemini_auth/oauth_creds.json"
+    try:
+        if not os.path.exists(creds_path):
+            return {"status": "missing", "detail": "No oauth_creds.json found", "expiry_ms": 0}
+        with open(creds_path, "r") as f:
+            data = json.load(f)
+        access_token = data.get("access_token")
+        expiry_ms = data.get("expiry_date", 0)
+        current_ms = int(time.time() * 1000)
+        if not access_token:
+            return {"status": "missing", "detail": "No access token in file", "expiry_ms": 0}
+        diff_sec = (expiry_ms - current_ms) / 1000.0
+        if diff_sec > 0:
+            # Token is valid — compute human-readable remaining time
+            if diff_sec < 60:
+                remaining = f"{int(diff_sec)}s"
+            elif diff_sec < 3600:
+                remaining = f"{int(diff_sec // 60)}m {int(diff_sec % 60)}s"
+            else:
+                remaining = f"{int(diff_sec // 3600)}h {int((diff_sec % 3600) // 60)}m"
+            return {"status": "valid", "detail": f"Expires in {remaining}", "expiry_ms": expiry_ms}
+        else:
+            # Token is expired — compute human-readable elapsed time
+            elapsed = abs(diff_sec)
+            if elapsed < 3600:
+                ago = f"{int(elapsed // 60)} minutes ago"
+            elif elapsed < 86400:
+                ago = f"{int(elapsed // 3600)} hours ago"
+            else:
+                ago = f"{int(elapsed // 86400)} days ago"
+            return {"status": "expired", "detail": f"Expired {ago}", "expiry_ms": expiry_ms}
+    except Exception as e:
+        return {"status": "error", "detail": str(e), "expiry_ms": 0}
 
 def map_tool_to_category(tool_name: str) -> str:
     """Groups low-level developer tool names into the five high-level dashboard metrics."""
@@ -479,6 +523,54 @@ def get_pie_chart_gradient() -> str:
         
     return f"background: conic-gradient({', '.join(gradient_parts)});"
 
+@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+async def proxy_memory(request: Request, path: str = ""):
+    """Proxies memory API calls to the LiteLLM gateway on port 4000."""
+    litellm_base = "http://127.0.0.1:4000/v1/memory"
+    
+    # Resolve the destination URL
+    url = f"{litellm_base}{path}"
+    
+    # Prepare query parameters
+    query_params = dict(request.query_params)
+    
+    # Read request body
+    body = await request.body()
+    
+    # Resolve authorization header using LiteLLM master key
+    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    headers = {
+        "Authorization": f"Bearer {litellm_key}",
+        "Content-Type": request.headers.get("content-type", "application/json")
+    }
+    
+    logger.info(f"Proxying memory request: {request.method} {url} with params {query_params}")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.request(
+                method=request.method,
+                url=url,
+                params=query_params,
+                content=body,
+                headers=headers
+            )
+            
+            # Return response matching status and headers
+            response_headers = dict(r.headers)
+            # Exclude standard headers that FastAPI/uvicorn will manage
+            for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
+                response_headers.pop(h, None)
+                
+            return Response(
+                content=r.content,
+                status_code=r.status_code,
+                headers=response_headers
+            )
+    except Exception as e:
+        logger.error(f"Failed to proxy memory request: {e}")
+        raise HTTPException(status_code=502, detail=f"Memory proxy failed: {e}")
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     global stats
@@ -506,13 +598,14 @@ async def chat_completions(request: Request):
     # Prompt-length triage bypass: large prompts skip the 0.8B routing model
     # Threshold: >2000 chars → automatically complex (saves routing tokens for big contexts)
     PROMPT_LENGTH_THRESHOLD = 2000
+    bypass_cache = request.headers.get("x-bypass-cache") == "true"
     if len(last_user_message) > PROMPT_LENGTH_THRESHOLD:
         target_model = "agent-complex-core"
         triage_latency = 0.0
         logger.info(f"Triage bypass: prompt too long ({len(last_user_message)} chars > {PROMPT_LENGTH_THRESHOLD}), auto-classified as complex")
     else:
         # Classify request via local Qwen 0.8B
-        target_model, triage_latency = await classify_request(last_user_message)
+        target_model, triage_latency = await classify_request(last_user_message, bypass_cache=bypass_cache)
     logger.info(f"Triage decision: Routing request to backend model -> '{target_model}'")
 
     # Update in-memory statistics
@@ -570,7 +663,46 @@ async def chat_completions(request: Request):
                         model_name, latency_ms, route="google_oauth_direct"
                     )
                     logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
-                    return agy_response
+                    
+                    if body.get("stream", False):
+                        content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        async def agy_stream_generator():
+                            import uuid
+                            created_time = int(time.time())
+                            chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+                            chunk_size = 40
+                            for i in range(0, len(content), chunk_size):
+                                chunk_text = content[i:i+chunk_size]
+                                chunk_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model_name,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"content": chunk_text},
+                                        "finish_reason": None
+                                    }]
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
+                                await asyncio.sleep(0.005)
+                            
+                            finish_data = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model_name,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop"
+                                }]
+                            }
+                            yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
+                            yield b"data: [DONE]\n\n"
+                        return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
+                    else:
+                        return agy_response
         except ImportError:
             logger.warning("agy_proxy module not available, falling back to direct API call")
         except Exception as e:
@@ -733,6 +865,60 @@ async def get_dashboard():
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
     llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3000")
+
+    # 1c. Check Gemini OAuth token status
+    oauth_status = get_gemini_oauth_status()
+
+    # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
+    oauth_banner_html = ""
+    if oauth_status["status"] == "expired":
+        oauth_banner_html = f"""
+        <div class="oauth-banner">
+            <div class="oauth-banner-inner oauth-banner-expired">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 22px;">⚠️</span>
+                    <div>
+                        <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Token Expired</div>
+                        <div style="opacity: 0.8; font-size: 13px;">{oauth_status["detail"]}. The agy proxy Tier 1 (Gemini) will timeout on every request, adding ~120s latency.</div>
+                    </div>
+                </div>
+                <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => {{ const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }})">
+                    <span class="copied-tooltip">Copied!</span>
+                    $ agy auth login
+                </div>
+            </div>
+        </div>
+        """
+    elif oauth_status["status"] in ("missing", "error"):
+        oauth_banner_html = f"""
+        <div class="oauth-banner">
+            <div class="oauth-banner-inner oauth-banner-missing">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 22px;">🔑</span>
+                    <div>
+                        <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Not Configured</div>
+                        <div style="opacity: 0.8; font-size: 13px;">{oauth_status["detail"]}. Run the command to authenticate.</div>
+                    </div>
+                </div>
+                <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => {{ const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }})">
+                    <span class="copied-tooltip">Copied!</span>
+                    $ agy auth login
+                </div>
+            </div>
+        </div>
+        """
+    else:
+        oauth_banner_html = f"""
+        <div class="oauth-banner">
+            <div class="oauth-banner-inner oauth-banner-valid">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 18px;">✅</span>
+                    <span style="font-weight: 600;">Gemini OAuth Active</span>
+                    <span style="opacity: 0.7; font-size: 13px;">— {oauth_status["detail"]}</span>
+                </div>
+            </div>
+        </div>
+        """
 
     # 1b. Fetch top free model from OpenRouter
     best_free_model = await get_best_free_model()
@@ -984,6 +1170,86 @@ async def get_dashboard():
                 --text-main: #f8fafc;
                 --glass-bg: rgba(255, 255, 255, 0.03);
                 --glass-border: rgba(255, 255, 255, 0.08);
+            }}
+
+            .oauth-banner {{
+                width: 100%;
+                max-width: 1400px;
+                margin: 0 auto -10px auto;
+                padding: 0 20px;
+            }}
+
+            .oauth-banner-inner {{
+                border-radius: 12px;
+                padding: 16px 24px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                font-size: 14px;
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                animation: bannerPulse 3s ease-in-out infinite;
+            }}
+
+            .oauth-banner-expired {{
+                background: rgba(244, 63, 94, 0.12);
+                border: 1px solid rgba(244, 63, 94, 0.35);
+                color: #fda4af;
+            }}
+
+            .oauth-banner-valid {{
+                background: rgba(16, 185, 129, 0.08);
+                border: 1px solid rgba(16, 185, 129, 0.2);
+                color: #6ee7b7;
+                animation: none;
+            }}
+
+            .oauth-banner-missing {{
+                background: rgba(251, 191, 36, 0.1);
+                border: 1px solid rgba(251, 191, 36, 0.3);
+                color: #fde68a;
+            }}
+
+            .oauth-banner-cmd {{
+                font-family: monospace;
+                background: rgba(0, 0, 0, 0.3);
+                padding: 6px 14px;
+                border-radius: 8px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                white-space: nowrap;
+                cursor: pointer;
+                transition: background 0.2s;
+                position: relative;
+            }}
+
+            .oauth-banner-cmd:hover {{
+                background: rgba(0, 0, 0, 0.5);
+            }}
+
+            .oauth-banner-cmd .copied-tooltip {{
+                position: absolute;
+                top: -28px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #10b981;
+                color: #fff;
+                padding: 3px 10px;
+                border-radius: 6px;
+                font-size: 11px;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.3s;
+            }}
+
+            .oauth-banner-cmd .copied-tooltip.show {{
+                opacity: 1;
+            }}
+
+            @keyframes bannerPulse {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.85; }}
             }}
 
             * {{
@@ -1310,6 +1576,8 @@ async def get_dashboard():
             </div>
             <div class="dashboard-title">System Control Center</div>
         </header>
+
+        {oauth_banner_html}
 
         <main>
             <!-- LEFT COLUMN: LIVE TELEMETRY, METERS, PIES & TIMELINES -->

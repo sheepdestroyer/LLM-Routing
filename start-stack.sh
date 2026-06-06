@@ -47,8 +47,12 @@ if [ -z "$ACTIVE_OAUTH" ]; then
     echo "Gemini models may fail. Please ensure you are logged into Antigravity."
 fi
 
-# 3. Generate a random LiteLLM master key for this session
-LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
+# 3. Use LiteLLM master key from .env if present, otherwise generate a random one
+if [ -z "$LITELLM_MASTER_KEY" ]; then
+    LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
+    echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
+    echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
+fi
 
 # 4. Generate dynamic deployment definition with secrets injected in memory
 cp pod.yaml pod-run.yaml
@@ -83,6 +87,7 @@ echo "🧹 Cleaned up temporary deployment files from disk."
 echo "========================================================================"
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
 echo "📍 Entry endpoint  : http://localhost:5000/v1"
+echo "⚙️  Dashboard URL : http://localhost:5000/dashboard"
 echo "🔑 Gateway API Key : gateway-pass"
 echo "🔐 LiteLLM Admin UI: http://localhost:4000/ui"
 echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"

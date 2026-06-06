@@ -380,7 +380,29 @@ agy --conversation <id> --print "Follow-up"    # continues same session
 python3 test_agy_tiers.py
 ```
 
-## 9b. Performance & Triage Optimization Metrics
+### 9b. Streaming & Concurrency Optimizations
+
+To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
+
+#### 1. Real-Time Streaming Wrapper for `agy` Response
+Although the host-side `agy` CLI executes synchronously and yields its result on completion, the Triage Router acts as a compatibility adapter:
+* When `stream: true` is requested by the client, the router detects this and consumes the `agy` output on completion.
+* The router runs an asynchronous generator that chunks the static text and yields compliant OpenAI Server-Sent Events (SSE) packets (`data: {"choices": [{"delta": {"content": ...}}]}\n\n`) at low latency intervals, closing with `data: [DONE]`.
+* This completely resolves parsing issues in streaming-only event parsers.
+
+#### 2. Sequential Classification Lock (`classification_lock`)
+Because the local routing model (`qwen-0.8b-routing`) is optimized for low memory footprint and operates on a single execution slot, concurrent requests could trigger slot conflicts (`400 Bad Request`) in `llama-server`.
+* We introduced a global asynchronous lock (`asyncio.Lock`) inside `router/main.py`.
+* Classification queries are serialized to execute one-by-one.
+* **Double-Cache Check**: To maximize throughput, the cache is checked twice—once immediately upon receiving the query (outside the lock), and a second time after acquiring the lock (in case a queued request completed and populated the cache while we waited). This reduces actual LLM inference calls to a minimum.
+
+#### 3. Custom Memory Endpoint Proxy & MCP Server
+To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
+* **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
+* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
+* **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
+
+## 9c. Performance & Triage Optimization Metrics
 
 Through our local benchmarks, the following performance characteristics have been achieved:
 

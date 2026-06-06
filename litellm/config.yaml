@@ -1,8 +1,13 @@
 model_list:
   # =========================================================================
-  # COMPLEX TIERS: OpenRouter Kimi K2.6 (Free) -> Local Qwen MoE (Optimized)
+  # COMPLEX TIERS: OpenRouter Nemotron 3 (Free) -> Local Qwen MoE (Optimized)
   # =========================================================================
   - model_name: agent-complex-core
+    litellm_params:
+      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+      api_key: "os.environ/OPENROUTER_API_KEY"
+
+  - model_name: agent-complex-core-nemotron-super
     litellm_params:
       model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
       api_key: "os.environ/OPENROUTER_API_KEY"
@@ -17,7 +22,7 @@ model_list:
       model: openrouter/openai/gpt-oss-120b:free
       api_key: "os.environ/OPENROUTER_API_KEY"
 
-  - model_name: local-qwen-3.6-complex
+  - model_name: local-qwen-3.6
     litellm_params:
       model: openai/qwen-35b-q4ks
       api_base: http://127.0.0.1:8080/v1
@@ -32,12 +37,6 @@ model_list:
       model: openrouter/google/gemma-4-31b-it:free
       api_key: "os.environ/OPENROUTER_API_KEY"
 
-  - model_name: local-qwen-3.6-simple
-    litellm_params:
-      model: openai/qwen-35b-q4ks
-      api_base: http://127.0.0.1:8080/v1
-      api_key: local-token
-      request_timeout: 300
 
 # =========================================================================
 # GLOBAL SYSTEM POLICIES
@@ -48,8 +47,8 @@ router_settings:
   num_retries: 1
   routing_strategy: "simple-shuffle"
   fallbacks:
-    - agent-complex-core: ["agent-complex-core-kimi", "agent-complex-core-gptoss", "local-qwen-3.6-complex"]
-    - agent-simple-core: ["local-qwen-3.6-simple"]
+    - agent-complex-core: ["agent-complex-core-nemotron-super", "agent-complex-core-kimi", "agent-complex-core-gptoss", "local-qwen-3.6"]
+    - agent-simple-core: ["local-qwen-3.6"]
 
 litellm_settings:
   callbacks: ["langfuse"]

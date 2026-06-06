@@ -1,0 +1,18 @@
+{
+  "service": {
+    "name": "litellm-gateway",
+    "tags": ["production", "proxy", "v1"],
+    "port": 4000,
+    "checks": [
+      {
+        "id": "litellm-http-check",
+        "name": "LiteLLM API Liveness",
+        "http": "http://localhost:4000/health/readiness",
+        "method": "GET",
+        "interval": "5s",
+        "timeout": "2s",
+        "deregister_critical_service_after": "30s"
+      }
+    ]
+  }
+}
