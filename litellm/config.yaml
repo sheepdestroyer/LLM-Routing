@@ -1,60 +1,58 @@
 model_list:
-  # =========================================================================
-  # COMPLEX TIERS: OpenRouter Nemotron 3 (Free) -> Local Qwen MoE (Optimized)
-  # =========================================================================
-  - model_name: agent-complex-core
-    litellm_params:
-      model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-      api_key: "os.environ/OPENROUTER_API_KEY"
-
-  - model_name: agent-complex-core-nemotron-super
-    litellm_params:
-      model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
-      api_key: "os.environ/OPENROUTER_API_KEY"
-
-  - model_name: agent-complex-core-kimi
-    litellm_params:
-      model: openrouter/moonshotai/kimi-k2.6:free
-      api_key: "os.environ/OPENROUTER_API_KEY"
-
-  - model_name: agent-complex-core-gptoss
-    litellm_params:
-      model: openrouter/openai/gpt-oss-120b:free
-      api_key: "os.environ/OPENROUTER_API_KEY"
-
   - model_name: local-qwen-3.6
     litellm_params:
       model: openai/qwen-35b-q4ks
       api_base: http://127.0.0.1:8080/v1
       api_key: local-token
       request_timeout: 300
-
-  # =========================================================================
-  # SIMPLE TIERS: OpenRouter Gemma 4 -> Local Qwen Fast (Optimized)
-  # =========================================================================
-  - model_name: agent-simple-core
+  - model_name: openrouter-auto
     litellm_params:
-      model: openrouter/google/gemma-4-31b-it:free
-      api_key: "os.environ/OPENROUTER_API_KEY"
-
+      model: openrouter/openrouter/auto
+      request_timeout: 120
+  # Local embedding model for zero-cost semantic cache
+  - model_name: local-nomic-embed
+    litellm_params:
+      model: openai/nomic-embed-text-v1.5-Q4_K_M
+      api_base: http://127.0.0.1:8080/v1
+      api_key: local-token
+      request_timeout: 30
 
 # =========================================================================
 # GLOBAL SYSTEM POLICIES
 # =========================================================================
 router_settings:
-  cooldown_time: 5
-  allowed_fails: 3
+  cooldown_time: 30
+  allowed_fails: 2
   num_retries: 1
-  routing_strategy: "simple-shuffle"
+  enable_pre_call_checks: true
+  routing_strategy: "latency-based-routing"
   fallbacks:
-    - agent-complex-core: ["agent-complex-core-nemotron-super", "agent-complex-core-kimi", "agent-complex-core-gptoss", "local-qwen-3.6"]
-    - agent-simple-core: ["local-qwen-3.6"]
+    - agent-complex-core: ["openrouter-auto", "local-qwen-3.6"]
+    - agent-simple-core: ["openrouter-auto", "local-qwen-3.6"]
 
 litellm_settings:
+  detailed_debug: false
   callbacks: ["langfuse"]
   drop_params: true
-  caching: true
+  cache: true
   caching_backend: "redis"
+  cache_params:
+    mode: "default"
+    ttl: 3600
+    type: "redis"
+    host: "127.0.0.1"
+    port: 6379
+
+# Vector store configuration for zero-cost semantic caching
+# Uses local nomic-embed-text-v1.5-Q4_K_M via llama-server (no OpenRouter costs)
+# Model: nomic-embed-text-v1.5-Q4_K_M (GGUF ~137MB) with CLS pooling, 768-dim vectors
+# Configured in /home/gpav/Vrac/LAB/AI/models.ini [nomic-embed-text-v1.5-Q4_K_M]
+# llama-server runs with --models-max 3 to keep classifier + MoE + embed loaded
+vector_store_settings:
+  store_type: "postgres"
+  connection_string: "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres"
+  collection_name: "litellm_semantic_cache"
+  embedding_model: "local-nomic-embed"
 
 # Shared local Valkey cache connection profile
 redis_settings:

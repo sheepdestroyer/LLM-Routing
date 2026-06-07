@@ -2,7 +2,7 @@
 
 This repository contains the production-grade, rootless local deployment configurations, automated scripts, and comprehensive telemetry systems for the **LLM Triage & Fallback Gateway** on Fedora 44.
 
-The gateway exposes a unified OpenAI-compatible endpoint that dynamically assesses prompt complexity, routes requests to optimal models, manages automatic cascading fallbacks, caches responses semantically via Valkey, and tracks full agentic nested executions in a self-hosted Langfuse dashboard.
+The gateway exposes a unified OpenAI-compatible endpoint that dynamically assesses prompt complexity, routes requests to optimal models, manages automatic cascading fallbacks, caches responses semantically via Valkey (using a local zero-cost embedding model — `nomic-embed-text-v1.5-Q4_K_M` on llama-server — instead of paid OpenRouter embeddings), and tracks full agentic nested executions in a self-hosted Langfuse dashboard.
 
 ---
 
@@ -32,17 +32,20 @@ graph TD
     AgyProxy -->|Quota Exhausted| RouteSelector
 
     subgraph LiteLLMGateway ["LiteLLM Gateway Context"]
-        LiteLLM -->|Exact & Semantic Cache| Valkey[("Valkey Cache\n(Port 6379)")]
-        LiteLLM -->|Telemetry Handlers| Langfuse["Langfuse Server\n(Port 3000)"]
+        LiteLLM -->|Semantic Cache| Valkey[("Valkey Cache\n(Port 6379)")]
+        LiteLLM -->|Telemetry Callbacks| Langfuse["Langfuse v3\n(Port 3000)"]
     end
 
     subgraph BackendRoutingCascade ["LiteLLM Backend Cascade"]
-        LiteLLM -->|Tier 1 - OR Dynamic| OpenRouter["OpenRouter Free Models\n(Dynamic Free / Kimi K2.6)"]
-        LiteLLM -->|Tier 2 - Host GPU| QwenLocal["Local speculative MoE Qwen\n(qwen-35b-q4ks)"]
+        LiteLLM -->|Tier 1 - Latency-Based| OpenRouter["OpenRouter Dynamic\n(latency-based routing)"]
+        LiteLLM -->|Tier 2 - Host GPU| QwenLocal["Local Qwen\n(qwen-35b-q4ks)"]
     end
 
-    subgraph Observability ["Observability Backend"]
-        Langfuse -->|Persistent Storage| Postgres[("PostgreSQL DB\n(Port 5432)")]
+    subgraph Observability ["Observability Backend (Langfuse v3)"]
+        Langfuse -->|Metadata| Postgres[("PostgreSQL 18\n(Port 5432)")]
+        Langfuse -->|Traces| ClickHouse[("ClickHouse\n(Port 8123/9000)")]
+        Langfuse -->|Events| Minio[("Minio S3\n(Port 9002)")]
+        Langfuse -->|Job Queues| RedisLF[("Redis-LF\n(Port 6380)")]
     end
     
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
@@ -53,10 +56,32 @@ graph TD
     style Valkey fill:#fff0f0,stroke:#e06666,stroke-width:2px;
     style Langfuse fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
     style Postgres fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
+    style ClickHouse fill:#f0f0e0,stroke:#c9c985,stroke-width:2px;
+    style Minio fill:#e0f0e0,stroke:#85c285,stroke-width:2px;
+    style RedisLF fill:#ffe0e0,stroke:#e08585,stroke-width:2px;
 ```
 
 > **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
-```
+
+---
+
+## 1b. Container Health Checks & Auto-Restart
+
+All core containers are configured with **Kubernetes-style liveness and readiness probes** in [`pod.yaml`](pod.yaml) to enable automatic container restart on crash via Podman. This ensures the stack self-heals without manual intervention.
+
+| Container | Liveness Probe | Readiness Probe |
+|:---|---:|---:|
+| **valkey-cache** | `valkey-cli PING` every 10s | `valkey-cli PING` every 5s |
+| **litellm-gateway** | Python `urllib` GET `/health` (port 4000, accepts 200/401) every 15s | Same, every 10s |
+| **llm-triage-router** | Python `urllib` GET `/dashboard` (port 5000) every 15s | Same, every 10s |
+| **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
+| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
+| **langfuse-redis** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
+| **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3000/` every 15s | Same, every 10s |
+| **langfuse-worker** | `pgrep -f langfuse-worker` every 15s | — |
+| **minio-s3** | TCP socket check on port 9002 every 15s | Same, every 10s |
+
+The pod-level `restartPolicy: Always` combined with these probes means Podman will restart any container that fails its health check or exits unexpectedly, enabling true self-healing for the entire stack.
 
 ---
 
@@ -139,19 +164,29 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── .env                 # Environment file for OpenRouter API Key (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
-├── pod.yaml             # Podman Kubernetes template defining the container stack
-├── start-stack.sh       # Unified startup and credential extraction script (executible)
+├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
+├── start-stack.sh       # Unified startup and credential extraction script
 ├── litellm/
-│   └── config.yaml      # LiteLLM fallback chains, caching definitions & telemetry keys
+│   ├── config.yaml      # LiteLLM fallback chains, caching definitions & telemetry keys
+│   └── entrypoint.py    # LiteLLM startup wrapper (reads .env + oauth_creds.json)
 ├── router/
 │   ├── Containerfile    # Container construction rules for the FastAPI server
-│   ├── config.yaml      # Classifier prompt definitions & host connection targets
+│   ├── config.yaml      # 4-tier classifier prompt + backend connection targets
 │   ├── main.py          # FastAPI Reverse-Proxy + Glassmorphic Control Dashboard
-│   └── agy_proxy.py     # 3-tier agy fallback with session continuation
-├── test_agy_tiers.py    # agy proxy model tier test suite
+│   ├── agy_proxy.py     # 3-tier agy fallback with session continuation
+│   ├── circuit_breaker.py # Exponential cooldown breaker for agy proxy
+│   └── memory_mcp.py    # MCP bridge server for Goose memory integration
+├── scripts/
+│   └── backup.sh        # Database backup with pg_isready retry logic
+├── backups/             # Timestamped PostgreSQL dumps + config snapshots
+├── distributed/         # Consul templates and HAProxy configs (future)
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
-├── postgres-data/       # [Git Ignored] Persistent tables for Langfuse database
-└── langfuse-data/       # [Git Ignored] Persistent trace assets
+├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
+├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
+├── redis-lf-data/       # [Git Ignored] Persistent job queues for Langfuse v3
+├── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
+├── test_agy_tiers.py    # agy proxy model tier test suite
+└── test_classifier_accuracy.py # Classifier accuracy benchmark
 ```
 
 ---
@@ -168,6 +203,11 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
+- **Local Embedding Model (`local-nomic-embed`)**: A zero-cost embedding model (`nomic-embed-text-v1.5-Q4_K_M`, ~137MB GGUF) running on llama-server. Configured in `litellm/config.yaml` with `api_base: http://127.0.0.1:8080/v1`. Used by `vector_store_settings` for semantic cache similarity search, replacing paid OpenRouter embeddings.
+- **`vector_store_settings`**: PostgreSQL-backed vector store for semantic caching, configured in `litellm/config.yaml`:
+  - `store_type: "postgres"` — pgvector extension on the local PostgreSQL instance
+  - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
+  - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Primary Cascading Fallback Chains**:
   - **`agent-complex-core` (Complex tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
   - **`agent-simple-core` (Simple tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 fast/lightweight free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores <= 76.0 configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
@@ -175,6 +215,13 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
+
+### D. Semantic Cache (`vector_store_settings` in LiteLLM)
+The stack also supports **semantic** (vector-similarity) caching via `vector_store_settings` in `litellm/config.yaml`:
+- **Embedding Model**: Zero-cost local `nomic-embed-text-v1.5-Q4_K_M` (~137MB GGUF) running on llama-server, loaded as `local-nomic-embed` in LiteLLM. Produces 768-dimension vectors with CLS pooling.
+- **Vector Store**: PostgreSQL with pgvector extension stores embeddings in the `litellm_semantic_cache` collection.
+- **Cost**: Completely free — no OpenRouter API calls for embedding generation. The model runs fully offloaded to GPU (`n-gpu-layers: 99`) on the Ryzen PRO APU.
+- **Configuration**: The nomic-embed model profile in `models.ini` (`/home/gpav/Vrac/LAB/AI/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
 
 ---
 
@@ -208,17 +255,21 @@ Run the startup script from the root of the repository:
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`).*
 
 ### 2. Verify Container Status
-Check that all 5 containers inside `agent-router-pod` are up and running:
+Check that all **10 containers** inside `agent-router-pod` are up and running:
 ```bash
 podman pod ps
-podman ps
+podman ps --pod --filter pod=agent-router-pod
 ```
 Your output should display:
-* `valkey-cache`
-* `litellm-gateway`
-* `llm-triage-router`
-* `postgres-db`
-* `langfuse-server`
+* `valkey-cache` (Redis-compatible cache)
+* `litellm-gateway` (LiteLLM proxy on :4000)
+* `llm-triage-router` (FastAPI entry point on :5000)
+* `postgres-db` (PostgreSQL 18 + pgvector on :5432)
+* `clickhouse-db` (ClickHouse for Langfuse v3 traces)
+* `langfuse-redis` (Redis for Langfuse v3 BullMQ on :6380)
+* `langfuse-web` (Langfuse v3 web UI on :3000)
+* `langfuse-worker` (Langfuse v3 background job processor)
+* `minio-s3` (S3-compatible storage for Langfuse v3 events on :9001/:9002)
 
 ---
 
@@ -231,7 +282,7 @@ curl -s http://127.0.0.1:5000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer gateway-pass" \
   -d '{
-    "model": "agent-triage",
+    "model": "agent-simple-core",
     "messages": [
       {"role": "user", "content": "Write a quick hello world in Python."}
     ]
@@ -279,6 +330,47 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 | **Langfuse Monitoring UI** | [http://localhost:3000](http://localhost:3000) | `3000` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
 | **LiteLLM Admin Console** | [http://localhost:4000/ui](http://localhost:4000/ui) | `4000` | Gateway fallback configurations, models inventory, and active proxy stats. |
 | **Llama-Server Playground** | [http://localhost:8080](http://localhost:8080) | `8080` | Local llama.cpp prompt sandbox, dynamic model stats, and API endpoint details. |
+| **Minio S3 Console** | [http://localhost:9001](http://localhost:9001) | `9001` | S3-compatible object storage browser (Langfuse v3 event upload target). |
+| **ClickHouse HTTP** | [http://localhost:8123](http://localhost:8123) | `8123` | ClickHouse HTTP interface (Langfuse v3 trace/observation storage). |
+| **Host agy Daemon** | [http://127.0.0.1:5005/run](http://127.0.0.1:5005/run) | `5005` | Host-side PTY execution bridge for `agy` CLI proxy routes. |
+
+---
+
+## 8b. Minio S3 — Langfuse v3 Event Storage
+
+Langfuse 3.x requires an **S3-compatible object store** for event upload persistence. The stack includes a self-hosted **Minio** server running as the 10th container in the pod.
+
+### Why Minio?
+
+| Component | Storage Role |
+|-----------|-------------|
+| **PostgreSQL** | Metadata — users, projects, API keys, model prices |
+| **ClickHouse** | Traces & observations — high-volume OLAP analytics |
+| **Minio S3** | Event payloads — raw LLM request/response bodies |
+| **Redis-LF** | Job queues — BullMQ for background processing |
+
+Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity at boot via the `LANGFUSE_S3_EVENT_UPLOAD_*` environment variables.
+
+### Configuration
+
+| Env Var | Value |
+|----------|-------|
+| `LANGFUSE_S3_EVENT_UPLOAD_BUCKET` | `langfuse-events` |
+| `LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT` | `http://127.0.0.1:9002` |
+| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | `minioadmin` |
+| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
+| `S3_FORCE_PATH_STYLE` | `true` |
+
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials: `minioadmin` / `minioadmin`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+
+### Health Check
+
+Minio's minimal Go image has no HTTP client tools. The probe uses a raw TCP socket check:
+
+```yaml
+exec:
+  command: [sh, -c, "exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok"]
+```
 
 ---
 
