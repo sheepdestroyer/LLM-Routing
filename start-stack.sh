@@ -101,7 +101,7 @@ fi
 # ClickHouse and Minio are the primary victims — their ports survive container
 # death and block the replacement from binding.
 cleanup_zombie_ports() {
-    local PORTS="8123 9000 9001 9002 9004 9005 9009"
+    local PORTS="3000 3030 8123 9000 9001 9002 9004 9005 9009"
     # Attempt fuser kill first (works if process still alive)
     for port in $PORTS; do
         fuser -k "${port}/tcp" 2>/dev/null || true
