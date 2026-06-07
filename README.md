@@ -201,11 +201,11 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 | Backend name | Complexity level | Fallback chain in LiteLLM | agy trigger |
 |:---|:---|:---|---:|
-| `agent-simple-core` | Trivial syntax fixes / boilerplate | `openrouter-auto` → `local-qwen-3.6` | — |
-| `agent-medium-core` | Moderate logic / light refactoring | `openrouter-auto` → `local-qwen-3.6` | — |
-| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | `openrouter-auto` → `local-qwen-3.6` | **Yes** — delegates to agy proxy (§9a) |
-| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | `openrouter-auto` → `local-qwen-3.6` | — |
-| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | `openrouter-auto` → `local-qwen-3.6` | — |
+| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → openrouter-auto → local-qwen-3.6 | — |
+| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → openrouter-auto → local-qwen-3.6 | — |
+| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → openrouter-auto → local-qwen-3.6 | — |
+| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → openrouter-auto → local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
+| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | openrouter-auto → local-qwen-3.6 | — |
 | `openrouter-auto` | Catch-all / manual override | n/a | — |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
@@ -218,9 +218,14 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `store_type: "postgres"` — pgvector extension on the local PostgreSQL instance
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
-- **Primary Cascading Fallback Chains**:
-  - **`agent-complex-core` (Complex tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
-  - **`agent-simple-core` (Simple tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 fast/lightweight free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores <= 76.0 configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
+- **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
+  Each tier escalates through increasingly capable models before falling back to the local MoE:
+  - **`agent-simple-core`**: medium-core → complex-core → openrouter-auto → `local-qwen-3.6`
+  - **`agent-medium-core`**: complex-core → reasoning-core → openrouter-auto → `local-qwen-3.6`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → openrouter-auto → `local-qwen-3.6`
+  - **`agent-reasoning-core`**: advanced-core → openrouter-auto → `local-qwen-3.6`
+  - **`agent-advanced-core`**: openrouter-auto → `local-qwen-3.6`
+  All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
 *Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)

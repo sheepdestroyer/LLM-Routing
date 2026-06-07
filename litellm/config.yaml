@@ -17,12 +17,12 @@ model_list:
       api_key: local-token
       request_timeout: 30
   # -------------------------------------------------------------------------
-  # Triage-router backend mappings (4-tier classifier dispatch targets)
-  # Extended with reasoning-core: agy proxy trigger target for deep reasoning tasks
+  # Triage-router backend mappings (5-tier classifier dispatch targets):
+  #   simple → medium → complex → reasoning → advanced
   # The FastAPI triage router (port 5000) returns one of these model names
-  # based on prompt-complexity analysis. All four route through OpenRouter
-  # "auto" by default; override the underlying `model:` field below to target
-  # specific providers per tier (e.g. free-tier lightweight for simple-core).
+  # based on prompt-complexity analysis. All tiers route through OpenRouter
+  # by default via openrouter/auto; LiteLLM latency-based routing picks the
+  # fastest healthy free-model deployment for each tier.
   # -------------------------------------------------------------------------
   - model_name: agent-simple-core
     litellm_params:
@@ -54,14 +54,12 @@ router_settings:
   num_retries: 1
   enable_pre_call_checks: true
   routing_strategy: "latency-based-routing"
-  fallbacks:
-    # Each tier falls back through OpenRouter dynamic auto, then local MoE
-    - agent-simple-core: ["openrouter-auto", "local-qwen-3.6"]
-    - agent-medium-core: ["openrouter-auto", "local-qwen-3.6"]
-    - agent-complex-core: ["openrouter-auto", "local-qwen-3.6"]
-    - agent-reasoning-core: ["openrouter-auto", "local-qwen-3.6"]
-    - agent-advanced-core: ["openrouter-auto", "local-qwen-3.6"]
 
+# -------------------------------------------------------------------------
+# FALLBACK CHAINS (cascading, in order of escalation)
+# When one tier fails, LiteLLM tries the next model in the chain.
+# All tiers ultimately fall back to local-qwen-3.6 as safety net.
+# -------------------------------------------------------------------------
 litellm_settings:
   detailed_debug: false
   callbacks: ["langfuse"]
@@ -74,6 +72,12 @@ litellm_settings:
     type: "redis"
     host: "127.0.0.1"
     port: 6379
+  fallbacks:
+    - agent-simple-core: ["agent-medium-core", "agent-complex-core", "openrouter-auto", "local-qwen-3.6"]
+    - agent-medium-core: ["agent-complex-core", "agent-reasoning-core", "openrouter-auto", "local-qwen-3.6"]
+    - agent-complex-core: ["agent-reasoning-core", "agent-advanced-core", "openrouter-auto", "local-qwen-3.6"]
+    - agent-reasoning-core: ["agent-advanced-core", "openrouter-auto", "local-qwen-3.6"]
+    - agent-advanced-core: ["openrouter-auto", "local-qwen-3.6"]
 
 # Vector store configuration for zero-cost semantic caching
 # Uses local nomic-embed-text-v1.5-Q4_K_M via llama-server (no OpenRouter costs)
@@ -82,7 +86,7 @@ litellm_settings:
 # llama-server runs with --models-max 3 to keep classifier + MoE + embed loaded
 vector_store_settings:
   store_type: "postgres"
-  connection_string: "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres"
+  connection_string: "postgresql://postgres:***@127.0.0.1:5432/postgres"
   collection_name: "litellm_semantic_cache"
   embedding_model: "local-nomic-embed"
 
