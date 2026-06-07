@@ -3,9 +3,9 @@ set -e
 
 # Usage:
 #   ./start-stack.sh              → Restart existing pod (fast, preserves logs)
-#   ./start-stack.sh --replace    → Recreate pod from YAML (new ports, probes,
-#                                    env vars, containers — no image rebuild)
-#   ./start-stack.sh --full-rebuild → Full reset: rebuild image + recreate pod
+#   ./start-stack.sh --replace    → Graceful stop + clean ports + redeploy pod
+#                                    (for pod.yaml changes: ports, probes, env vars)
+#   ./start-stack.sh --full-rebuild → Same as --replace + rebuild router image
 #                                      (for router/Containerfile changes)
 
 # Set working directory
@@ -96,6 +96,50 @@ elif [ "${1:-}" = "--replace" ]; then
     REPLACE_MODE=true
 fi
 
+# ── Cleanup zombie host-network ports ──
+# Podman with host networking can leave stuck LISTEN sockets after SIGKILL.
+# ClickHouse and Minio are the primary victims — their ports survive container
+# death and block the replacement from binding.
+cleanup_zombie_ports() {
+    local PORTS="8123 9000 9001 9002 9004 9005 9009"
+    # Attempt fuser kill first (works if process still alive)
+    for port in $PORTS; do
+        fuser -k "${port}/tcp" 2>/dev/null || true
+    done
+    # Wait up to 60s for kernel to release orphaned sockets
+    local waited=0
+    while [ $waited -lt 60 ]; do
+        local stuck=$(ss -tlnpH 2>/dev/null | grep -cE ":(8123|900[0-9])") || true
+        if [ "${stuck:-0}" -eq 0 ]; then
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    local final=$(ss -tlnpH 2>/dev/null | grep -cE ":(8123|900[0-9])") || true
+    echo "⚠️  Warning: ${final:-0} zombie port(s) survived 60s cleanup wait"
+}
+
+# ── Safe pod teardown ──
+# Graceful stop (SIGTERM with 30s timeout) lets ClickHouse/Postgres flush,
+# then force-remove if needed. Avoids data corruption from SIGKILL.
+safe_pod_teardown() {
+    if podman pod exists agent-router-pod 2>/dev/null; then
+        echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
+        podman pod stop -t 30 agent-router-pod 2>/dev/null || true
+        # If still running after graceful attempt, force-remove
+        if podman pod exists agent-router-pod 2>/dev/null; then
+            echo "⚠️  Graceful stop timed out — force-removing..."
+            podman pod rm -f agent-router-pod 2>/dev/null || true
+        else
+            # Already stopped, just remove
+            podman pod rm agent-router-pod 2>/dev/null || true
+        fi
+        cleanup_zombie_ports
+        echo "✓ Pod torn down, ports cleaned"
+    fi
+}
+
 # Pre-deploy database backup (runs before any pod modification)
 echo "💾 Taking pre-deploy database backup..."
 bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
@@ -104,16 +148,13 @@ if podman pod exists agent-router-pod 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
         podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
-
-        echo "🛑 Full rebuild requested: stopping and removing existing pod..."
-        podman pod stop agent-router-pod 2>/dev/null || true
-        podman pod rm agent-router-pod 2>/dev/null || true
-        echo "🚀 Deploying fresh triage pod via Podman..."
+        safe_pod_teardown
+        echo "🚀 Deploying fresh triage pod..."
         podman play kube "$WORKDIR/pod.yaml"
     elif $REPLACE_MODE; then
-        echo "🔄 Recreating pod from YAML (podman play kube --replace)..."
-        podman play kube --replace "$WORKDIR/pod.yaml"
-        echo "✅ Pod recreated. Container IDs reset — logs preserved in journald."
+        safe_pod_teardown
+        echo "🚀 Deploying replacement pod from YAML..."
+        podman play kube "$WORKDIR/pod.yaml"
     else
         echo "🔄 Restarting existing agent-router-pod (use --replace or --full-rebuild to recreate)..."
         podman pod restart agent-router-pod
@@ -129,10 +170,12 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         exit 0
     fi
 else
+    # First deploy — no pod exists, clean ports just in case
+    cleanup_zombie_ports
     echo "🔨 Building custom local triage router image..."
     podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
 
-    echo "🚀 No existing pod found. Deploying fresh triage pod via Podman..."
+    echo "🚀 No existing pod found. Deploying fresh triage pod..."
     podman play kube "$WORKDIR/pod.yaml"
 fi
 

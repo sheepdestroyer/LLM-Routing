@@ -53,7 +53,7 @@ spec:
           headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','')}))\n
           exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401
           else 1)\n")
-      initialDelaySeconds: 30
+      initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: litellm-gateway
@@ -303,7 +303,7 @@ spec:
         - -O
         - /dev/null
         - http://127.0.0.1:3000/
-      initialDelaySeconds: 30
+      initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: langfuse-web
