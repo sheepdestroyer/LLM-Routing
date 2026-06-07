@@ -12,16 +12,18 @@ router:
 classification_rules:
   system_prompt: |
     Analyze the user request complexity. Respond with exactly one of these identifiers:
-    - If the request requires deep algorithmic logic, complex code refactoring, system architecture decisions, or complex multi-file tracing: return "agent-complex-core".
-    - If the request requires moderate complexity (some algorithmic logic, code refactoring, system design, but not extremely complex): return "agent-medium-core".
-    - If the request is a simple syntax fix, file lookup, directory check, git message write, or repetitive boilerplate: return "agent-simple-core".
-    - If the request is extremely complex, requiring advanced system architecture, highly intricate multi-file tracing, or very deep algorithmic logic: return "agent-advanced-core".
+    - If the request is a simple syntax fix, file lookup, directory check, git message write, or repetitive boilerplate: return agent-simple-core.
+    - If the request requires moderate complexity (some algorithmic logic, code refactoring, system design, but not extremely complex): return agent-medium-core.
+    - If the request requires deep algorithmic logic, complex code refactoring, system architecture decisions, or complex multi-file tracing: return agent-complex-core.
+    - If the request requires heavy reasoning, advanced system architecture, highly intricate multi-file tracing, or very deep algorithmic logic with multi-step deduction: return agent-reasoning-core.
+    - If the request is extremely complex, requiring advanced system architecture across multiple files, very deep algorithmic reasoning, or large-scale design: return agent-advanced-core.
     Do not add markdown formatting or explanation. Only output the target model name string.
 
 # 4-tier classifier dispatch backends — all proxied through LiteLLM (port 4000).
 #  Tiers (complexity ↑):
 #    agent-simple-core    — trivial / syntax / boilerplate (cheapest model)
 #    agent-medium-core    — moderate logic, light refactoring
+#    agent-reasoning-core — deep logic/agy proxy tier
 #    agent-complex-core   — multi-file tracing, algorithmic
 #    agent-advanced-core  — system architecture, deep reasoning
 #  + openrouter-auto      — catch-all fallback (also routed via LiteLLM)
@@ -34,6 +36,9 @@ backends:
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "agent-complex-core"
+    api_base: "http://127.0.0.1:4000/v1"
+    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+  - name: "agent-reasoning-core"
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "agent-advanced-core"

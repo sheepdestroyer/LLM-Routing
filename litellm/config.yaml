@@ -18,6 +18,7 @@ model_list:
       request_timeout: 30
   # -------------------------------------------------------------------------
   # Triage-router backend mappings (4-tier classifier dispatch targets)
+  # Extended with reasoning-core: agy proxy trigger target for deep reasoning tasks
   # The FastAPI triage router (port 5000) returns one of these model names
   # based on prompt-complexity analysis. All four route through OpenRouter
   # "auto" by default; override the underlying `model:` field below to target
@@ -32,6 +33,10 @@ model_list:
       model: openrouter/openrouter/auto
       request_timeout: 120
   - model_name: agent-complex-core
+    litellm_params:
+      model: openrouter/openrouter/auto
+      request_timeout: 120
+  - model_name: agent-reasoning-core
     litellm_params:
       model: openrouter/openrouter/auto
       request_timeout: 120
@@ -54,6 +59,7 @@ router_settings:
     - agent-simple-core: ["openrouter-auto", "local-qwen-3.6"]
     - agent-medium-core: ["openrouter-auto", "local-qwen-3.6"]
     - agent-complex-core: ["openrouter-auto", "local-qwen-3.6"]
+    - agent-reasoning-core: ["openrouter-auto", "local-qwen-3.6"]
     - agent-advanced-core: ["openrouter-auto", "local-qwen-3.6"]
 
 litellm_settings:

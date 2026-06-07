@@ -179,7 +179,6 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── scripts/
 │   └── backup.sh        # Database backup with pg_isready retry logic
 ├── backups/             # Timestamped PostgreSQL dumps + config snapshots
-├── distributed/         # Consul templates and HAProxy configs (future)
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
