@@ -8,6 +8,12 @@ pod-run.yaml
 postgres-data/
 langfuse-data/
 valkey-data/
+clickhouse-data/
+minio-data/
+redis-lf-data/
+
+# Exclude auto-generated backups
+backups/
 
 # OS-specific clutter
 .DS_Store

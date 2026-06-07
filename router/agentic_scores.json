@@ -1,0 +1,14 @@
+{
+  "nvidia/nemotron-3-ultra-550b-a55b:free": 86.5,
+  "moonshotai/kimi-k2.6:free": 82.5,
+  "nvidia/nemotron-3-super-120b-a12b:free": 78.4,
+  "google/gemma-4-31b-it:free": 75.2,
+  "google/gemma-4-26b-a4b-it:free": 72.8,
+  "deepseek/deepseek-v4-flash:free": 72.1,
+  "poolside/laguna-m.1:free": 68.3,
+  "minimax/minimax-m2.5:free": 66.5,
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 65.0,
+  "poolside/laguna-xs.2:free": 61.2,
+  "liquid/lfm-2.5-1.2b-thinking:free": 59.8,
+  "liquid/lfm-2.5-1.2b-instruct:free": 55.4
+}

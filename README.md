@@ -198,6 +198,16 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 - **Thinking Support**: Parses both `content` and `reasoning_content` API response fields to gracefully support local models configured with speculative decoding/thinking blocks.
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
+**Backend targets dispatched by the router** (all resolve through LiteLLM on port 4000):
+
+| Backend name | Complexity level | Fallback chain in LiteLLM |
+|:---|:---|:---|
+| `agent-simple-core` | Trivial syntax fixes / boilerplate | `openrouter-auto` → `local-qwen-3.6` |
+| `agent-medium-core` | Moderate logic / light refactoring | `openrouter-auto` → `local-qwen-3.6` |
+| `agent-complex-core` | Multi-file tracing / algorithmic | `openrouter-auto` → `local-qwen-3.6` |
+| `agent-advanced-core` | System architecture / deep reasoning | `openrouter-auto` → `local-qwen-3.6` |
+| `openrouter-auto` | Catch-all / manual override | n/a |
+
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:

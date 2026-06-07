@@ -9,6 +9,7 @@ import yaml
 import httpx
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
+from circuit_breaker import get_breaker
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,6 +39,7 @@ backends = {b["name"]: b for b in config.get("backends", [])}
 stats = {
     "total_requests": 0,
     "simple_requests": 0,
+    "reasoning_requests": 0,
     "complex_requests": 0,
     "cache_hits": 0,
     "last_triage_decision": "None",
@@ -159,7 +161,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                     ],
                     "temperature": 0.0,
                     "max_tokens": 15,
-                    "grammar": 'root ::= "agent-simple-core" | "agent-complex-core"'
+                    "grammar": 'root ::= "agent-simple-core" | "agent-complex-core" | "agent-reasoning-core"'
                 }
                 headers = {"Authorization": f"Bearer {router_api_key}"}
                 
@@ -182,7 +184,12 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 content_clean = content.strip()
                 logger.info(f"Raw classifier response: '{content_clean}'")
                 
-                decision = "agent-simple-core" if content_clean == "agent-simple-core" else "agent-complex-core"
+                if content_clean == "agent-simple-core":
+                    decision = "agent-simple-core"
+                elif content_clean == "agent-reasoning-core":
+                    decision = "agent-reasoning-core"
+                else:
+                    decision = "agent-complex-core"
                     
                 # Store in cache
                 triage_cache[normalized_prompt] = (decision, time.time())
@@ -616,13 +623,15 @@ async def chat_completions(request: Request):
     
     if target_model == "agent-simple-core":
         stats["simple_requests"] += 1
+    elif target_model == "agent-reasoning-core":
+        stats["reasoning_requests"] = stats.get("reasoning_requests", 0) + 1
     else:
         stats["complex_requests"] += 1
     save_persisted_stats()
 
     # --- AGY PROXY ROUTE (3-TIER FALLBACK) ---
-    # Only for complex tasks; simple tasks go directly to LiteLLM
-    if target_model == "agent-complex-core":
+    # Only for reasoning tasks; complex/simple tasks go directly to LiteLLM
+    if target_model == "agent-reasoning-core":
         try:
             from agy_proxy import try_agy_proxy
             
@@ -711,7 +720,7 @@ async def chat_completions(request: Request):
     # --- DIRECT GOOGLE OAUTH ROUTE (legacy fallback) ---
     oauth_token = get_live_gemini_oauth_token()
     if oauth_token:
-        google_model = "gemini-3.5-flash" if target_model == "agent-complex-core" else "gemini-3.1-flash-lite"
+        google_model = "gemini-3.5-flash" if target_model in ("agent-complex-core", "agent-reasoning-core") else "gemini-3.1-flash-lite"
         logger.info(f"🔄 Direct Gemini OAuth Route: Mapping '{target_model}' to Google '{google_model}'...")
         
         google_body = body.copy()
@@ -857,6 +866,71 @@ async def chat_completions(request: Request):
         logger.error(f"Exception during LiteLLM proxy: {e}")
         await client.aclose()
         raise HTTPException(status_code=502, detail="LiteLLM upstream failed")
+
+@app.get("/metrics")
+async def metrics():
+    """Expose triage and circuit breaker metrics in Prometheus format."""
+    breaker = get_breaker()
+    breaker_status = breaker.status()
+    
+    lines = []
+    # Triage request counters
+    lines.append("# HELP triage_requests_total Total number of requests processed")
+    lines.append("# TYPE triage_requests_total gauge")
+    lines.append(f"triage_requests_total {stats['total_requests']}")
+    
+    lines.append("# HELP simple_requests_total Number of simple requests")
+    lines.append("# TYPE simple_requests_total gauge")
+    lines.append(f"simple_requests_total {stats['simple_requests']}")
+    
+    lines.append("# HELP complex_requests_total Number of complex requests")
+    lines.append("# TYPE complex_requests_total gauge")
+    lines.append(f"complex_requests_total {stats['complex_requests']}")
+    
+    lines.append("# HELP cache_hits_total Number of triage cache hits")
+    lines.append("# TYPE cache_hits_total gauge")
+    lines.append(f"cache_hits_total {stats['cache_hits']}")
+    
+    # Latency metrics
+    lines.append("# HELP avg_triage_latency_ms Average triage latency in milliseconds")
+    lines.append("# TYPE avg_triage_latency_ms gauge")
+    lines.append(f"avg_triage_latency_ms {stats['avg_triage_latency_ms']}")
+    
+    lines.append("# HELP avg_proxy_latency_ms Average proxy latency in milliseconds")
+    lines.append("# TYPE avg_proxy_latency_ms gauge")
+    lines.append(f"avg_proxy_latency_ms {stats['avg_proxy_latency_ms']}")
+    
+    # Token metrics
+    lines.append("# HELP prompt_tokens_total Total prompt tokens processed")
+    lines.append("# TYPE prompt_tokens_total counter")
+    lines.append(f"prompt_tokens_total {stats['prompt_tokens']}")
+    
+    lines.append("# HELP completion_tokens_total Total completion tokens processed")
+    lines.append("# TYPE completion_tokens_total counter")
+    lines.append(f"completion_tokens_total {stats['completion_tokens']}")
+    
+    # Circuit breaker metrics
+    lines.append("# HELP circuit_breaker_tier Current circuit breaker tier (0=active, 1-3=cooldown)")
+    lines.append("# TYPE circuit_breaker_tier gauge")
+    lines.append(f"circuit_breaker_tier {breaker_status['tier']}")
+    
+    lines.append("# HELP circuit_breaker_agy_allowed Whether the circuit breaker allows agy requests")
+    lines.append("# TYPE circuit_breaker_agy_allowed gauge")
+    lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed())}")
+    
+    lines.append("# HELP circuit_breaker_cooldown_remaining_seconds Remaining cooldown time for circuit breaker")
+    lines.append("# TYPE circuit_breaker_cooldown_remaining_seconds gauge")
+    lines.append(f"circuit_breaker_cooldown_remaining_seconds {breaker_status['cooldown_remaining_seconds']}")
+    
+    lines.append("# HELP circuit_breaker_total_trips Total number of trips recorded")
+    lines.append("# TYPE circuit_breaker_total_trips counter")
+    lines.append(f"circuit_breaker_total_trips {breaker_status['total_trips']}")
+    
+    lines.append("# HELP circuit_breaker_probe_granted Whether a probe request has been granted")
+    lines.append("# TYPE circuit_breaker_probe_granted gauge")
+    lines.append(f"circuit_breaker_probe_granted {int(breaker_status['probe_granted'])}")
+    
+    return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():

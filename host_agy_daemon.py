@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import tempfile
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 5005
 AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
@@ -36,8 +36,102 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
         timeout = body.get("timeout", 120.0)
+        stream = body.get("stream", False)
         
-        # Execute in new asyncio event loop
+        if stream:
+            # 1. Send HTTP headers for streaming NDJSON
+            self.protocol_version = 'HTTP/1.1'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-ndjson')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            
+            # 2. Setup loop to run async process and stream output
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def run_stream():
+                import pty
+                
+                env = os.environ.copy()
+                if model_override:
+                    env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
+                else:
+                    env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+                    
+                cmd = [AGY_BINARY]
+                if conversation_id:
+                    cmd.extend(["--conversation", conversation_id])
+                cmd.extend(["--print", prompt])
+                
+                master_fd, slave_fd = pty.openpty()
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, env=env,
+                        stdout=slave_fd,
+                        stderr=slave_fd,
+                    )
+                    os.close(slave_fd)
+                except Exception as e:
+                    os.close(slave_fd)
+                    os.close(master_fd)
+                    # Write failure details as status
+                    err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
+                    self.wfile.write(err_msg.encode('utf-8'))
+                    self.wfile.flush()
+                    return
+
+                loop_ref = asyncio.get_running_loop()
+                
+                def read_bytes():
+                    try:
+                        return os.read(master_fd, 1024)
+                    except OSError:
+                        return b""
+                        
+                while True:
+                    data = await loop_ref.run_in_executor(None, read_bytes)
+                    if not data:
+                        break
+                    text = data.decode('utf-8', errors='replace')
+                    # PTY text can have \r\n, normalize to \n
+                    text_norm = text.replace('\r\n', '\n')
+                    # Yield token JSON line
+                    chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
+                    self.wfile.write(chunk_json.encode('utf-8'))
+                    self.wfile.flush()
+                    
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                    returncode = proc.returncode or 0
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    returncode = -1
+                except Exception:
+                    returncode = -1
+                
+                os.close(master_fd)
+                
+                # Retrieve last conversation ID
+                result_conv_id = get_last_conversation_id()
+                
+                # Write closing metadata
+                meta_json = json.dumps({
+                    "type": "status",
+                    "returncode": returncode,
+                    "conversation_id": result_conv_id
+                }) + "\n"
+                self.wfile.write(meta_json.encode('utf-8'))
+                self.wfile.flush()
+                
+            loop.run_until_complete(run_stream())
+            loop.close()
+            return
+            
+        # Execute in new asyncio event loop (non-streaming legacy path)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -76,7 +170,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                     returncode = -1
-                except Exception as e:
+                except Exception:
                     returncode = -1
                 
                 # Read output from the temporary files
@@ -126,7 +220,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         pass
 
 def run_server():
-    server = HTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
+    server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
     print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
     try:
         server.serve_forever()
