@@ -289,6 +289,42 @@ Your output should display:
 * `langfuse-worker` (Langfuse v3 background job processor)
 * `minio-s3` (S3-compatible storage for Langfuse v3 events on :9001/:9002)
 
+### 3. Host agy Daemon (Systemd Service)
+
+The router delegates complex/simple tasks to the `agy` CLI via a persistent HTTP daemon on **port 5005**.
+This daemon runs as a **systemd user service** with security hardening:
+
+```bash
+# Check status
+systemctl --user status agy-daemon.service
+
+# View live logs
+journalctl --user -fu agy-daemon.service
+```
+
+**Security hardening** applied to the unit:
+
+| Setting | Value | Purpose |
+|---|---|---|
+| `NoNewPrivileges` | `yes` | Prevents privilege escalation via setuid/setgid |
+| `PrivateTmp` | `yes` | Isolates `/tmp` namespace for the daemon |
+| `PrivateDevices` | `yes` | Restricts access to `/dev` (no raw disk/device access) |
+| `ProtectSystem` | `strict` | Makes `/usr` and `/etc` read-only |
+| `ProtectHome` | `read-only` | `/home/gpav` is read-only except specific paths |
+| `ProtectKernelTunables` | `yes` | Makes `/sys` and `/proc/sys` read-only |
+| `ProtectKernelModules` | `yes` | Blocks loading or listing kernel modules |
+| `ProtectControlGroups` | `yes` | Makes cgroup filesystem read-only |
+| `ProtectClock` | `yes` | Blocks system clock manipulation |
+| `ReadWritePaths` | `~/.gemini /tmp` | Writable paths for Gemini cache and agy temp data |
+| `ReadOnlyPaths` | `~/.local/bin/agy` | Explicit read-only mount for the agy binary |
+| `RestrictSUIDSGID` | `yes` | Blocks creation of setuid/setgid files |
+| `RestrictRealtime` | `yes` | Blocks realtime scheduling policies |
+| `LockPersonality` | `yes` | Blocks execution domain changes |
+| `RemoveIPC` | `yes` | Cleans up System V / POSIX IPC on service stop |
+| `SystemCallArchitectures` | `native` | Restricts syscalls to native architecture only |
+
+Unit file location: `~/.config/systemd/user/agy-daemon.service`
+
 ---
 
 ## 6. Verification & Testing
@@ -379,7 +415,7 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 | **Llama-Server Playground** | [http://localhost:8080](http://localhost:8080) | `8080` | Local llama.cpp prompt sandbox, dynamic model stats, and API endpoint details. |
 | **Minio S3 Console** | [http://localhost:9001](http://localhost:9001) | `9001` | S3-compatible object storage browser (Langfuse v3 event upload target). |
 | **ClickHouse HTTP** | [http://localhost:8123](http://localhost:8123) | `8123` | ClickHouse HTTP interface (Langfuse v3 trace/observation storage). |
-| **Host agy Daemon** | [http://127.0.0.1:5005/run](http://127.0.0.1:5005/run) | `5005` | Host-side PTY execution bridge for `agy` CLI proxy routes. |
+| **Host agy Daemon** | [http://127.0.0.1:5005/run](http://127.0.0.1:5005/run) | `5005` | Host-side PTY execution bridge for `agy` CLI proxy routes. Runs as a systemd user service (`agy-daemon.service`) with security hardening. |
 
 ---
 

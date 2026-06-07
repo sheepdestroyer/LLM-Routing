@@ -49,10 +49,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request as u, urllib.error as e, os; exec("try:\n r=u.urlopen(u.Request('http://localhost:4000/health',\n
-          headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','')}))\n
-          exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401
-          else 1)\n")
+        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -62,10 +59,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request as u, urllib.error as e, os; exec("try:\n r=u.urlopen(u.Request('http://localhost:4000/health',\n
-          headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','')}))\n
-          exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401
-          else 1)\n")
+        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -82,8 +76,7 @@ spec:
     - mountPath: /config/gemini_auth
       name: gemini-secrets
   - args:
-    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port
-      5000
+    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000
     command:
     - /bin/sh
     - -c
@@ -360,7 +353,7 @@ spec:
         - pgrep
         - -f
         - langfuse-worker
-      initialDelaySeconds: 20
+      initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: langfuse-worker
