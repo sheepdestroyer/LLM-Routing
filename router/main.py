@@ -161,7 +161,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                     ],
                     "temperature": 0.0,
                     "max_tokens": 15,
-                    "grammar": 'root ::= "agent-simple-core" | "agent-complex-core" | "agent-reasoning-core"'
+                    "grammar": 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
                 }
                 headers = {"Authorization": f"Bearer {router_api_key}"}
                 

@@ -199,13 +199,14 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 **Backend targets dispatched by the router** (all resolve through LiteLLM on port 4000):
 
-| Backend name | Complexity level | Fallback chain in LiteLLM |
-|:---|:---|:---|
-| `agent-simple-core` | Trivial syntax fixes / boilerplate | `openrouter-auto` → `local-qwen-3.6` |
-| `agent-medium-core` | Moderate logic / light refactoring | `openrouter-auto` → `local-qwen-3.6` |
-| `agent-complex-core` | Multi-file tracing / algorithmic | `openrouter-auto` → `local-qwen-3.6` |
-| `agent-advanced-core` | System architecture / deep reasoning | `openrouter-auto` → `local-qwen-3.6` |
-| `openrouter-auto` | Catch-all / manual override | n/a |
+| Backend name | Complexity level | Fallback chain in LiteLLM | agy trigger |
+|:---|:---|:---|---:|
+| `agent-simple-core` | Trivial syntax fixes / boilerplate | `openrouter-auto` → `local-qwen-3.6` | — |
+| `agent-medium-core` | Moderate logic / light refactoring | `openrouter-auto` → `local-qwen-3.6` | — |
+| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | `openrouter-auto` → `local-qwen-3.6` | **Yes** — delegates to agy proxy (§9a) |
+| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | `openrouter-auto` → `local-qwen-3.6` | — |
+| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | `openrouter-auto` → `local-qwen-3.6` | — |
+| `openrouter-auto` | Catch-all / manual override | n/a | — |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading.
@@ -385,9 +386,31 @@ exec:
 
 ## 9a. agy Proxy Integration (Session-Aware 3-Tier Fallback)
 
-The router includes an **agy proxy** layer that delegates complex tasks to the antigravity CLI
-(`agy --print`) before falling back to LiteLLM. This provides access to Gemini 3.5 Flash and
-Claude models using your Google AI Pro subscription via the Cloud Code Assist API.
+The router includes an **agy proxy** layer that delegates **reasoning-core** tasks (classified by the
+triage router as `agent-reasoning-core`) to the antigravity CLI (`agy --print`) before falling back to
+LiteLLM. This provides access to Gemini 3.5 Flash and Claude models using your Google AI Pro
+subscription via the Cloud Code Assist API.
+
+### Triage Trigger: `agent-reasoning-core`
+
+The agy proxy is invoked exclusively for requests classified as **`agent-reasoning-core`** — heavy
+reasoning, advanced architecture, deep multi-step analysis. All other tiers (`agent-simple-core`,
+`agent-medium-core`, `agent-complex-core`, `agent-advanced-core`) bypass agy and route directly
+to LiteLLM for OpenRouter-backed inference.
+
+This design preserves the limited daily Cloud Code Assist quota (see below) for genuinely complex
+reasoning tasks that benefit from Gemini/Claude, while routine development tasks go through the
+cost-free OpenRouter fallback chain.
+
+Routing flow:
+```
+Triage classifier
+  ├─ agent-simple-core    → LiteLLM (OpenRouter)
+  ├─ agent-medium-core    → LiteLLM (OpenRouter)
+  ├─ agent-reasoning-core → agy proxy (Gemini/Claude) → fallback LiteLLM
+  ├─ agent-complex-core   → LiteLLM (OpenRouter)
+  └─ agent-advanced-core  → LiteLLM (OpenRouter)
+```
 
 ### Authentication: System Keyring (not oauth_creds.json)
 
