@@ -14,39 +14,41 @@ spec:
           mountPath: /data
 
     # --- CORE TIER 2: LITELLM GATEWAY ---
+    # Pinned to v1.88.0 (latest stable as of 2026-06-07).
+    # Check available tags: skopeo list-tags docker://ghcr.io/berriai/litellm
+    # Only update after validating prisma migrate in the new version.
     - name: litellm-gateway
-      image: ghcr.io/berriai/litellm:latest
-      args: ["--config", "/app/config.yaml", "--port", "4000"]
+      image: ghcr.io/berriai/litellm:v1.88.0
+      command: ["python3", "/app/entrypoint.py"]
       env:
-        - name: LITELLM_MASTER_KEY
-          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
-        - name: UI_USERNAME
-          value: "admin"
-        - name: UI_PASSWORD
-          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
         - name: DATABASE_URL
-          value: "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres"
-        - name: GEMINI_OAUTH_TOKEN
-          value: "DYNAMIC_GEMINI_TOKEN_PLACEHOLDER"
-        - name: OPENROUTER_API_KEY
-          value: "DYNAMIC_OPENROUTER_KEY_PLACEHOLDER"
-        - name: LANGFUSE_PUBLIC_KEY
-          value: "DYNAMIC_LANGFUSE_PUBLIC_KEY_PLACEHOLDER"
-        - name: LANGFUSE_SECRET_KEY
-          value: "DYNAMIC_LANGFUSE_SECRET_KEY_PLACEHOLDER"
+          value: "postgresql://postgres:***@127.0.0.1:5432/postgres"
+        - name: STORE_MODEL_IN_DB
+          value: "True"
+        - name: LITELLM_LOG
+          value: "DEBUG"
         - name: LANGFUSE_HOST
           value: "http://127.0.0.1:3000"
       volumeMounts:
         - name: litellm-config
           mountPath: /app/config.yaml
           subPath: config.yaml
+        - name: litellm-config
+          mountPath: /app/entrypoint.py
+          subPath: entrypoint.py
+        - name: env-file
+          mountPath: /config/.env
+          subPath: .env
+        - name: gemini-secrets
+          mountPath: /config/gemini_auth
 
     # --- CORE TIER 3: CUSTOM LLMROUTER ---
     - name: llm-triage-router
       image: localhost/llm-triage-router:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - "set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000"
       env:
-        - name: LITELLM_MASTER_KEY
-          value: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
         - name: CONFIG_PATH
           value: "/config/router_dir/config.yaml"
         - name: DBUS_SESSION_BUS_ADDRESS
@@ -69,10 +71,13 @@ spec:
           mountPath: /root/.local/share/keyrings
         - name: xdg-runtime
           mountPath: /run/user/1000
+        - name: env-file
+          mountPath: /config/.env
+          subPath: .env
 
     # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
     - name: postgres-db
-      image: docker.io/library/postgres:16-alpine
+      image: docker.io/pgvector/pgvector:pg18
       env:
         - name: POSTGRES_USER
           value: "postgres"
@@ -82,14 +87,17 @@ spec:
           value: "langfuse"
       volumeMounts:
         - name: postgres-storage
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/postgresql
 
     # --- OBSERVABILITY TIER 5: LANGFUSE SERVER ---
     - name: langfuse-server
       image: docker.io/langfuse/langfuse:2
+      command: ["/bin/sh", "-c"]
+      args:
+        - "set -a && . /config/.env && set +a && exec node ./web/server.js"
       env:
         - name: DATABASE_URL
-          value: "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/langfuse"
+          value: "postgresql://postgres:***@127.0.0.1:5432/langfuse"
         - name: NEXTAUTH_SECRET
           value: "my-super-secret-nextauth-token-2026"
         - name: SALT
@@ -102,17 +110,24 @@ spec:
           value: "3000"
         - name: TELEMETRY_ENABLED
           value: "false"
+        - name: LANGFUSE_INIT_ORG_ID
+          value: "org-local-dev-id"
         - name: LANGFUSE_INIT_ORG_NAME
           value: "Local Development"
+        - name: LANGFUSE_INIT_PROJECT_ID
+          value: "proj-triage-gateway-id"
         - name: LANGFUSE_INIT_PROJECT_NAME
           value: "Triage Gateway"
-        - name: LANGFUSE_INIT_PROJECT_PUBLIC_KEY
-          value: "pk-lf-gateway-token"
-        - name: LANGFUSE_INIT_PROJECT_SECRET_KEY
-          value: "sk-lf-gateway-token"
+        - name: LANGFUSE_INIT_USER_EMAIL
+          value: "admin@local.dev"
+        - name: LANGFUSE_INIT_USER_PASSWORD
+          value: "admin-local-pw-2026"
       volumeMounts:
         - name: langfuse-storage
           mountPath: /app/data
+        - name: env-file
+          mountPath: /config/.env
+          subPath: .env
 
   volumes:
     - name: valkey-storage
@@ -148,3 +163,6 @@ spec:
     - name: xdg-runtime
       hostPath:
         path: /run/user/1000
+    - name: env-file
+      hostPath:
+        path: /home/gpav/Vrac/LAB/AI/LLM-Routing

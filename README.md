@@ -55,6 +55,9 @@ graph TD
     style Postgres fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
 ```
 
+> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
+```
+
 ---
 
 ## 2. Request Lifecycle & Telemetry Flow
@@ -161,13 +164,14 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
+- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
 - **Primary Cascading Fallback Chains**:
-  - **`agent-complex-core` (Complex tier)**: `Dynamic Top Free Model (Agentic Index)` ➔ `MoonshotAI Kimi K2.6 (Free)` ➔ `Local Qwen-35b-q4ks (Speculative MoE)`.
-  - **`agent-simple-core` (Simple tier)**: `OpenRouter Gemma 4 31B (Free)` ➔ `Local Qwen-35b-q4ks (High-speed Fast)`.
-*Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
+  - **`agent-complex-core` (Complex tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
+  - **`agent-simple-core` (Simple tier)**: Refactored to use LiteLLM's native **Adaptive Router**. Dynamically registers, updates, and routes traffic among the **top 5 fast/lightweight free models** (resolved dynamically from OpenRouter using known Artificial Analysis scores <= 76.0 configured in `/config/router_dir/agentic_scores.json`) based on real-time quality and latency feedback, with an automatic final safety fallback to the local speculative MoE `Qwen-35b-q4ks`.
+*Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
@@ -384,17 +388,17 @@ python3 test_agy_tiers.py
 
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
-#### 1. Real-Time Streaming Wrapper for `agy` Response
-Although the host-side `agy` CLI executes synchronously and yields its result on completion, the Triage Router acts as a compatibility adapter:
-* When `stream: true` is requested by the client, the router detects this and consumes the `agy` output on completion.
-* The router runs an asynchronous generator that chunks the static text and yields compliant OpenAI Server-Sent Events (SSE) packets (`data: {"choices": [{"delta": {"content": ...}}]}\n\n`) at low latency intervals, closing with `data: [DONE]`.
-* This completely resolves parsing issues in streaming-only event parsers.
+#### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
+To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
+* Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
+* The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
+* The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
 
-#### 2. Sequential Classification Lock (`classification_lock`)
-Because the local routing model (`qwen-0.8b-routing`) is optimized for low memory footprint and operates on a single execution slot, concurrent requests could trigger slot conflicts (`400 Bad Request`) in `llama-server`.
-* We introduced a global asynchronous lock (`asyncio.Lock`) inside `router/main.py`.
-* Classification queries are serialized to execute one-by-one.
-* **Double-Cache Check**: To maximize throughput, the cache is checked twice—once immediately upon receiving the query (outside the lock), and a second time after acquiring the lock (in case a queued request completed and populated the cache while we waited). This reduces actual LLM inference calls to a minimum.
+#### 2. Parallel Classification Slots (Lock-Free)
+To maximize throughput under concurrent queries, `llama-server` is configured with 4 parallel processing slots (`--parallel 4` in `models.ini`).
+* The sequential `classification_lock` in `router/main.py` has been removed.
+* Triage queries are processed concurrently by the fast local `qwen-0.8b-routing` model.
+* Fast local memory caching is retained to bypass inference for exact repeat prompts.
 
 #### 3. Custom Memory Endpoint Proxy & MCP Server
 To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
