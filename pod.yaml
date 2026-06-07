@@ -3,462 +3,444 @@ kind: Pod
 metadata:
   name: agent-router-pod
 spec:
+  containers:
+  - command:
+    - valkey-server
+    - --protected-mode
+    - 'no'
+    image: docker.io/valkey/valkey:8-alpine
+    livenessProbe:
+      exec:
+        command:
+        - valkey-cli
+        - PING
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+    name: valkey-cache
+    readinessProbe:
+      exec:
+        command:
+        - valkey-cli
+        - PING
+      initialDelaySeconds: 2
+      periodSeconds: 5
+      timeoutSeconds: 2
+    volumeMounts:
+    - mountPath: /data
+      name: valkey-storage
+  - command:
+    - python3
+    - /app/entrypoint.py
+    env:
+    - name: DATABASE_URL
+      value: postgresql://postgres:***@127.0.0.1:5432/postgres
+    - name: STORE_MODEL_IN_DB
+      value: 'True'
+    - name: LITELLM_LOG
+      value: DEBUG
+    - name: LANGFUSE_HOST
+      value: http://127.0.0.1:3000
+    - name: LITELLM_MASTER_KEY
+      value: sk-lit...33bf
+    image: ghcr.io/berriai/litellm:v1.88.0
+    livenessProbe:
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request as u, urllib.error as e, os; exec("try:\n r=u.urlopen(u.Request('http://localhost:4000/health',\n
+          headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','')}))\n
+          exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401
+          else 1)\n")
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: litellm-gateway
+    readinessProbe:
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request as u, urllib.error as e, os; exec("try:\n r=u.urlopen(u.Request('http://localhost:4000/health',\n
+          headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','')}))\n
+          exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401
+          else 1)\n")
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    volumeMounts:
+    - mountPath: /app/config.yaml
+      name: litellm-config
+      subPath: config.yaml
+    - mountPath: /app/entrypoint.py
+      name: litellm-config
+      subPath: entrypoint.py
+    - mountPath: /config/.env
+      name: env-file
+      subPath: .env
+    - mountPath: /config/gemini_auth
+      name: gemini-secrets
+  - args:
+    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port
+      5000
+    command:
+    - /bin/sh
+    - -c
+    env:
+    - name: CONFIG_PATH
+      value: /config/router_dir/config.yaml
+    - name: DBUS_SESSION_BUS_ADDRESS
+      value: unix:path=/run/user/1000/bus
+    - name: LITELLM_MASTER_KEY
+      value: sk-lit...33bf
+    image: localhost/llm-triage-router:latest
+    livenessProbe:
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: llm-triage-router
+    readinessProbe:
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    volumeMounts:
+    - mountPath: /config/router_dir
+      name: router-config
+    - mountPath: /config/gemini_auth
+      name: gemini-secrets
+    - mountPath: /root/.gemini
+      name: gemini-secrets
+    - mountPath: /config/goose_sessions
+      name: goose-sessions
+    - mountPath: /usr/local/bin/agy
+      name: agy-bin
+      subPath: agy
+    - mountPath: /run/user/1000/bus
+      name: dbus-socket
+    - mountPath: /root/.local/share/keyrings
+      name: keyring-store
+    - mountPath: /run/user/1000
+      name: xdg-runtime
+    - mountPath: /config/.env
+      name: env-file
+      subPath: .env
+  - env:
+    - name: POSTGRES_USER
+      value: postgres
+    - name: POSTGRES_PASSWORD
+      value: postgres-local-pw-2026
+    - name: POSTGRES_DB
+      value: langfuse
+    image: docker.io/pgvector/pgvector:pg18
+    livenessProbe:
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+    name: postgres-db
+    readinessProbe:
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 5
+    volumeMounts:
+    - mountPath: /var/lib/postgresql
+      name: postgres-storage
+  - env:
+    - name: CLICKHOUSE_DB
+      value: default
+    - name: CLICKHOUSE_USER
+      value: clickhouse
+    - name: CLICKHOUSE_PASSWORD
+      value: clickhouse
+    image: docker.io/clickhouse/clickhouse-server:24.8
+    livenessProbe:
+      exec:
+        command:
+        - clickhouse-client
+        - --user
+        - clickhouse
+        - --password
+        - clickhouse
+        - --query
+        - SELECT 1
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: clickhouse-db
+    readinessProbe:
+      exec:
+        command:
+        - clickhouse-client
+        - --query
+        - SELECT 1
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    user: 101:101
+    volumeMounts:
+    - mountPath: /var/lib/clickhouse
+      name: clickhouse-storage
+  - command:
+    - redis-server
+    - --port
+    - '6380'
+    - --requirepass
+    - langfuse-redis-2026
+    - --maxmemory-policy
+    - noeviction
+    image: docker.io/redis:7
+    livenessProbe:
+      exec:
+        command:
+        - redis-cli
+        - -p
+        - '6380'
+        - -a
+        - langfuse-redis-2026
+        - PING
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+    name: langfuse-redis
+    readinessProbe:
+      exec:
+        command:
+        - redis-cli
+        - -p
+        - '6380'
+        - -a
+        - langfuse-redis-2026
+        - PING
+      initialDelaySeconds: 2
+      periodSeconds: 5
+      timeoutSeconds: 2
+    volumeMounts:
+    - mountPath: /data
+      name: redis-lf-storage
+  - env:
+    - name: DATABASE_URL
+      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
+    - name: NEXTAUTH_SECRET
+      value: my-super-secret-nextauth-token-2026
+    - name: NEXTAUTH_URL
+      value: http://localhost:3000
+    - name: SALT
+      value: my-super-strong-salt-token-2026-value-1234
+    - name: ENCRYPTION_KEY
+      value: 4c265d39d04389f069225db1e88726727a090e7fc6275e8c910b81aa4b763135
+    - name: HOSTNAME
+      value: 0.0.0.0
+    - name: PORT
+      value: '3000'
+    - name: TELEMETRY_ENABLED
+      value: 'false'
+    - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+      value: langfuse-events
+    - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
+      value: us-east-1
+    - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
+      value: minioadmin
+    - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+      value: minioadmin
+    - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+      value: http://127.0.0.1:9002
+    - name: S3_FORCE_PATH_STYLE
+      value: 'true'
+    - name: CLICKHOUSE_URL
+      value: http://127.0.0.1:8123
+    - name: CLICKHOUSE_MIGRATION_URL
+      value: clickhouse://127.0.0.1:9000
+    - name: CLICKHOUSE_USER
+      value: clickhouse
+    - name: CLICKHOUSE_PASSWORD
+      value: clickhouse
+    - name: CLICKHOUSE_CLUSTER_ENABLED
+      value: 'false'
+    - name: REDIS_HOST
+      value: 127.0.0.1
+    - name: REDIS_PORT
+      value: '6380'
+    - name: REDIS_AUTH
+      value: langfuse-redis-2026
+    - name: LANGFUSE_INIT_ORG_ID
+      value: org-local-dev-id
+    - name: LANGFUSE_INIT_ORG_NAME
+      value: Local Development
+    - name: LANGFUSE_INIT_PROJECT_ID
+      value: proj-triage-gateway-id
+    - name: LANGFUSE_INIT_PROJECT_NAME
+      value: Triage Gateway
+    - name: LANGFUSE_INIT_USER_EMAIL
+      value: admin@local.dev
+    - name: LANGFUSE_INIT_USER_PASSWORD
+      value: admin-local-pw-2026
+    image: docker.io/langfuse/langfuse:3
+    livenessProbe:
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3000/
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: langfuse-web
+    readinessProbe:
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3000/
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+  - env:
+    - name: DATABASE_URL
+      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
+    - name: CLICKHOUSE_URL
+      value: http://127.0.0.1:8123
+    - name: CLICKHOUSE_USER
+      value: clickhouse
+    - name: CLICKHOUSE_PASSWORD
+      value: clickhouse
+    - name: CLICKHOUSE_CLUSTER_ENABLED
+      value: 'false'
+    - name: REDIS_HOST
+      value: 127.0.0.1
+    - name: REDIS_PORT
+      value: '6380'
+    - name: REDIS_AUTH
+      value: langfuse-redis-2026
+    - name: HOSTNAME
+      value: 0.0.0.0
+    - name: PORT
+      value: '3030'
+    - name: TELEMETRY_ENABLED
+      value: 'false'
+    - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
+      value: langfuse-events
+    - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
+      value: us-east-1
+    - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
+      value: minioadmin
+    - name: S3_FORCE_PATH_STYLE
+      value: 'true'
+    - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
+      value: http://127.0.0.1:9002
+    - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
+      value: minioadmin
+    image: docker.io/langfuse/langfuse-worker:3
+    livenessProbe:
+      exec:
+        command:
+        - pgrep
+        - -f
+        - langfuse-worker
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: langfuse-worker
+  - args:
+    - server
+    - /data
+    - --address
+    - :9002
+    - --console-address
+    - :9001
+    env:
+    - name: MINIO_ROOT_USER
+      value: minioadmin
+    - name: MINIO_ROOT_PASSWORD
+      value: minioadmin
+    image: docker.io/minio/minio:latest
+    livenessProbe:
+      exec:
+        command:
+        - sh
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: minio-s3
+    readinessProbe:
+      exec:
+        command:
+        - sh
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+    volumeMounts:
+    - mountPath: /data
+      name: minio-storage
   hostNetwork: true
   restartPolicy: Always
-  containers:
-    # --- CORE TIER 1: VALKEY CACHE ---
-    - name: valkey-cache
-      image: docker.io/valkey/valkey:8-alpine
-      command: ["valkey-server", "--protected-mode", "no"]
-      livenessProbe:
-        exec:
-          command:
-            - valkey-cli
-            - PING
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 2
-      readinessProbe:
-        exec:
-          command:
-            - valkey-cli
-            - PING
-        initialDelaySeconds: 2
-        periodSeconds: 5
-        timeoutSeconds: 2
-      volumeMounts:
-        - name: valkey-storage
-          mountPath: /data
-
-    # --- CORE TIER 2: LITELLM GATEWAY ---
-    # Pinned to v1.88.0 (latest stable as of 2026-06-07).
-    # Check available tags: skopeo list-tags docker://ghcr.io/berriai/litellm
-    # Only update after validating prisma migrate in the new version.
-    - name: litellm-gateway
-      image: ghcr.io/berriai/litellm:v1.88.0
-      command: ["python3", "/app/entrypoint.py"]
-      livenessProbe:
-        exec:
-          command:
-            - python3
-            - -c
-            - import urllib.request as u, urllib.error as e; exec("try:\n r=u.urlopen('http://localhost:4000/health')\n exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401 else 1)\n")
-          # Accepts 200 or 401 (LiteLLM returns 401 when alive)
-        initialDelaySeconds: 30
-        periodSeconds: 15
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - python3
-            - -c
-            - import urllib.request as u, urllib.error as e; exec("try:\n r=u.urlopen('http://localhost:4000/health')\n exit(0 if r.status==200 else 1)\nexcept e.HTTPError as ex:\n exit(0 if ex.code==401 else 1)\n")
-        initialDelaySeconds: 10
-        periodSeconds: 10
-        timeoutSeconds: 5
-      env:
-        - name: DATABASE_URL
-          value: "postgresql://postgres:***@127.0.0.1:5432/postgres"
-        - name: STORE_MODEL_IN_DB
-          value: "True"
-        - name: LITELLM_LOG
-          value: "DEBUG"
-        - name: LANGFUSE_HOST
-          value: "http://127.0.0.1:3000"
-      volumeMounts:
-        - name: litellm-config
-          mountPath: /app/config.yaml
-          subPath: config.yaml
-        - name: litellm-config
-          mountPath: /app/entrypoint.py
-          subPath: entrypoint.py
-        - name: env-file
-          mountPath: /config/.env
-          subPath: .env
-        - name: gemini-secrets
-          mountPath: /config/gemini_auth
-
-    # --- CORE TIER 3: CUSTOM LLMROUTER ---
-    - name: llm-triage-router
-      image: localhost/llm-triage-router:latest
-      command: ["/bin/sh", "-c"]
-      args:
-        - "set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000"
-      livenessProbe:
-        exec:
-          command:
-            - python3
-            - -c
-            - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
-        initialDelaySeconds: 20
-        periodSeconds: 15
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - python3
-            - -c
-            - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
-        initialDelaySeconds: 10
-        periodSeconds: 10
-        timeoutSeconds: 5
-      env:
-        - name: CONFIG_PATH
-          value: "/config/router_dir/config.yaml"
-        - name: DBUS_SESSION_BUS_ADDRESS
-          value: "unix:path=/run/user/1000/bus"
-      volumeMounts:
-        - name: router-config
-          mountPath: /config/router_dir
-        - name: gemini-secrets
-          mountPath: /config/gemini_auth
-        - name: gemini-secrets
-          mountPath: /root/.gemini
-        - name: goose-sessions
-          mountPath: /config/goose_sessions
-        - name: agy-bin
-          mountPath: /usr/local/bin/agy
-          subPath: agy
-        - name: dbus-socket
-          mountPath: /run/user/1000/bus
-        - name: keyring-store
-          mountPath: /root/.local/share/keyrings
-        - name: xdg-runtime
-          mountPath: /run/user/1000
-        - name: env-file
-          mountPath: /config/.env
-          subPath: .env
-
-    # --- OBSERVABILITY TIER 4: POSTGRESQL DB ---
-    - name: postgres-db
-      image: docker.io/pgvector/pgvector:pg18
-      env:
-        - name: POSTGRES_USER
-          value: "postgres"
-        - name: POSTGRES_PASSWORD
-          value: "postgres-local-pw-2026"
-        - name: POSTGRES_DB
-          value: "langfuse"
-      livenessProbe:
-        exec:
-          command:
-            - pg_isready
-            - -U
-            - postgres
-        initialDelaySeconds: 15
-        periodSeconds: 10
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - pg_isready
-            - -U
-            - postgres
-        initialDelaySeconds: 5
-        periodSeconds: 5
-        timeoutSeconds: 5
-      volumeMounts:
-        - name: postgres-storage
-          mountPath: /var/lib/postgresql
-
-    # --- OBSERVABILITY TIER 5: CLICKHOUSE DB (Langfuse v3 event store) ---
-    - name: clickhouse-db
-      image: docker.io/clickhouse/clickhouse-server:24.8
-      user: "101:101"
-      env:
-        - name: CLICKHOUSE_DB
-          value: "default"
-        - name: CLICKHOUSE_USER
-          value: "clickhouse"
-        - name: CLICKHOUSE_PASSWORD
-          value: "clickhouse"
-      livenessProbe:
-        exec:
-          command:
-            - clickhouse-client
-            - --user
-            - clickhouse
-            - --password
-            - clickhouse
-            - --query
-            - "SELECT 1"
-        initialDelaySeconds: 20
-        periodSeconds: 15
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - clickhouse-client
-            - --query
-            - "SELECT 1"
-        initialDelaySeconds: 10
-        periodSeconds: 10
-        timeoutSeconds: 5
-      volumeMounts:
-        - name: clickhouse-storage
-          mountPath: /var/lib/clickhouse
-
-    # --- OBSERVABILITY TIER 6: REDIS for Langfuse v3 BullMQ queues ---
-    - name: langfuse-redis
-      image: docker.io/redis:7
-      command:
-        - redis-server
-        - --port
-        - "6380"
-        - --requirepass
-        - langfuse-redis-2026
-        - --maxmemory-policy
-        - noeviction
-      livenessProbe:
-        exec:
-          command:
-            - redis-cli
-            - -p
-            - "6380"
-            - -a
-            - langfuse-redis-2026
-            - PING
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 2
-      readinessProbe:
-        exec:
-          command:
-            - redis-cli
-            - -p
-            - "6380"
-            - -a
-            - langfuse-redis-2026
-            - PING
-        initialDelaySeconds: 2
-        periodSeconds: 5
-        timeoutSeconds: 2
-      volumeMounts:
-        - name: redis-lf-storage
-          mountPath: /data
-
-    # --- OBSERVABILITY TIER 7: LANGFUSE WEB (v3) ---
-    - name: langfuse-web
-      image: docker.io/langfuse/langfuse:3
-      env:
-        # Database
-        - name: DATABASE_URL
-          value: "postgresql://postgres:***@127.0.0.1:5432/langfuse"
-        # Auth
-        - name: NEXTAUTH_SECRET
-          value: "my-super-secret-nextauth-token-2026"
-        - name: NEXTAUTH_URL
-          value: "http://localhost:3000"
-        - name: SALT
-          value: "my-super-strong-salt-token-2026-value-1234"
-        # Encryption key for sensitive data (generate via: openssl rand -hex 32)
-        - name: ENCRYPTION_KEY
-          value: "4c265d39d04389f069225db1e88726727a090e7fc6275e8c910b81aa4b763135"
-        # Server
-        - name: HOSTNAME
-          value: "0.0.0.0"
-        - name: PORT
-          value: "3000"
-        - name: TELEMETRY_ENABLED
-          value: "false"
-        # S3 Event Upload (required in v3, dummy value for local dev)
-        - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
-          value: "langfuse-events"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
-          value: "us-east-1"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-          value: "minioadmin"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-          value: "minioadmin"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
-          value: "http://127.0.0.1:9002"
-        - name: S3_FORCE_PATH_STYLE
-          value: "true"
-        # ClickHouse (required in v3 for trace/observation storage)
-        - name: CLICKHOUSE_URL
-          value: "http://127.0.0.1:8123"
-        - name: CLICKHOUSE_MIGRATION_URL
-          value: "clickhouse://127.0.0.1:9000"
-        - name: CLICKHOUSE_USER
-          value: "clickhouse"
-        - name: CLICKHOUSE_PASSWORD
-          value: "clickhouse"
-        - name: CLICKHOUSE_CLUSTER_ENABLED
-          value: "false"
-        # Redis (required in v3 for BullMQ job queues)
-        - name: REDIS_HOST
-          value: "127.0.0.1"
-        - name: REDIS_PORT
-          value: "6380"
-        - name: REDIS_AUTH
-          value: "langfuse-redis-2026"
-        # Init org/project/user (one-shot provisioning)
-        - name: LANGFUSE_INIT_ORG_ID
-          value: "org-local-dev-id"
-        - name: LANGFUSE_INIT_ORG_NAME
-          value: "Local Development"
-        - name: LANGFUSE_INIT_PROJECT_ID
-          value: "proj-triage-gateway-id"
-        - name: LANGFUSE_INIT_PROJECT_NAME
-          value: "Triage Gateway"
-        - name: LANGFUSE_INIT_USER_EMAIL
-          value: "admin@local.dev"
-        - name: LANGFUSE_INIT_USER_PASSWORD
-          value: "admin-local-pw-2026"
-      livenessProbe:
-        exec:
-          command:
-            - wget
-            - -q
-            - -O
-            - /dev/null
-            - http://127.0.0.1:3000/
-        initialDelaySeconds: 30
-        periodSeconds: 15
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - wget
-            - -q
-            - -O
-            - /dev/null
-            - http://127.0.0.1:3000/
-        initialDelaySeconds: 15
-        periodSeconds: 10
-        timeoutSeconds: 5
-
-    # --- OBSERVABILITY TIER 8: LANGFUSE WORKER (v3 background jobs) ---
-    - name: langfuse-worker
-      image: docker.io/langfuse/langfuse-worker:3
-      env:
-        # Database
-        - name: DATABASE_URL
-          value: "postgresql://postgres:***@127.0.0.1:5432/langfuse"
-        # ClickHouse
-        - name: CLICKHOUSE_URL
-          value: "http://127.0.0.1:8123"
-        - name: CLICKHOUSE_USER
-          value: "clickhouse"
-        - name: CLICKHOUSE_PASSWORD
-          value: "clickhouse"
-        - name: CLICKHOUSE_CLUSTER_ENABLED
-          value: "false"
-        # Redis
-        - name: REDIS_HOST
-          value: "127.0.0.1"
-        - name: REDIS_PORT
-          value: "6380"
-        - name: REDIS_AUTH
-          value: "langfuse-redis-2026"
-        # Server
-        - name: HOSTNAME
-          value: "0.0.0.0"
-        - name: PORT
-          value: "3030"
-        - name: TELEMETRY_ENABLED
-          value: "false"
-        # S3 Event Upload (required in v3, dummy value for local dev)
-        - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
-          value: "langfuse-events"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
-          value: "us-east-1"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-          value: "minioadmin"
-        - name: S3_FORCE_PATH_STYLE
-          value: "true"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
-          value: "http://127.0.0.1:9002"
-        - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-          value: "minioadmin"
-      livenessProbe:
-        exec:
-          command:
-            - pgrep
-            - -f
-            - langfuse-worker
-        initialDelaySeconds: 20
-        periodSeconds: 15
-        timeoutSeconds: 5
-
-    # --- OBSERVABILITY TIER 9: MINIO S3 (S3-compatible storage for Langfuse v3) ---
-    - name: minio-s3
-      image: docker.io/minio/minio:latest
-      args:
-        - server
-        - /data
-        - --address
-        - :9002
-        - --console-address
-        - :9001
-      env:
-        - name: MINIO_ROOT_USER
-          value: minioadmin
-        - name: MINIO_ROOT_PASSWORD
-          value: minioadmin
-      livenessProbe:
-        exec:
-          command:
-            - sh
-            - -c
-            - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
-        initialDelaySeconds: 10
-        periodSeconds: 15
-        timeoutSeconds: 5
-      readinessProbe:
-        exec:
-          command:
-            - sh
-            - -c
-            - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
-        initialDelaySeconds: 5
-        periodSeconds: 10
-        timeoutSeconds: 5
-      volumeMounts:
-        - name: minio-storage
-          mountPath: /data
-
-
   volumes:
-    - name: valkey-storage
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/valkey-data
-    - name: litellm-config
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/litellm
-    - name: router-config
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/router
-    - name: postgres-storage
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/postgres-data
-    - name: clickhouse-storage
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/clickhouse-data
-    - name: redis-lf-storage
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/redis-lf-data
-    - name: minio-storage
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing/minio-data
-    - name: gemini-secrets
-      hostPath:
-        path: /home/gpav/.gemini
-    - name: goose-sessions
-      hostPath:
-        path: /home/gpav/.local/share/goose
-    - name: agy-bin
-      hostPath:
-        path: /home/gpav/.local/bin
-    - name: dbus-socket
-      hostPath:
-        path: /run/user/1000/bus
-    - name: keyring-store
-      hostPath:
-        path: /home/gpav/.local/share/keyrings
-    - name: xdg-runtime
-      hostPath:
-        path: /run/user/1000
-    - name: env-file
-      hostPath:
-        path: /home/gpav/Vrac/LAB/AI/LLM-Routing
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/valkey-data
+    name: valkey-storage
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/litellm
+    name: litellm-config
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/router
+    name: router-config
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/postgres-data
+    name: postgres-storage
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/clickhouse-data
+    name: clickhouse-storage
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/redis-lf-data
+    name: redis-lf-storage
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/minio-data
+    name: minio-storage
+  - hostPath:
+      path: /home/gpav/.gemini
+    name: gemini-secrets
+  - hostPath:
+      path: /home/gpav/.local/share/goose
+    name: goose-sessions
+  - hostPath:
+      path: /home/gpav/.local/bin
+    name: agy-bin
+  - hostPath:
+      path: /run/user/1000/bus
+    name: dbus-socket
+  - hostPath:
+      path: /home/gpav/.local/share/keyrings
+    name: keyring-store
+  - hostPath:
+      path: /run/user/1000
+    name: xdg-runtime
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing
+    name: env-file

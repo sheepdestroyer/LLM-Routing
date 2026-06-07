@@ -201,11 +201,11 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 | Backend name | Complexity level | Fallback chain in LiteLLM | agy trigger |
 |:---|:---|:---|---:|
-| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → openrouter-auto → local-qwen-3.6 | — |
-| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → openrouter-auto → local-qwen-3.6 | — |
-| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → openrouter-auto → local-qwen-3.6 | — |
-| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → openrouter-auto → local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
-| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | openrouter-auto → local-qwen-3.6 | — |
+| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → reasoning → advanced → local-qwen-3.6 | — |
+| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → advanced → local-qwen-3.6 | — |
+| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → local-qwen-3.6 | — |
+| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
+| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | local-qwen-3.6 | — |
 | `openrouter-auto` | Catch-all / manual override | n/a | — |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
@@ -220,11 +220,11 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
   Each tier escalates through increasingly capable models before falling back to the local MoE:
-  - **`agent-simple-core`**: medium-core → complex-core → openrouter-auto → `local-qwen-3.6`
-  - **`agent-medium-core`**: complex-core → reasoning-core → openrouter-auto → `local-qwen-3.6`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → openrouter-auto → `local-qwen-3.6`
-  - **`agent-reasoning-core`**: advanced-core → openrouter-auto → `local-qwen-3.6`
-  - **`agent-advanced-core`**: openrouter-auto → `local-qwen-3.6`
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen-3.6`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen-3.6`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen-3.6`
+  - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6`
+  - **`agent-advanced-core`**: `local-qwen-3.6`
   All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
 *Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
@@ -323,6 +323,35 @@ The triage router hosts a beautiful, single-pane-of-glass **Glassmorphic Status 
 * **System Status Healthchecks**: Live connection status checks via TCP sockets (Valkey, Postgres) and HTTP pings (LiteLLM, Llama-server).
 * **Real-time Routing Metrics**: Active classification splits (simple vs complex), request logs, and processing latencies.
 * **Direct Application Portals**: One-click navigation links to target web utilities (LiteLLM administration console, Langfuse telemetry console, Llama-Server playground).
+
+### Prometheus /metrics Endpoint
+
+The triage router also exposes a **Prometheus-format metrics endpoint** at:
+
+👉 **`http://localhost:5000/metrics`**
+
+This endpoint outputs plain-text metrics (`Content-Type: text/plain; version=0.0.4`) for ingestion by Prometheus, Grafana, or any Prometheus-compatible monitoring stack. Exported metrics include:
+
+| Metric | Type | Description |
+| :--- | :---: | :--- |
+| `triage_requests_total` | gauge | Total number of requests processed |
+| `simple_requests_total` | gauge | Number of simple/routine requests |
+| `complex_requests_total` | gauge | Number of complex requests |
+| `cache_hits_total` | gauge | Triage cache hit count |
+| `avg_triage_latency_ms` | gauge | Average triage classification latency |
+| `avg_proxy_latency_ms` | gauge | Average proxy/inference latency |
+| `prompt_tokens_total` | counter | Total prompt tokens processed |
+| `completion_tokens_total` | counter | Total completion tokens generated |
+| `circuit_breaker_tier` | gauge | Current circuit breaker cooldown tier (0=open, 1-3=cooldown) |
+| `circuit_breaker_agy_allowed` | gauge | Whether agy proxy requests are currently allowed (0/1) |
+| `circuit_breaker_cooldown_remaining_seconds` | gauge | Seconds until cooldown expires |
+| `circuit_breaker_total_trips` | counter | Total number of circuit breaker trips |
+| `circuit_breaker_probe_granted` | gauge | Whether a probe request has been granted (0/1) |
+
+Verify the endpoint:
+```bash
+curl -s http://localhost:5000/metrics
+```
 
 ---
 

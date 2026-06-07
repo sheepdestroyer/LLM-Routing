@@ -1,96 +1,93 @@
-model_list:
-  - model_name: local-qwen-3.6
-    litellm_params:
-      model: openai/qwen-35b-q4ks
-      api_base: http://127.0.0.1:8080/v1
-      api_key: local-token
-      request_timeout: 300
-  - model_name: openrouter-auto
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-  # Local embedding model for zero-cost semantic cache
-  - model_name: local-nomic-embed
-    litellm_params:
-      model: openai/nomic-embed-text-v1.5-Q4_K_M
-      api_base: http://127.0.0.1:8080/v1
-      api_key: local-token
-      request_timeout: 30
-  # -------------------------------------------------------------------------
-  # Triage-router backend mappings (5-tier classifier dispatch targets):
-  #   simple → medium → complex → reasoning → advanced
-  # The FastAPI triage router (port 5000) returns one of these model names
-  # based on prompt-complexity analysis. All tiers route through OpenRouter
-  # by default via openrouter/auto; LiteLLM latency-based routing picks the
-  # fastest healthy free-model deployment for each tier.
-  # -------------------------------------------------------------------------
-  - model_name: agent-simple-core
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-  - model_name: agent-medium-core
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-  - model_name: agent-complex-core
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-  - model_name: agent-reasoning-core
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-  - model_name: agent-advanced-core
-    litellm_params:
-      model: openrouter/openrouter/auto
-      request_timeout: 120
-
-# =========================================================================
-# GLOBAL SYSTEM POLICIES
-# =========================================================================
-router_settings:
-  cooldown_time: 30
-  allowed_fails: 2
-  num_retries: 1
-  enable_pre_call_checks: true
-  routing_strategy: "latency-based-routing"
-
-# -------------------------------------------------------------------------
-# FALLBACK CHAINS (cascading, in order of escalation)
-# When one tier fails, LiteLLM tries the next model in the chain.
-# All tiers ultimately fall back to local-qwen-3.6 as safety net.
-# -------------------------------------------------------------------------
+general_settings:
+  master_key: sk-lit...33bf
 litellm_settings:
-  detailed_debug: false
-  callbacks: ["langfuse"]
-  drop_params: true
+  # -------------------------------------------------------------------------
+  # FALLBACK CHAINS (cascading, in order of escalation)
+  # Simple → medium → complex → reasoning → advanced → local-qwen-3.6
+  # When one tier fails, LiteLLM tries the next model in the chain.
+  # All tiers ultimately fall back to local-qwen-3.6 as safety net.
+  # -------------------------------------------------------------------------
   cache: true
-  caching_backend: "redis"
   cache_params:
-    mode: "default"
-    ttl: 3600
-    type: "redis"
-    host: "127.0.0.1"
+    host: 127.0.0.1
+    mode: default
     port: 6379
+    ttl: 3600
+    type: redis
+  caching_backend: redis
+  callbacks:
+  - langfuse
+  detailed_debug: false
+  drop_params: true
   fallbacks:
-    - agent-simple-core: ["agent-medium-core", "agent-complex-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-medium-core: ["agent-complex-core", "agent-reasoning-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-complex-core: ["agent-reasoning-core", "agent-advanced-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-reasoning-core: ["agent-advanced-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-advanced-core: ["openrouter-auto", "local-qwen-3.6"]
-
-# Vector store configuration for zero-cost semantic caching
-# Uses local nomic-embed-text-v1.5-Q4_K_M via llama-server (no OpenRouter costs)
-# Model: nomic-embed-text-v1.5-Q4_K_M (GGUF ~137MB) with CLS pooling, 768-dim vectors
-# Configured in /home/gpav/Vrac/LAB/AI/models.ini [nomic-embed-text-v1.5-Q4_K_M]
-# llama-server runs with --models-max 3 to keep classifier + MoE + embed loaded
-vector_store_settings:
-  store_type: "postgres"
-  connection_string: "postgresql://postgres:***@127.0.0.1:5432/postgres"
-  collection_name: "litellm_semantic_cache"
-  embedding_model: "local-nomic-embed"
-
-# Shared local Valkey cache connection profile
+  - agent-simple-core:
+    - agent-medium-core
+    - agent-complex-core
+    - agent-reasoning-core
+    - agent-advanced-core
+    - local-qwen-3.6
+  - agent-medium-core:
+    - agent-complex-core
+    - agent-reasoning-core
+    - agent-advanced-core
+    - local-qwen-3.6
+  - agent-complex-core:
+    - agent-reasoning-core
+    - agent-advanced-core
+    - local-qwen-3.6
+  - agent-reasoning-core:
+    - agent-advanced-core
+    - local-qwen-3.6
+  - agent-advanced-core:
+    - local-qwen-3.6
+model_list:
+- litellm_params:
+    api_base: http://127.0.0.1:8080/v1
+    api_key: local-token
+    model: openai/qwen-35b-q4ks
+    request_timeout: 300
+  model_name: local-qwen-3.6
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: openrouter-auto
+- litellm_params:
+    api_base: http://127.0.0.1:8080/v1
+    api_key: local-token
+    model: openai/nomic-embed-text-v1.5-Q4_K_M
+    request_timeout: 30
+  model_name: local-nomic-embed
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: agent-simple-core
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: agent-medium-core
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: agent-complex-core
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: agent-reasoning-core
+- litellm_params:
+    model: openrouter/openrouter/auto
+    request_timeout: 120
+  model_name: agent-advanced-core
 redis_settings:
-  redis_host: "127.0.0.1"
+  redis_host: 127.0.0.1
   redis_port: 6379
+router_settings:
+  allowed_fails: 2
+  cooldown_time: 30
+  enable_pre_call_checks: true
+  num_retries: 1
+  routing_strategy: latency-based-routing
+vector_store_settings:
+  collection_name: litellm_semantic_cache
+  connection_string: postgresql://postgres:***@127.0.0.1:5432/postgres
+  embedding_model: local-nomic-embed
+  store_type: postgres
