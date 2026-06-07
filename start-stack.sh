@@ -3,8 +3,10 @@ set -e
 
 # Usage:
 #   ./start-stack.sh              → Restart existing pod (fast, preserves logs)
-#   ./start-stack.sh --full-rebuild → Destroy & recreate pod (for .env changes,
-#                                      infrastructure changes, model additions)
+#   ./start-stack.sh --replace    → Recreate pod from YAML (new ports, probes,
+#                                    env vars, containers — no image rebuild)
+#   ./start-stack.sh --full-rebuild → Full reset: rebuild image + recreate pod
+#                                      (for router/Containerfile changes)
 
 # Set working directory
 WORKDIR="/home/gpav/Vrac/LAB/AI/LLM-Routing"
@@ -87,8 +89,11 @@ fi
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
 FULL_REBUILD=false
+REPLACE_MODE=false
 if [ "${1:-}" = "--full-rebuild" ]; then
     FULL_REBUILD=true
+elif [ "${1:-}" = "--replace" ]; then
+    REPLACE_MODE=true
 fi
 
 # Pre-deploy database backup (runs before any pod modification)
@@ -105,8 +110,12 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman pod rm agent-router-pod 2>/dev/null || true
         echo "🚀 Deploying fresh triage pod via Podman..."
         podman play kube "$WORKDIR/pod.yaml"
+    elif $REPLACE_MODE; then
+        echo "🔄 Recreating pod from YAML (podman play kube --replace)..."
+        podman play kube --replace "$WORKDIR/pod.yaml"
+        echo "✅ Pod recreated. Container IDs reset — logs preserved in journald."
     else
-        echo "🔄 Restarting existing agent-router-pod (use --full-rebuild to recreate)..."
+        echo "🔄 Restarting existing agent-router-pod (use --replace or --full-rebuild to recreate)..."
         podman pod restart agent-router-pod
         echo "✅ Pod restarted. Container IDs preserved — logs survive in podman logs."
         echo "========================================================================="

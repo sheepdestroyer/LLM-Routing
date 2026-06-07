@@ -265,7 +265,10 @@ The stack also supports **semantic** (vector-similarity) caching via `vector_sto
 ### 1. Launching the Stack
 Run the startup script from the root of the repository:
 ```bash
-./start-stack.sh
+./start-stack.sh              # Fast restart (preserves container IDs and logs)
+./start-stack.sh --replace    # Recreate pod from YAML (picks up new ports,
+                              #   health probes, env vars, containers — no rebuild)
+./start-stack.sh --full-rebuild  # Full reset: rebuild image + recreate pod
 ```
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`).*
 
