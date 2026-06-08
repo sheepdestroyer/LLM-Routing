@@ -4,13 +4,14 @@ metadata:
   name: agent-router-pod
 spec:
   containers:
+  # Valkey Cache 9.1.0-alpine — LiteLLM response cache (exact-match & semantic)
   - command:
     - valkey-server
     - --protected-mode
     - 'no'
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:8-alpine
+    image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
       exec:
         command:
