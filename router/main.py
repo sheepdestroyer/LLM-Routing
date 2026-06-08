@@ -123,7 +123,7 @@ async def sync_adaptive_router_roster(master_key: str):
         mid = m.get("id", "")
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
-            score = AGENTIC_INDEX_SCORES.get(mid, 50.0)
+            score = compute_free_model_score(m)
             free_models.append((score, mid))
     free_models.sort(reverse=True)
     if not free_models:
@@ -175,14 +175,19 @@ async def lifespan(app: FastAPI):
                 r = await client.get(litellm_ready_url)
                 if r.status_code == 200:
                     logger.info(f"✅ LiteLLM ready after {i+1}s")
-                    # Sync free-model roster into LiteLLM
-                    await sync_adaptive_router_roster(litellm_master_key)
                     break
         except Exception:
             pass
         await asyncio.sleep(1)
     else:
         logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
+        yield
+        return
+    # Sync free-model roster into LiteLLM (separate try so sync failure doesn't loop)
+    try:
+        await sync_adaptive_router_roster(litellm_master_key)
+    except Exception as e:
+        logger.error(f"Roster sync failed: {e}")
     yield
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
@@ -517,21 +522,62 @@ free_model_cache = {
 }
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
-AGENTIC_INDEX_SCORES = {
-    "nvidia/nemotron-3-ultra-550b-a55b:free": 85.0,
-    "moonshotai/kimi-k2.6:free": 82.5,
-    "nvidia/nemotron-3-super-120b-a12b:free": 78.4,
-    "google/gemma-4-31b-it:free": 75.2,
-    "google/gemma-4-26b-a4b-it:free": 72.8,
-    "deepseek/deepseek-v4-flash:free": 72.1,
-    "poolside/laguna-m.1:free": 68.3,
-    "minimax/minimax-m2.5:free": 66.5,
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 65.0,
-    "nvidia/nemotron-3-nano-30b-a3b:free": 62.0,
-    "poolside/laguna-xs.2:free": 61.2,
-    "liquid/lfm-2.5-1.2b-thinking:free": 59.8,
-    "liquid/lfm-2.5-1.2b-instruct:free": 55.4,
-}
+def compute_free_model_score(m: dict) -> float:
+    """Derive an agentic quality score (0-100) from OpenRouter model metadata.
+    No hardcoded list — computed fresh on every roster sync from live API data."""
+    score = 50.0  # neutral baseline
+    name = m.get("name", "")
+    name_lower = name.lower()
+    ctx_len = m.get("context_length", 0)
+    supported = m.get("supported_parameters", [])
+    max_out = (m.get("top_provider") or {}).get("max_completion_tokens", 0)
+
+    # --- Context length (primary capability signal) ---
+    if ctx_len >= 1_000_000:
+        score += 25  # e.g., nemotron-ultra: 1M
+    elif ctx_len >= 256_000:
+        score += 20
+    elif ctx_len >= 128_000:
+        score += 15
+    elif ctx_len >= 32_000:
+        score += 8
+    else:
+        score += 2
+
+    # --- Name-based tier bonuses ---
+    if "ultra" in name_lower:
+        score += 15
+    elif "super" in name_lower:
+        score += 10
+    elif "pro" in name_lower and "nano" not in name_lower:
+        score += 7
+    elif "flash" in name_lower:
+        score += 3
+
+    if "nano" in name_lower:
+        score -= 5
+    if "mini" in name_lower:
+        score -= 5
+    if "content-safety" in name_lower or "moderation" in name_lower:
+        score -= 25  # safety models are not useful for general agentic work
+
+    # --- Tool / structured output support (capability signal) ---
+    if "tools" in supported:
+        score += 5
+    if "structured_outputs" in supported:
+        score += 3
+
+    # --- Max output tokens ---
+    if max_out >= 64_000:
+        score += 5
+    elif max_out >= 16_000:
+        score += 3
+
+    # --- Reasoning models get a small nudge ---
+    if "reasoning" in name_lower:
+        score += 2
+
+    return max(0.0, min(100.0, score))
 
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
@@ -567,7 +613,7 @@ async def get_best_free_model() -> dict:
                     
                     # Verify if it is free
                     if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
-                        score = AGENTIC_INDEX_SCORES.get(mid, 50.0) # Default to 50 if unknown free model
+                        score = compute_free_model_score(m) # Default to 50 if unknown free model
                         if score > max_score:
                             max_score = score
                             best_model = {
