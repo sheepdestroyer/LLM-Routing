@@ -157,6 +157,26 @@ async def sync_adaptive_router_roster(master_key: str):
         else: tier_assignments["agent-simple-core"].append(mid)
         if sum(len(v) for v in tier_assignments.values()) >= 15:
             break
+    # Cascading: models capable of higher tiers also serve lower tiers.
+    # A model that qualifies for advanced should be available for reasoning,
+    # complex, and medium requests too — not just advanced. Without this,
+    # tiers like complex and reasoning end up with only 1 model while 5
+    # sit idle in advanced. Simple tier is excluded from cascading:
+    # fast/small models belong there, not the 550B heavyweight.
+    # Advanced → reasoning, complex, medium
+    for mid in tier_assignments["agent-advanced-core"]:
+        for t in ["agent-reasoning-core", "agent-complex-core", "agent-medium-core"]:
+            if mid not in tier_assignments[t]:
+                tier_assignments[t].append(mid)
+    # Reasoning → complex, medium
+    for mid in tier_assignments["agent-reasoning-core"]:
+        for t in ["agent-complex-core", "agent-medium-core"]:
+            if mid not in tier_assignments[t]:
+                tier_assignments[t].append(mid)
+    # Complex → medium
+    for mid in tier_assignments["agent-complex-core"]:
+        if mid not in tier_assignments["agent-medium-core"]:
+            tier_assignments["agent-medium-core"].append(mid)
     # Safety net: if any tier is still empty after assignment, use top 2 models as fallback.
     # This shouldn't happen with current AA coverage, but guards against edge cases.
     top_two = [mid for _, mid in free_models[:2]]
