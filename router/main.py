@@ -197,11 +197,12 @@ async def sync_adaptive_router_roster(master_key: str):
                 'agent-%'
             )
             await conn.close()
-            logger.info("🧹 Purged stale agent-* deployments before roster sync")
+            logger.warning("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
             logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
         registered = 0
+        failed = 0
         for tier_name, model_ids in tier_assignments.items():
             for mid in model_ids:
                 payload = {
@@ -212,9 +213,13 @@ async def sync_adaptive_router_roster(master_key: str):
                     r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
                     if r.status_code in (200, 201):
                         registered += 1
+                    else:
+                        failed += 1
+                        logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
                 except Exception as e:
+                    failed += 1
                     logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
-        logger.info(f"📊 Roster sync: registered {registered} free-model deployments across 5 tiers")
+        logger.warning(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
