@@ -195,7 +195,7 @@ async def sync_adaptive_router_roster(master_key: str):
                 'agent-%'
             )
             await conn.close()
-            logger.warning("🧹 Purged stale agent-* deployments before roster sync")
+            logger.info("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
             logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
@@ -217,7 +217,7 @@ async def sync_adaptive_router_roster(master_key: str):
                 except Exception as e:
                     failed += 1
                     logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
-        logger.warning(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
+        logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
