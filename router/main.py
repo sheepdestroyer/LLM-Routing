@@ -155,8 +155,6 @@ async def sync_adaptive_router_roster(master_key: str):
         elif n >= 68: tier_assignments["agent-complex-core"].append(mid)
         elif n >= 60: tier_assignments["agent-medium-core"].append(mid)
         else: tier_assignments["agent-simple-core"].append(mid)
-        if sum(len(v) for v in tier_assignments.values()) >= 15:
-            break
     # Cascading: models capable of higher tiers also serve lower tiers.
     # A model that qualifies for advanced should be available for reasoning,
     # complex, and medium requests too — not just advanced. Without this,
