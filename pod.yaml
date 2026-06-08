@@ -201,11 +201,11 @@ spec:
     - langfuse-redis-2026
     - --maxmemory-policy
     - noeviction
-    image: docker.io/redis:7
+    image: valkey/valkey:9.1.0-alpine
     livenessProbe:
       exec:
         command:
-        - redis-cli
+        - valkey-cli
         - -p
         - '6380'
         - -a
@@ -214,11 +214,11 @@ spec:
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
-    name: langfuse-redis
+    name: valkey-lf
     readinessProbe:
       exec:
         command:
-        - redis-cli
+        - valkey-cli
         - -p
         - '6380'
         - -a
