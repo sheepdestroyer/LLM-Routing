@@ -359,8 +359,7 @@ spec:
       exec:
         command:
         - pgrep
-        - -f
-        - langfuse-worker
+        - node
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
