@@ -7,6 +7,7 @@ import asyncio
 import logging
 import yaml
 import httpx
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from circuit_breaker import get_breaker
@@ -100,7 +101,91 @@ triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 classification_lock = asyncio.Lock()
 
-app = FastAPI(title="LLM Triage Router")
+async def sync_adaptive_router_roster(master_key: str):
+    """Fetch free OpenRouter models and register them as deployments in LiteLLM."""
+    if not master_key:
+        logger.warning("No LITELLM_MASTER_KEY — skipping roster sync")
+        return
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+    admin_url = "http://127.0.0.1:4000"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get("https://openrouter.ai/api/v1/models")
+            if r.status_code != 200:
+                logger.warning(f"OpenRouter models API returned {r.status_code}")
+                return
+            all_models = r.json().get("data", [])
+    except Exception as e:
+        logger.warning(f"Failed to fetch OpenRouter models: {e}")
+        return
+    free_models = []
+    for m in all_models:
+        mid = m.get("id", "")
+        pricing = m.get("pricing", {})
+        if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
+            score = AGENTIC_INDEX_SCORES.get(mid, 50.0)
+            free_models.append((score, mid))
+    free_models.sort(reverse=True)
+    if not free_models:
+        logger.warning("No free models found — skipping roster sync")
+        return
+    tier_assignments = {
+        "agent-simple-core": [], "agent-medium-core": [],
+        "agent-complex-core": [], "agent-reasoning-core": [],
+        "agent-advanced-core": [],
+    }
+    for score, mid in free_models[2:]:
+        if score >= 80: tier_assignments["agent-advanced-core"].append(mid)
+        elif score >= 75: tier_assignments["agent-reasoning-core"].append(mid)
+        elif score >= 68: tier_assignments["agent-complex-core"].append(mid)
+        elif score >= 60: tier_assignments["agent-medium-core"].append(mid)
+        else: tier_assignments["agent-simple-core"].append(mid)
+        if sum(len(v) for v in tier_assignments.values()) >= 15:
+            break
+    top_two = [mid for _, mid in free_models[:2]]
+    for tier_name, models in tier_assignments.items():
+        if not models:
+            tier_assignments[tier_name] = top_two[:]
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        registered = 0
+        for tier_name, model_ids in tier_assignments.items():
+            for mid in model_ids:
+                payload = {
+                    "model_name": tier_name,
+                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 120}
+                }
+                try:
+                    r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
+                    if r.status_code in (200, 201):
+                        registered += 1
+                except Exception as e:
+                    logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
+        logger.info(f"📊 Roster sync: registered {registered} free-model deployments across 5 tiers")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: wait for LiteLLM readiness, then sync free-model roster."""
+    litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
+    litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
+    max_wait = 180
+    logger.info(f"⏳ Waiting for LiteLLM on :4000 (max {max_wait}s)...")
+    for i in range(max_wait):
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(litellm_ready_url)
+                if r.status_code == 200:
+                    logger.info(f"✅ LiteLLM ready after {i+1}s")
+                    # Sync free-model roster into LiteLLM
+                    await sync_adaptive_router_roster(litellm_master_key)
+                    break
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    else:
+        logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
+    yield
+
+app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
 async def check_tcp_port(ip: str, port: int) -> bool:
     """Verifies if a TCP port is open locally."""

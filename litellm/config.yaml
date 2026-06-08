@@ -25,20 +25,25 @@ litellm_settings:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - openrouter-auto
     - local-qwen-3.6
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - openrouter-auto
     - local-qwen-3.6
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
+    - openrouter-auto
     - local-qwen-3.6
   - agent-reasoning-core:
     - agent-advanced-core
+    - openrouter-auto
     - local-qwen-3.6
   - agent-advanced-core:
+    - openrouter-auto
     - local-qwen-3.6
 model_list:
 - litellm_params:
@@ -57,33 +62,68 @@ model_list:
     model: openai/nomic-embed-text-v1.5-Q4_K_M
     request_timeout: 30
   model_name: local-nomic-embed
-- litellm_params:
-    model: openrouter/openrouter/auto
+# Free model deployments per tier — latency-based routing picks fastest.
+# Multiple entries with same model_name = deployment pool for that tier.
+# openrouter-auto is fallback-only (in chain, never in same-tier pool).
+- model_name: agent-simple-core
+  litellm_params:
+    model: openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
     request_timeout: 120
-  model_name: agent-simple-core
-- litellm_params:
-    model: openrouter/openrouter/auto
+- model_name: agent-simple-core
+  litellm_params:
+    model: openrouter/poolside/laguna-xs.2:free
     request_timeout: 120
-  model_name: agent-medium-core
-- litellm_params:
-    model: openrouter/openrouter/auto
+- model_name: agent-simple-core
+  litellm_params:
+    model: openrouter/liquid/lfm-2.5-1.2b-instruct:free
     request_timeout: 120
-  model_name: agent-complex-core
-- litellm_params:
-    model: openrouter/openrouter/auto
+- model_name: agent-medium-core
+  litellm_params:
+    model: openrouter/poolside/laguna-m.1:free
     request_timeout: 120
-  model_name: agent-reasoning-core
-- litellm_params:
-    model: openrouter/openrouter/auto
+- model_name: agent-medium-core
+  litellm_params:
+    model: openrouter/google/gemma-4-26b-a4b-it:free
     request_timeout: 120
-  model_name: agent-advanced-core
+- model_name: agent-medium-core
+  litellm_params:
+    model: openrouter/minimax/minimax-m2.5:free
+    request_timeout: 120
+- model_name: agent-complex-core
+  litellm_params:
+    model: openrouter/google/gemma-4-31b-it:free
+    request_timeout: 120
+- model_name: agent-complex-core
+  litellm_params:
+    model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    request_timeout: 120
+- model_name: agent-complex-core
+  litellm_params:
+    model: openrouter/deepseek/deepseek-v4-flash:free
+    request_timeout: 120
+- model_name: agent-reasoning-core
+  litellm_params:
+    model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    request_timeout: 120
+- model_name: agent-reasoning-core
+  litellm_params:
+    model: openrouter/moonshotai/kimi-k2.6:free
+    request_timeout: 120
+- model_name: agent-advanced-core
+  litellm_params:
+    model: openrouter/moonshotai/kimi-k2.6:free
+    request_timeout: 120
+- model_name: agent-advanced-core
+  litellm_params:
+    model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+    request_timeout: 120
 redis_settings:
   redis_host: 127.0.0.1
   redis_port: 6379
 router_settings:
   allowed_fails: 2
   cooldown_time: 30
-  enable_pre_call_checks: true
+  enable_pre_call_checks: false
   num_retries: 1
   routing_strategy: latency-based-routing
 vector_store_settings:
