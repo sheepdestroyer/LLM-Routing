@@ -522,60 +522,59 @@ free_model_cache = {
 }
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
+# --- Artificial Analysis Agentic Index scores cache ---
+_AA_SCORES_CACHE: dict[str, float] = {}
+_AA_SCORES_LOADED = False
+
+def _load_aa_scores():
+    global _AA_SCORES_CACHE, _AA_SCORES_LOADED
+    if _AA_SCORES_LOADED:
+        return
+    try:
+        import json
+        scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
+        with open(scores_path) as f:
+            data = json.load(f)
+            _AA_SCORES_CACHE = data.get("scores", {})
+            _AA_SCORES_LOADED = True
+            logger.info(f"📊 Loaded {len(_AA_SCORES_CACHE)} AA agentic index scores from {scores_path}")
+    except Exception as e:
+        logger.warning(f"Could not load AA scores cache: {e}")
+        _AA_SCORES_LOADED = True  # don't retry
+
 def compute_free_model_score(m: dict) -> float:
-    """Derive an agentic quality score (0-100) from OpenRouter model metadata.
-    No hardcoded list — computed fresh on every roster sync from live API data."""
-    score = 50.0  # neutral baseline
+    """Derive an agentic quality score from Artificial Analysis Agentic Index, falling back to metadata."""
+    _load_aa_scores()
+    mid = m.get("id", "")
+    
+    # 1. Check AA scores cache (authoritative source)
+    if mid in _AA_SCORES_CACHE:
+        return _AA_SCORES_CACHE[mid]
+    
+    # 2. Fallback: metadata-based scoring for models not yet in AA cache
+    score = 30.0  # lower baseline for unknown models
     name = m.get("name", "")
     name_lower = name.lower()
     ctx_len = m.get("context_length", 0)
     supported = m.get("supported_parameters", [])
     max_out = (m.get("top_provider") or {}).get("max_completion_tokens", 0)
 
-    # --- Context length (primary capability signal) ---
-    if ctx_len >= 1_000_000:
-        score += 25  # e.g., nemotron-ultra: 1M
-    elif ctx_len >= 256_000:
-        score += 20
-    elif ctx_len >= 128_000:
-        score += 15
-    elif ctx_len >= 32_000:
-        score += 8
-    else:
-        score += 2
+    if ctx_len >= 1_000_000: score += 20
+    elif ctx_len >= 256_000: score += 15
+    elif ctx_len >= 128_000: score += 10
+    elif ctx_len >= 32_000: score += 5
 
-    # --- Name-based tier bonuses ---
-    if "ultra" in name_lower:
-        score += 15
-    elif "super" in name_lower:
-        score += 10
-    elif "pro" in name_lower and "nano" not in name_lower:
-        score += 7
-    elif "flash" in name_lower:
-        score += 3
+    if "ultra" in name_lower: score += 12
+    elif "super" in name_lower: score += 8
+    elif "pro" in name_lower and "nano" not in name_lower: score += 5
 
-    if "nano" in name_lower:
-        score -= 5
-    if "mini" in name_lower:
-        score -= 5
-    if "content-safety" in name_lower or "moderation" in name_lower:
-        score -= 25  # safety models are not useful for general agentic work
+    if "nano" in name_lower: score -= 5
+    if "mini" in name_lower: score -= 5
+    if "content-safety" in name_lower or "moderation" in name_lower: score -= 20
 
-    # --- Tool / structured output support (capability signal) ---
-    if "tools" in supported:
-        score += 5
-    if "structured_outputs" in supported:
-        score += 3
-
-    # --- Max output tokens ---
-    if max_out >= 64_000:
-        score += 5
-    elif max_out >= 16_000:
-        score += 3
-
-    # --- Reasoning models get a small nudge ---
-    if "reasoning" in name_lower:
-        score += 2
+    if "tools" in supported: score += 3
+    if "structured_outputs" in supported: score += 2
+    if max_out >= 64_000: score += 3
 
     return max(0.0, min(100.0, score))
 

@@ -1,0 +1,20 @@
+{
+  "_source": "Artificial Analysis Agentic Index — https://artificialanalysis.ai/models?intelligence=agentic-index",
+  "_updated": "2026-06-08T03:10:00+02:00",
+  "_note": "Scores are on 0-100 scale. Models not listed default to 0 (fall through to metadata-based scoring). Update by visiting the AA page and extracting chart values.",
+  "scores": {
+    "nvidia/nemotron-3-ultra-550b-a55b:free": 48.0,
+    "moonshotai/kimi-k2.6:free": 54.0,
+    "nvidia/nemotron-3-super-120b-a12b:free": 44.0,
+    "google/gemma-4-31b-it:free": 42.0,
+    "google/gemma-4-26b-a4b-it:free": 40.0,
+    "deepseek/deepseek-v4-flash:free": 47.0,
+    "poolside/laguna-m.1:free": 35.0,
+    "minimax/minimax-m2.5:free": 55.0,
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 30.0,
+    "nvidia/nemotron-3-nano-30b-a3b:free": 28.0,
+    "poolside/laguna-xs.2:free": 22.0,
+    "liquid/lfm-2.5-1.2b-thinking:free": 18.0,
+    "liquid/lfm-2.5-1.2b-instruct:free": 12.0
+  }
+}
