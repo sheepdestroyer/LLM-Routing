@@ -31,7 +31,7 @@ port = config.get("server", {}).get("port", 5000)
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
 router_api_key = router_model_conf.get("api_key", "local-token")
-router_model_name = router_model_conf.get("model", "qwen-35b-q4ks")
+router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
@@ -518,6 +518,7 @@ free_model_cache = {
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
 AGENTIC_INDEX_SCORES = {
+    "nvidia/nemotron-3-ultra-550b-a55b:free": 85.0,
     "moonshotai/kimi-k2.6:free": 82.5,
     "nvidia/nemotron-3-super-120b-a12b:free": 78.4,
     "google/gemma-4-31b-it:free": 75.2,
@@ -526,6 +527,7 @@ AGENTIC_INDEX_SCORES = {
     "poolside/laguna-m.1:free": 68.3,
     "minimax/minimax-m2.5:free": 66.5,
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": 65.0,
+    "nvidia/nemotron-3-nano-30b-a3b:free": 62.0,
     "poolside/laguna-xs.2:free": 61.2,
     "liquid/lfm-2.5-1.2b-thinking:free": 59.8,
     "liquid/lfm-2.5-1.2b-instruct:free": 55.4,
