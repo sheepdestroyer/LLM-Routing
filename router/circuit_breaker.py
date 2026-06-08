@@ -1,7 +1,11 @@
 """
 Circuit breaker for Google Cloud Code Assist quota exhaustion.
 
-3-tier exponential cooldown:
+TWO independent breakers:
+  google_breaker  — for Google model calls (Gemini via agy or direct OAuth)
+  vendor_breaker  — for vendor model calls (Claude Opus, GPT-OSS via agy)
+
+Each has independent 3-tier exponential cooldown:
   Tier 1: 5 min (300s)
   Tier 2: 30 min (1800s)  
   Tier 3: 5 hours (18000s) — matches official Google quota refresh window
@@ -26,61 +30,46 @@ TIER_COOLDOWNS = {
 MAX_TIER = 3
 
 
-class AgyCircuitBreaker:
-    """Tracks quota exhaustion state with exponential cooldown."""
+class PerModelBreaker:
+    """Tracks quota exhaustion for a specific model family with exponential cooldown."""
 
-    def __init__(self):
-        # tier: 0 = open (agy allowed), 1-3 = cooldown active
-        self.tier: int = 0
+    def __init__(self, name: str):
+        self.name = name
+        self.tier: int = 0        # 0 = open (allowed), 1-3 = cooldown active
         self.cooldown_until: float = 0.0
-        # probe_granted: True when cooldown expired and next request is the probe
         self.probe_granted: bool = False
-        # Statistics
         self.total_trips: int = 0
         self.last_trip_time: float = 0.0
 
     def is_allowed(self) -> bool:
-        """
-        Check whether an agy request is currently allowed.
-        
-        Returns True if:
-          - tier == 0 (breaker open, agy operational)
-          - probe_granted (cooldown expired, one probe attempt allowed)
-        
-        If a cooldown has just expired and no probe was granted yet,
-        grant the probe and return True.
-        """
+        """Check whether this model family is currently allowed."""
         now = time.time()
 
         if self.tier == 0:
             return True
 
-        # Check if cooldown has expired
         if now >= self.cooldown_until:
-            # Cooldown expired — grant exactly one probe
             if not self.probe_granted:
                 self.probe_granted = True
                 logger.info(
-                    f"Circuit breaker: Tier {self.tier} cooldown expired. "
-                    f"Granting 1 probe request to test agy availability."
+                    f"Circuit breaker [{self.name}]: Tier {self.tier} cooldown expired. "
+                    f"Granting 1 probe request."
                 )
                 return True
-            # Already granted and consumed — stay blocked until reset
             return False
 
-        # Cooldown still active
         remaining = self.cooldown_until - now
         logger.debug(
-            f"Circuit breaker: agy blocked (tier {self.tier}, "
+            f"Circuit breaker [{self.name}]: blocked (tier {self.tier}, "
             f"{remaining:.0f}s remaining)"
         )
         return False
 
     def record_success(self):
-        """Called when an agy request succeeds — resets the breaker to Tier 0."""
+        """Reset breaker to Tier 0 on successful request."""
         if self.tier > 0:
             logger.info(
-                f"Circuit breaker: agy probe succeeded — resetting from "
+                f"Circuit breaker [{self.name}]: probe succeeded — resetting from "
                 f"Tier {self.tier} to Tier 0 (open)"
             )
         self.tier = 0
@@ -88,26 +77,16 @@ class AgyCircuitBreaker:
         self.probe_granted = False
 
     def record_failure(self):
-        """
-        Called when agy returns quota-exhausted.
-        
-        If we were in a probe window, consume the probe and advance to next tier.
-        If we were in Tier 0, trip to Tier 1.
-        If we were already at Tier 3, stay at Tier 3 (renew cooldown).
-        """
+        """Advance to next cooldown tier on rate-limit/quota failure."""
         now = time.time()
         self.total_trips += 1
         self.last_trip_time = now
 
         if self.tier == 0:
-            # First failure — trip to Tier 1
             new_tier = 1
         elif self.probe_granted:
-            # Probe failed — advance to next tier (or stay at max)
             new_tier = min(self.tier + 1, MAX_TIER)
         else:
-            # Already in cooldown (shouldn't normally happen — 
-            # is_allowed() would have blocked this)
             new_tier = min(self.tier + 1, MAX_TIER)
 
         cooldown = TIER_COOLDOWNS[new_tier]
@@ -117,25 +96,25 @@ class AgyCircuitBreaker:
 
         if new_tier == MAX_TIER:
             logger.warning(
-                f"Circuit breaker: TRIPPED to Tier {new_tier} — "
-                f"agy blocked for {cooldown / 3600:.1f} hours "
-                f"(until official quota refresh). "
-                f"Total trips: {self.total_trips}"
+                f"Circuit breaker [{self.name}]: TRIPPED to Tier {new_tier} — "
+                f"blocked for {cooldown / 3600:.1f}h "
+                f"(total trips: {self.total_trips})"
             )
         else:
             logger.warning(
-                f"Circuit breaker: advanced to Tier {new_tier} — "
-                f"agy blocked for {cooldown / 60:.0f} min. "
-                f"Total trips: {self.total_trips}"
+                f"Circuit breaker [{self.name}]: advanced to Tier {new_tier} — "
+                f"blocked for {cooldown / 60:.0f}min "
+                f"(total trips: {self.total_trips})"
             )
 
     def status(self) -> dict:
-        """Return a structured status dict for the dashboard."""
+        """Return structured status for the dashboard."""
         now = time.time()
         remaining = max(0, self.cooldown_until - now)
         return {
+            "name": self.name,
             "tier": self.tier,
-            "agy_allowed": self.is_allowed(),
+            "allowed": self.is_allowed(),
             "cooldown_remaining_seconds": int(remaining),
             "cooldown_total_seconds": TIER_COOLDOWNS.get(self.tier, 0),
             "total_trips": self.total_trips,
@@ -144,10 +123,57 @@ class AgyCircuitBreaker:
         }
 
 
-# Module-level singleton — all agy-related code imports this instance
-_breaker = AgyCircuitBreaker()
+class DualCircuitBreaker:
+    """
+    Master breaker with two independent model-family breakers.
+    Backward-compatible with existing get_breaker() calls.
+    """
+
+    def __init__(self):
+        self.google = PerModelBreaker("google")
+        self.vendor = PerModelBreaker("vendor")
+
+    # Backward-compat: old code calls get_breaker().is_allowed()
+    # Default to checking BOTH — if either allows, return allowed.
+    # This ensures old code without model awareness works correctly.
+    def is_allowed(self) -> bool:
+        return self.google.is_allowed() or self.vendor.is_allowed()
+
+    def record_failure(self):
+        """Backward-compat: trip both breakers (conservative for old code)."""
+        self.google.record_failure()
+        self.vendor.record_failure()
+
+    def record_success(self):
+        """Backward-compat: reset both breakers."""
+        self.google.record_success()
+        self.vendor.record_success()
+
+    @property
+    def tier(self) -> int:
+        return max(self.google.tier, self.vendor.tier)
+
+    def status(self) -> dict:
+        return {
+            "google": self.google.status(),
+            "vendor": self.vendor.status(),
+        }
 
 
-def get_breaker() -> AgyCircuitBreaker:
-    """Return the module-level circuit breaker singleton."""
+# Module-level singleton
+_breaker = DualCircuitBreaker()
+
+
+def get_breaker() -> DualCircuitBreaker:
+    """Return the dual circuit breaker singleton."""
     return _breaker
+
+
+def get_google_breaker() -> PerModelBreaker:
+    """Return the Google-specific breaker."""
+    return _breaker.google
+
+
+def get_vendor_breaker() -> PerModelBreaker:
+    """Return the vendor (Claude/GPT) breaker."""
+    return _breaker.vendor

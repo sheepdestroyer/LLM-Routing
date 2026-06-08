@@ -27,7 +27,7 @@ import shlex
 import time
 from typing import Optional
 
-from circuit_breaker import get_breaker
+from circuit_breaker import get_google_breaker, get_vendor_breaker
 
 logger = logging.getLogger("agy-proxy")
 
@@ -189,11 +189,16 @@ async def try_agy_proxy(prompt: str, messages: list = None,
     Returns:
         OpenAI-compatible response dict, streaming dict, or None if all tiers failed.
     """
-    breaker = get_breaker()
-    if not breaker.is_allowed():
+    # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
+    # rate-limit windows (separate 5-hour quota refresh cycles).
+    google_breaker = get_google_breaker()
+    vendor_breaker = get_vendor_breaker()
+
+    # Check if ANY model path is available
+    if not google_breaker.is_allowed() and not vendor_breaker.is_allowed():
         logger.info(
-            f"agy proxy: circuit breaker open (tier {breaker.tier}) — "
-            f"skipping agy, falling through to LiteLLM directly"
+            f"agy proxy: both circuit breakers open (google tier={google_breaker.tier}, "
+            f"vendor tier={vendor_breaker.tier}) — skipping agy, falling through to LiteLLM"
         )
         return None
 
@@ -232,6 +237,19 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         if remaining <= 0:
             logger.warning(f"agy proxy: total timeout exhausted at tier {tier['model_name']}")
             break
+
+        # Determine which breaker to use for this tier
+        # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
+        # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
+        is_google_tier = (actual_tier_idx == 0)
+        tier_breaker = google_breaker if is_google_tier else vendor_breaker
+
+        if not tier_breaker.is_allowed():
+            logger.info(
+                f"agy proxy: tier {tier['model_name']} blocked by circuit breaker "
+                f"(tier {tier_breaker.tier}, {tier_breaker.cooldown_until - time.time():.0f}s remaining) — skipping"
+            )
+            continue
 
         tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
         
@@ -285,14 +303,14 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 stderr_content = first_data.get("stderr", "")
                 if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
                     if _is_quota_exhausted(rc, "", stderr_content):
-                        breaker.record_failure()
+                        tier_breaker.record_failure()
                     await r.aclose()
                     await client.aclose()
                     logger.warning(f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier...")
                     continue
                     
             # Success! Stream has started.
-            breaker.record_success()
+            tier_breaker.record_success()
             # Define the async generator
             async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id):
                 # Yield the initial token if it was a token
@@ -345,7 +363,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
 
             # Check for quota exhaustion
             if _is_quota_exhausted(returncode, stdout, stderr):
-                breaker.record_failure()
+                tier_breaker.record_failure()
                 logger.warning(
                     f"agy proxy: tier {tier['model_name']} quota exhausted. "
                     f"Falling to tier {actual_tier_idx + 2}..."
@@ -378,7 +396,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     f"agy proxy: ✅ tier {tier['model_name']} succeeded "
                     f"({len(stdout)} chars, {elapsed_total:.1f}s)"
                 )
-                breaker.record_success()
+                tier_breaker.record_success()
                 return _wrap_response(stdout, tier["model_name"], proxy_prompt)
             else:
                 logger.warning(

@@ -148,7 +148,7 @@ async def sync_adaptive_router_roster(master_key: str):
         max_score = 55.0  # safety floor
     def norm(s: float) -> float:
         return (s / max_score) * 100.0
-    for score, mid in free_models[2:]:
+    for score, mid in free_models:  # include all models — top 2 are also assigned to their correct tier
         n = norm(score)
         if n >= 80: tier_assignments["agent-advanced-core"].append(mid)
         elif n >= 75: tier_assignments["agent-reasoning-core"].append(mid)
@@ -157,6 +157,8 @@ async def sync_adaptive_router_roster(master_key: str):
         else: tier_assignments["agent-simple-core"].append(mid)
         if sum(len(v) for v in tier_assignments.values()) >= 15:
             break
+    # Safety net: if any tier is still empty after assignment, use top 2 models as fallback.
+    # This shouldn't happen with current AA coverage, but guards against edge cases.
     top_two = [mid for _, mid in free_models[:2]]
     for tier_name, models in tier_assignments.items():
         if not models:
@@ -852,7 +854,19 @@ async def chat_completions(request: Request):
             logger.error(f"agy proxy failed: {e}, falling back to direct API call")
     
     # --- DIRECT GOOGLE OAUTH ROUTE (legacy fallback) ---
-    oauth_token = get_live_gemini_oauth_token()
+    # Protected by google circuit breaker — avoids hammering Google when rate-limited.
+    from circuit_breaker import get_google_breaker
+    google_breaker = get_google_breaker()
+    
+    if not google_breaker.is_allowed():
+        logger.info(
+            f"Direct Google OAuth: blocked by circuit breaker "
+            f"(tier {google_breaker.tier}). Falling through to LiteLLM."
+        )
+        oauth_token = None
+    else:
+        oauth_token = get_live_gemini_oauth_token()
+    
     if oauth_token:
         google_model = "gemini-3.5-flash" if target_model in ("agent-complex-core", "agent-reasoning-core") else "gemini-3.1-flash-lite"
         logger.info(f"🔄 Direct Gemini OAuth Route: Mapping '{target_model}' to Google '{google_model}'...")
@@ -895,6 +909,7 @@ async def chat_completions(request: Request):
                             await client.aclose()
                     return StreamingResponse(google_stream_generator(), media_type="text/event-stream")
                 else:
+                    google_breaker.record_failure()
                     logger.warning(f"Direct Google stream call failed with status {r.status_code}. Falling back to default LiteLLM path.")
                     await r.aclose()
                     await client.aclose()
@@ -915,8 +930,10 @@ async def chat_completions(request: Request):
                     record_tool_usage(active_tool, prompt_tokens, completion_tokens, google_model, latency_ms, route="google_oauth_direct")
                     return resp_json
                 else:
+                    google_breaker.record_failure()
                     logger.warning(f"Direct Google completion call failed with status {r.status_code}. Falling back to default LiteLLM path.")
         except Exception as e:
+            google_breaker.record_failure()
             logger.error(f"Direct Google call encountered exception: {e}. Falling back to default LiteLLM path.")
 
     # Resolve backend connection parameters
