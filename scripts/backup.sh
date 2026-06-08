@@ -19,15 +19,20 @@ log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 # ---- Wait for PostgreSQL to be ready (up to 30s) ----
 log "⏳ Checking PostgreSQL readiness..."
 PG_READY=0
-for i in {1..15}; do
-    if podman exec agent-router-pod-postgres-db pg_isready -U postgres; then
-        PG_READY=1
-        log "✅ PostgreSQL is ready"
-        break
-    fi
-    log "⏳ PostgreSQL not ready, retrying in 2s ($i/15)..."
-    sleep 2
-done
+# Check if container exists before looping
+if ! podman container exists agent-router-pod-postgres-db 2>/dev/null; then
+    log "⚠️  PostgreSQL container does not exist — skipping DB backup"
+else
+    for i in {1..15}; do
+        if podman exec agent-router-pod-postgres-db pg_isready -U postgres 2>/dev/null; then
+            PG_READY=1
+            log "✅ PostgreSQL is ready"
+            break
+        fi
+        log "⏳ PostgreSQL not ready, retrying in 2s ($i/15)..."
+        sleep 2
+    done
+fi
 
 # ---- PostgreSQL Databases ----
 if [ $PG_READY -eq 1 ]; then

@@ -141,8 +141,13 @@ safe_pod_teardown() {
 }
 
 # Pre-deploy database backup (runs before any pod modification)
-echo "💾 Taking pre-deploy database backup..."
-bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
+# Skip if pod doesn't exist (e.g., after manual cleanup)
+if podman pod exists agent-router-pod 2>/dev/null; then
+    echo "💾 Taking pre-deploy database backup..."
+    bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
+else
+    echo "⚠️  Pod not running — skipping pre-deploy backup"
+fi
 
 if podman pod exists agent-router-pod 2>/dev/null; then
     if $FULL_REBUILD; then
