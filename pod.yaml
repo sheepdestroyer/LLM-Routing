@@ -165,7 +165,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: clickhouse
-    image: docker.io/clickhouse/clickhouse-server:24.8
+    image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
       exec:
         command:
@@ -201,7 +201,7 @@ spec:
     - langfuse-redis-2026
     - --maxmemory-policy
     - noeviction
-    image: valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
       exec:
         command:
