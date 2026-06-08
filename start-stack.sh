@@ -190,6 +190,11 @@ setup_minio_buckets() {
         return 1
     fi
 
+    # Ensure mc alias points to the correct MinIO S3 API port (9002, not 9000)
+    # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
+    # not MinIO. We must override it.
+    podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 minioadmin minioadmin 2>/dev/null
+
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
     for bucket in "${BUCKETS[@]}"; do
