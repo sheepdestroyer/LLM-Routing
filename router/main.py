@@ -162,6 +162,23 @@ async def sync_adaptive_router_roster(master_key: str):
         if not models:
             tier_assignments[tier_name] = top_two[:]
     async with httpx.AsyncClient(timeout=10.0) as client:
+        # Purge all existing agent-* deployments before re-registering.
+        # Without this, every roster sync accumulates stale deployments (4,591+
+        # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
+        # starts clean — delete all, then register only the current roster.
+        try:
+            db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
+            import asyncpg
+            conn = await asyncpg.connect(db_url)
+            await conn.execute(
+                'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
+                'agent-%'
+            )
+            await conn.close()
+            logger.info("🧹 Purged stale agent-* deployments before roster sync")
+        except Exception as e:
+            logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
+
         registered = 0
         for tier_name, model_ids in tier_assignments.items():
             for mid in model_ids:
@@ -558,40 +575,10 @@ def _load_aa_scores():
         _AA_SCORES_LOADED = True  # don't retry
 
 def compute_free_model_score(m: dict) -> float:
-    """Derive an agentic quality score from Artificial Analysis Agentic Index, falling back to metadata."""
+    """Return AA agentic index score, or a low default for unknown models."""
     _load_aa_scores()
     mid = m.get("id", "")
-    
-    # 1. Check AA scores cache (authoritative source)
-    if mid in _AA_SCORES_CACHE:
-        return _AA_SCORES_CACHE[mid]
-    
-    # 2. Fallback: metadata-based scoring for models not yet in AA cache
-    score = 30.0  # lower baseline for unknown models
-    name = m.get("name", "")
-    name_lower = name.lower()
-    ctx_len = m.get("context_length", 0)
-    supported = m.get("supported_parameters", [])
-    max_out = (m.get("top_provider") or {}).get("max_completion_tokens", 0)
-
-    if ctx_len >= 1_000_000: score += 20
-    elif ctx_len >= 256_000: score += 15
-    elif ctx_len >= 128_000: score += 10
-    elif ctx_len >= 32_000: score += 5
-
-    if "ultra" in name_lower: score += 12
-    elif "super" in name_lower: score += 8
-    elif "pro" in name_lower and "nano" not in name_lower: score += 5
-
-    if "nano" in name_lower: score -= 5
-    if "mini" in name_lower: score -= 5
-    if "content-safety" in name_lower or "moderation" in name_lower: score -= 20
-
-    if "tools" in supported: score += 3
-    if "structured_outputs" in supported: score += 2
-    if max_out >= 64_000: score += 3
-
-    return max(0.0, min(100.0, score))
+    return _AA_SCORES_CACHE.get(mid, 25.0)
 
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
@@ -1085,7 +1072,7 @@ async def get_dashboard():
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
     llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
-    langfuse_status = await check_http_endpoint("http://127.0.0.1:3000")
+    langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
 
     # 1c. Check Gemini OAuth token status
     oauth_status = get_gemini_oauth_status()
@@ -2004,7 +1991,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:3000</span>
+                            <span class="service-port">:3001</span>
                         </div>
                         <span class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if langfuse_status else 'Offline'}
@@ -2041,7 +2028,7 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <a href="http://localhost:3000" target="_blank" class="btn">
+                        <a href="http://localhost:3001" target="_blank" class="btn">
                             <span>{src_badge('LANGFUSE', '#e879f9')} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>

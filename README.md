@@ -77,7 +77,7 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
 | **langfuse-redis** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
-| **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3000/` every 15s | Same, every 10s |
+| **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3001/` every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep -f langfuse-worker` every 15s | — |
 | **minio-s3** | TCP socket check on port 9002 every 15s | Same, every 10s |
 
@@ -394,13 +394,13 @@ curl -s http://localhost:5000/metrics
 ## 8. Deep Observability & Tracing via Langfuse
 
 Open the tracing console in your browser:
-👉 **`http://localhost:3000`**
+👉 **`http://localhost:3001`**
 
 Self-hosted Langfuse acts as your agentic telemetry server. The LiteLLM Gateway is instrumented to automatically pipe detailed trace structures to Langfuse with no changes to client code:
 * **Traced Credentials**: Automatic telemetry bootstrapping is pre-configured in `pod.yaml` with pre-defined keys:
   * Public Key: `pk-lf-gateway-token`
   * Secret Key: `sk-lf-gateway-token`
-  * Host Address: `http://127.0.0.1:3000`
+  * Host Address: `http://127.0.0.1:3001`
 * **Features**: View hierarchical execution graphs, latency profiles, exact inputs/outputs, cost estimations, and performance benchmarks for simple vs complex prompt splits over time.
 
 ### Web Console & Dashboard Directory
@@ -410,7 +410,7 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 | Web Portal / Service | URL Address | Bound Port | Core Operational Purpose |
 | :--- | :--- | :---: | :--- |
 | **System Control Dashboard** | [http://localhost:5000/dashboard](http://localhost:5000/dashboard) | `5000` | Real-time health-checks, triage stats, cache hits, and navigation shortcuts. |
-| **Langfuse Monitoring UI** | [http://localhost:3000](http://localhost:3000) | `3000` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
+| **Langfuse Monitoring UI** | [http://localhost:3001](http://localhost:3001) | `3001` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
 | **LiteLLM Admin Console** | [http://localhost:4000/ui](http://localhost:4000/ui) | `4000` | Gateway fallback configurations, models inventory, and active proxy stats. |
 | **Llama-Server Playground** | [http://localhost:8080](http://localhost:8080) | `8080` | Local llama.cpp prompt sandbox, dynamic model stats, and API endpoint details. |
 | **Minio S3 Console** | [http://localhost:9001](http://localhost:9001) | `9001` | S3-compatible object storage browser (Langfuse v3 event upload target). |

@@ -38,9 +38,9 @@ spec:
     - name: STORE_MODEL_IN_DB
       value: 'True'
     - name: LITELLM_LOG
-      value: DEBUG
+      value: WARNING
     - name: LANGFUSE_HOST
-      value: http://127.0.0.1:3000
+      value: http://127.0.0.1:3001
     - name: LITELLM_MASTER_KEY
       value: sk-lit...33bf
     image: ghcr.io/berriai/litellm:v1.88.0
@@ -236,7 +236,7 @@ spec:
     - name: NEXTAUTH_SECRET
       value: my-super-secret-nextauth-token-2026
     - name: NEXTAUTH_URL
-      value: http://localhost:3000
+      value: http://localhost:3001
     - name: SALT
       value: my-super-strong-salt-token-2026-value-1234
     - name: ENCRYPTION_KEY
@@ -244,7 +244,7 @@ spec:
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
-      value: '3000'
+      value: '3001'
     - name: TELEMETRY_ENABLED
       value: 'false'
     - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
@@ -295,7 +295,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3000/
+        - http://127.0.0.1:3001/
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -307,7 +307,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3000/
+        - http://127.0.0.1:3001/
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
