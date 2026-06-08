@@ -166,6 +166,44 @@ cleanup_zombie_ports() {
     echo "   ⚠️  Warning: ${final:-0} zombie port(s) survived 60s cleanup wait"
 }
 
+# ── MinIO bucket auto-creation ──
+# Ensures required S3 buckets exist before Langfuse attempts uploads.
+# Buckets are persisted via hostPath volume (minio-data/) across restarts.
+setup_minio_buckets() {
+    local MAX_WAIT=60
+    local waited=0
+
+    echo ""
+    echo "📦 Ensuring MinIO buckets exist..."
+
+    # Wait for MinIO to be ready (console on :9001)
+    while [ $waited -lt $MAX_WAIT ]; do
+        if curl -sf --max-time 3 http://127.0.0.1:9001 >/dev/null 2>&1; then
+            echo "   ✓ MinIO ready after ${waited}s"
+            break
+        fi
+        sleep 3
+        waited=$((waited + 3))
+    done
+    if [ $waited -ge $MAX_WAIT ]; then
+        echo "   ⚠️  MinIO not ready after ${MAX_WAIT}s — skipping bucket creation"
+        return 1
+    fi
+
+    # Create required buckets (idempotent)
+    local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
+    for bucket in "${BUCKETS[@]}"; do
+        if podman exec agent-router-pod-minio-s3 mc ls "local/${bucket}" >/dev/null 2>&1; then
+            echo "   ✓ Bucket '${bucket}' exists"
+        else
+            echo "   + Creating bucket '${bucket}'..."
+            podman exec agent-router-pod-minio-s3 mc mb "local/${bucket}" 2>/dev/null || {
+                echo "   ⚠️  Failed to create bucket '${bucket}'"
+            }
+        fi
+    done
+}
+
 # ── Post-deploy health verification ──
 # Waits for critical services to become healthy and verifies the
 # full routing pipeline works through the entry point.
@@ -259,15 +297,18 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
         podman play kube "$WORKDIR/pod.yaml"
+        setup_minio_buckets
         verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
         podman play kube "$WORKDIR/pod.yaml"
+        setup_minio_buckets
         verify_stack_health
     else
         echo "🔄 Restarting existing agent-router-pod (use --replace or --full-rebuild to recreate)..."
         podman pod restart agent-router-pod
+        setup_minio_buckets
         verify_stack_health
         echo ""
         echo "========================================================================="
@@ -288,6 +329,7 @@ else
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
     podman play kube "$WORKDIR/pod.yaml"
+    setup_minio_buckets
     verify_stack_health
 fi
 
