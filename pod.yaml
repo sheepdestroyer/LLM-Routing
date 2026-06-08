@@ -8,6 +8,8 @@ spec:
     - valkey-server
     - --protected-mode
     - 'no'
+    - --loglevel
+    - warning
     image: docker.io/valkey/valkey:8-alpine
     livenessProbe:
       exec:
@@ -76,7 +78,7 @@ spec:
     - mountPath: /config/gemini_auth
       name: gemini-secrets
   - args:
-    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000
+    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000 --log-level warning
     command:
     - /bin/sh
     - -c
@@ -201,6 +203,8 @@ spec:
     - langfuse-redis-2026
     - --maxmemory-policy
     - noeviction
+    - --loglevel
+    - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
       exec:
@@ -287,6 +291,8 @@ spec:
       value: admin@local.dev
     - name: LANGFUSE_INIT_USER_PASSWORD
       value: admin-local-pw-2026
+    - name: LANGFUSE_LOG_LEVEL
+      value: warn
     image: docker.io/langfuse/langfuse:3
     livenessProbe:
       exec:
@@ -346,6 +352,8 @@ spec:
       value: http://127.0.0.1:9002
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
       value: minioadmin
+    - name: LANGFUSE_LOG_LEVEL
+      value: warn
     image: docker.io/langfuse/langfuse-worker:3
     livenessProbe:
       exec:
@@ -359,6 +367,7 @@ spec:
     name: langfuse-worker
   - args:
     - server
+    - --quiet
     - /data
     - --address
     - :9002
