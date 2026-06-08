@@ -137,11 +137,23 @@ async def sync_adaptive_router_roster(master_key: str):
         "agent-complex-core": [], "agent-reasoning-core": [],
         "agent-advanced-core": [],
     }
+    # Normalize scores to 0-100 scale based on the actual max score in this roster.
+    # This auto-adapts when Artificial Analysis updates scores — if the max is 55,
+    # a score of 48 normalizes to 87; if the max rises to 80, 48 normalizes to 60.
+    # Without normalization, hardcoded 80/75/68/60 thresholds are impossible to reach
+    # when the AA Agentic Index caps free models at ~55.
+    raw_scores = [s for s, _ in free_models]
+    max_score = max(raw_scores) if raw_scores else 55.0
+    if max_score < 1.0:
+        max_score = 55.0  # safety floor
+    def norm(s: float) -> float:
+        return (s / max_score) * 100.0
     for score, mid in free_models[2:]:
-        if score >= 80: tier_assignments["agent-advanced-core"].append(mid)
-        elif score >= 75: tier_assignments["agent-reasoning-core"].append(mid)
-        elif score >= 68: tier_assignments["agent-complex-core"].append(mid)
-        elif score >= 60: tier_assignments["agent-medium-core"].append(mid)
+        n = norm(score)
+        if n >= 80: tier_assignments["agent-advanced-core"].append(mid)
+        elif n >= 75: tier_assignments["agent-reasoning-core"].append(mid)
+        elif n >= 68: tier_assignments["agent-complex-core"].append(mid)
+        elif n >= 60: tier_assignments["agent-medium-core"].append(mid)
         else: tier_assignments["agent-simple-core"].append(mid)
         if sum(len(v) for v in tier_assignments.values()) >= 15:
             break
