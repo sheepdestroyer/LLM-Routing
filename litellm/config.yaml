@@ -3,9 +3,10 @@ general_settings:
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → local-qwen-3.6
+  # Simple → medium → complex → reasoning → advanced → openrouter-auto
   # When one tier fails, LiteLLM tries the next model in the chain.
-  # All tiers ultimately fall back to local-qwen-3.6 as safety net.
+  # All tiers fall back through increasingly capable models, then to openrouter-auto.
+  # local-qwen-3.6 (35B) disabled 2026-06-08 — frees 23GB RAM/GTT.
   # -------------------------------------------------------------------------
   cache: true
   cache_params:
@@ -26,36 +27,38 @@ litellm_settings:
     - agent-reasoning-core
     - agent-advanced-core
     - openrouter-auto
-    - local-qwen-3.6
+    # - local-qwen-3.6  # DISABLED: 35B model unloaded (23GB GTT saved)
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
     - openrouter-auto
-    - local-qwen-3.6
+    # - local-qwen-3.6  # DISABLED
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
     - openrouter-auto
-    - local-qwen-3.6
+    # - local-qwen-3.6  # DISABLED
   - agent-reasoning-core:
     - agent-advanced-core
     - openrouter-auto
-    - local-qwen-3.6
+    # - local-qwen-3.6  # DISABLED
   - agent-advanced-core:
     - openrouter-auto
-    - local-qwen-3.6
+    # - local-qwen-3.6  # DISABLED
 model_list:
-- litellm_params:
-    api_base: http://127.0.0.1:8080/v1
-    api_key: local-token
-    model: openai/qwen-35b-q4ks
-    request_timeout: 300
-  model_name: local-qwen-3.6
 - litellm_params:
     model: openrouter/openrouter/auto
     request_timeout: 120
   model_name: openrouter-auto
+# DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
+# Uncomment to re-enable once a lighter model replaces it.
+#- litellm_params:
+#    api_base: http://127.0.0.1:8080/v1
+#    api_key: local-token
+#    model: openai/qwen-35b-q4ks
+#    request_timeout: 300
+#  model_name: local-qwen-3.6
 - litellm_params:
     api_base: http://127.0.0.1:8080/v1
     api_key: local-token

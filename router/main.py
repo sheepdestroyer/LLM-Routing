@@ -123,7 +123,10 @@ async def sync_adaptive_router_roster(master_key: str):
         mid = m.get("id", "")
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
-            score = compute_free_model_score(m)
+            try:
+                score = compute_free_model_score(m)
+            except Exception:
+                score = 25.0  # conservative fallback for unparseable models
             free_models.append((score, mid))
     free_models.sort(reverse=True)
     if not free_models:
