@@ -98,28 +98,131 @@ fi
 
 # ── Cleanup zombie host-network ports ──
 # Podman with host networking can leave stuck LISTEN sockets after SIGKILL.
-# ClickHouse and Minio are the primary victims — their ports survive container
-# death and block the replacement from binding.
+# This covers ALL ports used by the pod + cross-profile orphans from other
+# Hermes profiles (e.g., llm-routing-openrouter) whose container storage
+# can leave surviving processes holding ports indefinitely.
 cleanup_zombie_ports() {
-    local PORTS="3000 3030 8123 9000 9001 9002 9004 9005 9009"
-    # Attempt fuser kill first (works if process still alive)
-    for port in $PORTS; do
-        fuser -k "${port}/tcp" 2>/dev/null || true
+    local ALL_PORTS="3000 3030 4000 5000 5005 5432 6379 6380 8080 8123 9000 9001 9002 9004 9005 9009"
+    
+    echo "🧹 Cleaning up zombie port bindings..."
+    
+    # Pass 1: fuser kill for processes still alive (works on same-profile zombies)
+    for port in $ALL_PORTS; do
+        local pid=$(fuser "${port}/tcp" 2>/dev/null)
+        if [ -n "$pid" ]; then
+            echo "   Killing PID $pid on port $port"
+            kill -9 $pid 2>/dev/null || true
+        fi
     done
-    # Wait up to 60s for kernel to release orphaned sockets
+    
+    # Pass 2: ss-based detection for orphaned sockets with no PID (kernel zombies)
+    # and cross-profile orphans that fuser may miss
+    sleep 2
+    local stuck_ports=""
+    for port in $ALL_PORTS; do
+        if ss -tlnpH 2>/dev/null | grep -q ":${port} "; then
+            stuck_ports="$stuck_ports $port"
+        fi
+    done
+    
+    if [ -z "$stuck_ports" ]; then
+        echo "   ✓ All ports clean after Pass 1"
+        return 0
+    fi
+    
+    echo "   ⚠️  Ports still bound after fuser: $stuck_ports"
+    echo "   🔍 Checking for cross-profile orphans..."
+    
+    # Pass 3: find ANY process listening on our ports, kill by PID via ss
+    for port in $ALL_PORTS; do
+        while IFS= read -r line; do
+            local pid=$(echo "$line" | grep -oP 'pid=\K\d+')
+            if [ -n "$pid" ]; then
+                local proc_name=$(ps -p $pid -o comm= 2>/dev/null || echo "unknown")
+                echo "   Killing cross-profile orphan: $proc_name (PID $pid) on port $port"
+                kill -9 $pid 2>/dev/null || true
+            fi
+        done < <(ss -tlnpH 2>/dev/null | grep ":${port} " | grep -oP 'pid=\d+')
+    done
+    
+    # Pass 4: wait up to 60s for kernel to release orphaned sockets
     local waited=0
     while [ $waited -lt 60 ]; do
-        local stuck=$(ss -tlnpH 2>/dev/null | grep -cE ":(8123|900[0-9])") || true
-        if [ "${stuck:-0}" -eq 0 ]; then
+        local still_stuck=0
+        for port in $ALL_PORTS; do
+            if ss -tlnpH 2>/dev/null | grep -q ":${port} "; then
+                still_stuck=$((still_stuck + 1))
+            fi
+        done
+        if [ "$still_stuck" -eq 0 ]; then
+            echo "   ✓ All ports released after ${waited}s"
             return 0
         fi
         sleep 5
         waited=$((waited + 5))
     done
-    local final=$(ss -tlnpH 2>/dev/null | grep -cE ":(8123|900[0-9])") || true
-    echo "⚠️  Warning: ${final:-0} zombie port(s) survived 60s cleanup wait"
+    
+    local final=$(ss -tlnpH 2>/dev/null | grep -cE ":(${ALL_PORTS// /|})") || true
+    echo "   ⚠️  Warning: ${final:-0} zombie port(s) survived 60s cleanup wait"
 }
 
+# ── Post-deploy health verification ──
+# Waits for critical services to become healthy and verifies the
+# full routing pipeline works through the entry point.
+verify_stack_health() {
+    local MAX_WAIT=180
+    local waited=0
+    
+    echo ""
+    echo "🩺 Verifying stack health (up to ${MAX_WAIT}s)..."
+    
+    # Wait for postgres first — everything depends on it
+    while [ $waited -lt $MAX_WAIT ]; do
+        if podman exec agent-router-pod-postgres-db pg_isready -U postgres -q 2>/dev/null; then
+            echo "   ✓ PostgreSQL ready after ${waited}s"
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    if [ $waited -ge $MAX_WAIT ]; then
+        echo "   ⚠️  PostgreSQL not ready after ${MAX_WAIT}s"
+        return 1
+    fi
+    
+    # Wait for LiteLLM (Prisma migrate can take 2-3 min on fresh DB)
+    local litellm_ready=false
+    waited=0
+    while [ $waited -lt $MAX_WAIT ]; do
+        if curl -sf --max-time 3 http://127.0.0.1:4000/health/readiness >/dev/null 2>&1; then
+            echo "   ✓ LiteLLM ready after ${waited}s"
+            litellm_ready=true
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    if ! $litellm_ready; then
+        echo "   ⚠️  LiteLLM not ready after ${MAX_WAIT}s — continuing anyway"
+    fi
+    
+    # Wait for triage router + verify full pipeline
+    waited=0
+    while [ $waited -lt 120 ]; do
+        local resp=$(curl -s --max-time 10 http://127.0.0.1:5000/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"agent-simple-core","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}' 2>/dev/null)
+        if echo "$resp" | grep -q '"choices"'; then
+            echo "   ✓ Triage router pipeline verified after ${waited}s"
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    
+    echo "   ⚠️  Triage router pipeline not responding after 120s — dashboard may still work"
+    return 1
+}
 # ── Safe pod teardown ──
 # Graceful stop (SIGTERM with 30s timeout) lets ClickHouse/Postgres flush,
 # then force-remove if needed. Avoids data corruption from SIGKILL.
@@ -156,14 +259,17 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
         podman play kube "$WORKDIR/pod.yaml"
+        verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
         podman play kube "$WORKDIR/pod.yaml"
+        verify_stack_health
     else
         echo "🔄 Restarting existing agent-router-pod (use --replace or --full-rebuild to recreate)..."
         podman pod restart agent-router-pod
-        echo "✅ Pod restarted. Container IDs preserved — logs survive in podman logs."
+        verify_stack_health
+        echo ""
         echo "========================================================================="
         echo "🎉 SUCCESS: LLM Triage Gateway restarted!"
         echo "📍 Entry endpoint  : http://localhost:5000/v1"
@@ -182,6 +288,7 @@ else
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
     podman play kube "$WORKDIR/pod.yaml"
+    verify_stack_health
 fi
 
 echo "========================================================================="
