@@ -121,6 +121,9 @@ async def sync_adaptive_router_roster(master_key: str):
     free_models = []
     for m in all_models:
         mid = m.get("id", "")
+        # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
+        if not mid or (len(mid) > 64 and "/" not in mid):
+            continue
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
             try:
@@ -605,6 +608,18 @@ def compute_free_model_score(m: dict) -> float:
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
+def _save_best_model_to_disk(best_model: dict) -> None:
+    """Persist the best free model to a JSON file Ralph can read."""
+    import json as _json
+    import datetime as _dt
+    payload = {**best_model, "updated_at": _dt.datetime.utcnow().isoformat() + "Z"}
+    try:
+        with open("/config/router_dir/best_free_model.json", "w") as f:
+            _json.dump(payload, f, indent=2)
+    except Exception:
+        pass  # Non-critical — Ralph falls back gracefully
+
+
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
@@ -612,6 +627,7 @@ async def get_best_free_model() -> dict:
     
     # Check if cache is still valid
     if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
+        _save_best_model_to_disk(free_model_cache["data"])
         return free_model_cache["data"]
         
     fallback_best = {
@@ -653,10 +669,12 @@ async def get_best_free_model() -> dict:
                     free_model_cache["data"] = best_model
                     free_model_cache["last_fetched"] = now
                     logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
+                    _save_best_model_to_disk(best_model)
                     return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
-        
+    
+    _save_best_model_to_disk(fallback_best)
     return fallback_best
 
 def get_pie_chart_gradient() -> str:
