@@ -608,6 +608,22 @@ def compute_free_model_score(m: dict) -> float:
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
+def _save_free_models_roster(free_models: list[dict]) -> None:
+    """Persist the full sorted free model list so Ralph can try alternatives."""
+    import json as _json
+    import datetime as _dt
+    payload = {
+        "models": free_models,
+        "updated_at": _dt.datetime.utcnow().isoformat() + "Z",
+        "count": len(free_models)
+    }
+    try:
+        with open("/config/router_dir/free_models_roster.json", "w") as f:
+            _json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+
+
 def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
@@ -645,6 +661,7 @@ async def get_best_free_model() -> dict:
                 data = r.json().get("data", [])
                 best_model = None
                 max_score = -1.0
+                all_free = []
                 
                 for m in data:
                     mid = m.get("id", "")
@@ -655,16 +672,20 @@ async def get_best_free_model() -> dict:
                     
                     # Verify if it is free
                     if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
-                        score = compute_free_model_score(m) # Default to 50 if unknown free model
+                        score = compute_free_model_score(m)
+                        entry = {
+                            "id": mid,
+                            "name": m.get("name", mid),
+                            "score": score,
+                            "context_length": m.get("context_length", 0),
+                        }
+                        all_free.append(entry)
                         if score > max_score:
                             max_score = score
-                            best_model = {
-                                "id": mid,
-                                "name": m.get("name", mid),
-                                "score": score,
-                                "context_length": m.get("context_length", 0),
-                                "is_fallback": False
-                            }
+                            best_model = {**entry, "is_fallback": False}
+                # Sort by score descending
+                all_free.sort(key=lambda x: x["score"], reverse=True)
+                _save_free_models_roster(all_free)
                 if best_model:
                     free_model_cache["data"] = best_model
                     free_model_cache["last_fetched"] = now

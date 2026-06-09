@@ -65,6 +65,10 @@ model_list:
     model: openai/nomic-embed-text-v1.5-Q4_K_M
     request_timeout: 30
   model_name: local-nomic-embed
+- litellm_params:
+    model: openrouter/poolside/laguna-m.1:free
+    request_timeout: 120
+  model_name: openrouter/poolside/laguna-m.1:free
 
 # ================================================================================
 # AGENT TIER DEPLOYMENTS — safety-net entries (one per tier)
