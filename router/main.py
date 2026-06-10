@@ -326,7 +326,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 
                 if response.status_code != 200:
                     logger.error(f"Classification failed with status {response.status_code}: {response.text}")
-                    return "agent-complex-core", latency
+                    return "agent-advanced-core", latency
                     
                 result = response.json()
                 message_obj = result["choices"][0]["message"]
@@ -348,7 +348,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
         except Exception as e:
             latency = (time.time() - start_time) * 1000.0
             logger.error(f"Exception during classification: {e}")
-            return "agent-complex-core", latency
+            return "agent-advanced-core", latency
 
 def get_live_gemini_oauth_token() -> str | None:
     try:
