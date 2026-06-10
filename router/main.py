@@ -9,7 +9,7 @@ import yaml
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from circuit_breaker import get_breaker
 
 # Configure logging
@@ -775,6 +775,22 @@ async def proxy_memory(request: Request, path: str = ""):
     except Exception as e:
         logger.error(f"Failed to proxy memory request: {e}")
         raise HTTPException(status_code=502, detail=f"Memory proxy failed: {e}")
+
+@app.get("/v1/models")
+async def proxy_models():
+    """Proxy /v1/models to LiteLLM (authoritative model list, includes dynamic roster)."""
+    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            auth_header = "Bearer " + (litellm_key or "")
+            r = await client.get(
+                "http://127.0.0.1:4000/v1/models",
+                headers={"Authorization": auth_header}
+            )
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        logger.error(f"Failed to proxy /v1/models: {e}")
+        raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
