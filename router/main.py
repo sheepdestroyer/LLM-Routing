@@ -40,8 +40,10 @@ backends = {b["name"]: b for b in config.get("backends", [])}
 stats = {
     "total_requests": 0,
     "simple_requests": 0,
-    "reasoning_requests": 0,
+    "medium_requests": 0,
     "complex_requests": 0,
+    "reasoning_requests": 0,
+    "advanced_requests": 0,
     "cache_hits": 0,
     "last_triage_decision": "None",
     "avg_triage_latency_ms": 0.0,
@@ -836,11 +838,15 @@ async def chat_completions(request: Request):
     stats["avg_triage_latency_ms"] = stats["total_triage_time_ms"] / stats["total_requests"]
     
     if target_model == "agent-simple-core":
-        stats["simple_requests"] += 1
+        stats["simple_requests"] = stats.get("simple_requests", 0) + 1
+    elif target_model == "agent-medium-core":
+        stats["medium_requests"] = stats.get("medium_requests", 0) + 1
+    elif target_model == "agent-complex-core":
+        stats["complex_requests"] = stats.get("complex_requests", 0) + 1
     elif target_model == "agent-reasoning-core":
         stats["reasoning_requests"] = stats.get("reasoning_requests", 0) + 1
-    else:
-        stats["complex_requests"] += 1
+    elif target_model == "agent-advanced-core":
+        stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
     save_persisted_stats()
 
     # --- AGY PROXY ROUTE (3-TIER FALLBACK) ---
@@ -1112,9 +1118,21 @@ async def metrics():
     lines.append("# TYPE simple_requests_total gauge")
     lines.append(f"simple_requests_total {stats['simple_requests']}")
     
+    lines.append("# HELP medium_requests_total Number of medium requests")
+    lines.append("# TYPE medium_requests_total gauge")
+    lines.append(f"medium_requests_total {stats.get('medium_requests', 0)}")
+    
     lines.append("# HELP complex_requests_total Number of complex requests")
     lines.append("# TYPE complex_requests_total gauge")
     lines.append(f"complex_requests_total {stats['complex_requests']}")
+    
+    lines.append("# HELP reasoning_requests_total Number of reasoning requests")
+    lines.append("# TYPE reasoning_requests_total gauge")
+    lines.append(f"reasoning_requests_total {stats.get('reasoning_requests', 0)}")
+    
+    lines.append("# HELP advanced_requests_total Number of advanced requests")
+    lines.append("# TYPE advanced_requests_total gauge")
+    lines.append(f"advanced_requests_total {stats.get('advanced_requests', 0)}")
     
     lines.append("# HELP cache_hits_total Number of triage cache hits")
     lines.append("# TYPE cache_hits_total gauge")
@@ -1138,26 +1156,21 @@ async def metrics():
     lines.append("# TYPE completion_tokens_total counter")
     lines.append(f"completion_tokens_total {stats['completion_tokens']}")
     
-    # Circuit breaker metrics
-    lines.append("# HELP circuit_breaker_tier Current circuit breaker tier (0=active, 1-3=cooldown)")
-    lines.append("# TYPE circuit_breaker_tier gauge")
-    lines.append(f"circuit_breaker_tier {breaker_status['tier']}")
-    
-    lines.append("# HELP circuit_breaker_agy_allowed Whether the circuit breaker allows agy requests")
+    # Circuit breaker metrics — dual breaker (google + vendor)
+    google = breaker_status["google"]
+    vendor = breaker_status["vendor"]
+    lines.append("# HELP circuit_breaker_google_tier Google breaker cooldown tier (0=open, 3=max)")
+    lines.append("# TYPE circuit_breaker_google_tier gauge")
+    lines.append(f"circuit_breaker_google_tier {google['tier']}")
+    lines.append("# HELP circuit_breaker_vendor_tier Vendor breaker cooldown tier (0=open, 3=max)")
+    lines.append("# TYPE circuit_breaker_vendor_tier gauge")
+    lines.append(f"circuit_breaker_vendor_tier {vendor['tier']}")
+    lines.append("# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)")
     lines.append("# TYPE circuit_breaker_agy_allowed gauge")
     lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed())}")
-    
-    lines.append("# HELP circuit_breaker_cooldown_remaining_seconds Remaining cooldown time for circuit breaker")
-    lines.append("# TYPE circuit_breaker_cooldown_remaining_seconds gauge")
-    lines.append(f"circuit_breaker_cooldown_remaining_seconds {breaker_status['cooldown_remaining_seconds']}")
-    
-    lines.append("# HELP circuit_breaker_total_trips Total number of trips recorded")
+    lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
-    lines.append(f"circuit_breaker_total_trips {breaker_status['total_trips']}")
-    
-    lines.append("# HELP circuit_breaker_probe_granted Whether a probe request has been granted")
-    lines.append("# TYPE circuit_breaker_probe_granted gauge")
-    lines.append(f"circuit_breaker_probe_granted {int(breaker_status['probe_granted'])}")
+    lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
     
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
@@ -1232,12 +1245,32 @@ async def get_dashboard():
     # 2b. Fetch live llama.cpp metrics
     llamacpp = await get_llamacpp_metrics()
 
-    # 3. Calculative metrics
-    simple_ratio = 0.0
-    complex_ratio = 0.0
-    if stats["total_requests"] > 0:
-        simple_ratio = (stats["simple_requests"] / stats["total_requests"]) * 100.0
-        complex_ratio = (stats["complex_requests"] / stats["total_requests"]) * 100.0
+    # 3. Calculative metrics — 5-tier triage ratios
+    tier_data = {
+        "simple":  {"count": stats.get("simple_requests", 0),    "label": "Simple Core (Lite/Gemma)",  "color": "#34d399"},
+        "medium":  {"count": stats.get("medium_requests", 0),    "label": "Medium Core",                "color": "#fbbf24"},
+        "complex": {"count": stats.get("complex_requests", 0),   "label": "Complex Core (Qwen)",         "color": "#a78bfa"},
+        "reasoning":{"count": stats.get("reasoning_requests", 0),"label": "Reasoning Core (Claude)",      "color": "#60a5fa"},
+        "advanced":{"count": stats.get("advanced_requests", 0),  "label": "Advanced Core (Nemotron)",    "color": "#f472b6"},
+    }
+    for k, v in tier_data.items():
+        v["ratio"] = (v["count"] / stats["total_requests"] * 100.0) if stats["total_requests"] > 0 else 0.0
+
+    # Build 5-segment stacked bar widths for inline CSS
+    tier_bar_segments = ""
+    for k, v in tier_data.items():
+        if v["ratio"] > 0:
+            tier_bar_segments += f'<div style="width:{v["ratio"]:.2f}%;background:linear-gradient(90deg,{v["color"]},{v["color"]}dd);transition:width 0.5s ease;height:100%;"></div>'
+
+    # Build 5-item legend rows
+    tier_legend_rows = ""
+    for k, v in tier_data.items():
+        tier_legend_rows += f"""
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:2px;background:{v['color']};display:inline-block;box-shadow:0 0 4px {v['color']}aa;"></span>
+            <span style="font-weight:600;">{v['label']}:</span>
+            <span style="opacity:0.7;">{v['count']} requests ({v['ratio']:.1f}%)</span>
+        </div>"""
 
     # 4. Generate dynamic conic-gradient CSS background for the Pie Chart
     pie_gradient = get_pie_chart_gradient()
@@ -1776,16 +1809,6 @@ async def get_dashboard():
                 background: rgba(255, 255, 255, 0.05);
             }}
 
-            .ratio-simple {{
-                background: linear-gradient(90deg, #34d399, #10b981);
-                transition: width 0.5s ease;
-            }}
-
-            .ratio-complex {{
-                background: linear-gradient(90deg, #a78bfa, #818cf8);
-                transition: width 0.5s ease;
-            }}
-
             .ratio-legend {{
                 display: flex;
                 justify-content: space-between;
@@ -1916,18 +1939,12 @@ async def get_dashboard():
                     </div>
 
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
-                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
-                        <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 14px;">
-                            <span>Simple Core Splits (Lite / Gemma)</span>
-                            <span>Complex Core Splits (Gemini / Qwen)</span>
-                        </div>
+                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
                         <div class="ratio-container">
-                            <div class="ratio-simple" style="width: {simple_ratio}%"></div>
-                            <div class="ratio-complex" style="width: {complex_ratio}%"></div>
+                            {tier_bar_segments}
                         </div>
-                        <div class="ratio-legend">
-                            <span>{stats["simple_requests"]} requests ({simple_ratio:.1f}%)</span>
-                            <span>{stats["complex_requests"]} requests ({complex_ratio:.1f}%)</span>
+                        <div style="display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:12px;justify-content:center;">
+                            {tier_legend_rows}
                         </div>
                     </div>
                 </div>
