@@ -16,6 +16,61 @@ from circuit_breaker import get_breaker
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("llm-triage-router")
 
+# Langfuse observability — per-request traces + aggregate score pushes
+_langfuse_client = None
+
+def get_langfuse():
+    """Return the Langfuse client singleton, lazily initialized.
+    Returns None if Langfuse is unreachable (non-fatal)."""
+    global _langfuse_client
+    if _langfuse_client is None:
+        try:
+            import langfuse
+            _langfuse_client = langfuse.Langfuse(
+                public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
+                secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
+                host=os.getenv("LANGFUSE_HOST", "http://127.0.0.1:3001"),
+                release="llm-triage-router-v1",
+            )
+            logger.info("Langfuse client initialized")
+        except Exception as e:
+            logger.warning(f"Langfuse client initialization failed: {e} — traces disabled")
+            _langfuse_client = False  # sentinel to avoid retry
+    return _langfuse_client if _langfuse_client is not False else None
+
+async def push_aggregate_scores():
+    """Push aggregate KPIs as Langfuse scores every 5 minutes."""
+    while True:
+        await asyncio.sleep(300)
+        lf = get_langfuse()
+        if not lf:
+            continue
+        try:
+            total = stats["total_requests"]
+            if total == 0:
+                continue
+            router = get_breaker()
+            scores = [
+                {"name": "simple_ratio_pct", "value": stats.get("simple_requests", 0) / total * 100},
+                {"name": "medium_ratio_pct", "value": stats.get("medium_requests", 0) / total * 100},
+                {"name": "complex_ratio_pct", "value": stats.get("complex_requests", 0) / total * 100},
+                {"name": "reasoning_ratio_pct", "value": stats.get("reasoning_requests", 0) / total * 100},
+                {"name": "advanced_ratio_pct", "value": stats.get("advanced_requests", 0) / total * 100},
+                {"name": "cache_hit_rate_pct", "value": stats["cache_hits"] / total * 100},
+                {"name": "avg_triage_latency_ms", "value": stats["avg_triage_latency_ms"]},
+                {"name": "avg_proxy_latency_ms", "value": stats["avg_proxy_latency_ms"]},
+                {"name": "total_requests", "value": float(total)},
+                {"name": "circuit_breaker_google_tier", "value": float(router.google.tier)},
+                {"name": "circuit_breaker_vendor_tier", "value": float(router.vendor.tier)},
+                {"name": "google_oauth_direct_ratio_pct", "value": stats["routing_paths"]["google_oauth_direct"] / total * 100},
+            ]
+            for s in scores:
+                lf.create_score(name=s["name"], value=s["value"])
+            lf.flush()
+            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse")
+        except Exception as e:
+            logger.warning(f"Langfuse score push failed (non-fatal): {e}")
+
 # Load configuration
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/config/config.yaml")
 try:
@@ -63,7 +118,6 @@ stats = {
         "google_oauth_direct": 0,
         "litellm_fallback": 0
     },
-    "model_usage": {},
     "timeline": []
 }
 
@@ -83,6 +137,14 @@ def load_persisted_stats():
                     else:
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
+            # Load timeline from disk (may be stale after pod restart, but better than empty)
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+            if os.path.exists(timeline_path):
+                try:
+                    with open(timeline_path, "r") as f:
+                        stats["timeline"] = json.load(f)
+                except Exception:
+                    pass  # stale/broken timeline file → start fresh
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
@@ -251,6 +313,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Roster sync failed: {e}")
     yield
+    # Start aggregate score-push background task (runs for server lifetime)
+    asyncio.create_task(push_aggregate_scores())
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
@@ -274,7 +338,7 @@ async def check_http_endpoint(url: str) -> bool:
     except Exception:
         return False
 
-async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str, float]:
+async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str, float, bool, str]:
     """Queries the local fast Qwen instance to classify request complexity with TTL caching."""
     global triage_cache, stats
     
@@ -288,7 +352,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
             logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
             stats["cache_hits"] = stats.get("cache_hits", 0) + 1
             save_persisted_stats()
-            return cached_decision, 0.0  # 0.0ms classification latency
+            return cached_decision, 0.0, True, cached_decision  # was_cache_hit=True
             
     start_time = time.time()
     
@@ -301,7 +365,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
                 stats["cache_hits"] = stats.get("cache_hits", 0) + 1
                 save_persisted_stats()
-                return cached_decision, 0.0
+                return cached_decision, 0.0, True, cached_decision
                 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -328,29 +392,33 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 
                 if response.status_code != 200:
                     logger.error(f"Classification failed with status {response.status_code}: {response.text}")
-                    return "agent-advanced-core", latency
+                    return "agent-advanced-core", latency, False, "advanced (fallback)"
                     
                 result = response.json()
                 message_obj = result["choices"][0]["message"]
                 content = message_obj.get("content") or ""
                 content_clean = content.strip()
-                logger.info(f"Raw classifier response: '{content_clean}'")
+                raw_result = content_clean if content_clean else "advanced (empty)"
+                logger.info(f"Raw classifier response: '{raw_result}'")
                 
-                if content_clean == "agent-simple-core":
-                    decision = "agent-simple-core"
-                elif content_clean == "agent-reasoning-core":
-                    decision = "agent-reasoning-core"
+                # 5-tier grammar parsing (was 3-tier, missed medium + advanced)
+                valid_tiers = {
+                    "agent-simple-core", "agent-medium-core", "agent-complex-core",
+                    "agent-reasoning-core", "agent-advanced-core"
+                }
+                if content_clean in valid_tiers:
+                    decision = content_clean
                 else:
-                    decision = "agent-complex-core"
+                    decision = "agent-advanced-core"
                     
                 # Store in cache
                 triage_cache[normalized_prompt] = (decision, time.time())
-                return decision, latency
+                return decision, latency, False, raw_result
                     
         except Exception as e:
             latency = (time.time() - start_time) * 1000.0
             logger.error(f"Exception during classification: {e}")
-            return "agent-advanced-core", latency
+            return "agent-advanced-core", latency, False, "advanced (exception)"
 
 def get_live_gemini_oauth_token() -> str | None:
     try:
@@ -486,12 +554,7 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
         stats["routing_paths"] = {"google_oauth_direct": 0, "litellm_fallback": 0}
     stats["routing_paths"][route] = stats["routing_paths"].get(route, 0) + 1
     
-    # Track final model usage
-    if "model_usage" not in stats:
-        stats["model_usage"] = {}
-    stats["model_usage"][model] = stats["model_usage"].get(model, 0) + 1
-    
-    # Append to timeline event stack
+    # Append to timeline event stack (in-memory ring buffer + persistent disk backup)
     event = {
         "timestamp": time.strftime("%H:%M:%S"),
         "tool": tool_name,
@@ -504,6 +567,12 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
     save_persisted_stats()
+    try:
+        timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+        with open(timeline_path, "w") as f:
+            json.dump(stats["timeline"], f)
+    except Exception:
+        pass  # disk persistence failure is non-fatal
 
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
@@ -825,10 +894,12 @@ async def chat_completions(request: Request):
     if len(last_user_message) > PROMPT_LENGTH_THRESHOLD:
         target_model = "agent-complex-core"
         triage_latency = 0.0
+        was_cache_hit = False
+        raw_classification = "complex (length bypass)"
         logger.info(f"Triage bypass: prompt too long ({len(last_user_message)} chars > {PROMPT_LENGTH_THRESHOLD}), auto-classified as complex")
     else:
-        # Classify request via local Qwen 0.8B
-        target_model, triage_latency = await classify_request(last_user_message, bypass_cache=bypass_cache)
+        # Classify request via local Qwen 2B classifier — returns (model, latency_ms, cache_hit, raw)
+        target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(last_user_message, bypass_cache=bypass_cache)
     logger.info(f"Triage decision: Routing request to backend model -> '{target_model}'")
 
     # Update in-memory statistics
@@ -848,6 +919,30 @@ async def chat_completions(request: Request):
     elif target_model == "agent-advanced-core":
         stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
     save_persisted_stats()
+
+    # Push classification trace to Langfuse (v4 API: start_observation)
+    langfuse_trace_id = None
+    lf = get_langfuse()
+    if lf:
+        try:
+            # Create a trace ID first, then start an observation with it
+            trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
+            lf.start_observation(
+                trace_context={"trace_id": trace_id},
+                name=f"triage-{target_model}",
+                input=last_user_message[:200],
+                output={"tier": target_model, "raw": raw_classification},
+                metadata={
+                    "triage_latency_ms": round(triage_latency, 2),
+                    "cache_hit": was_cache_hit,
+                    "total_requests": stats["total_requests"],
+                },
+                level="DEFAULT",
+            )
+            lf.flush()
+            langfuse_trace_id = trace_id
+        except Exception as e:
+            logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
 
     # --- AGY PROXY ROUTE (3-TIER FALLBACK) ---
     # Only for reasoning tasks; complex/simple tasks go directly to LiteLLM
@@ -1039,6 +1134,8 @@ async def chat_completions(request: Request):
     # Set up outgoing proxy request
     client = httpx.AsyncClient(timeout=3600.0)
     headers = {"Authorization": f"Bearer {backend_api_key}"}
+    if langfuse_trace_id:
+        headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
 
     # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
     proxy_start = time.time()
@@ -1410,29 +1507,8 @@ async def get_dashboard():
             current_angle = next_angle
         routing_pie_gradient = f"background: conic-gradient({', '.join(route_grad_parts)});"
 
-    # 9. Model Usage pie chart & legend
-    model_usage = stats.get("model_usage", {})
-    total_model_calls = sum(model_usage.values())
-    model_pie_gradient = "background: rgba(255, 255, 255, 0.05);"
-    model_legend_html = ""
-    model_palette = ["#34d399", "#60a5fa", "#f472b6", "#fbbf24", "#a78bfa", "#fb923c", "#38bdf8", "#e879f9"]
-    if total_model_calls > 0:
-        current_angle = 0.0
-        model_grad_parts = []
-        for idx_m, (mname, mcount) in enumerate(sorted(model_usage.items(), key=lambda x: -x[1])):
-            mpct = (mcount / total_model_calls) * 100.0
-            next_angle = current_angle + mpct
-            mcolor = model_palette[idx_m % len(model_palette)]
-            model_grad_parts.append(f"{mcolor} {current_angle:.1f}% {next_angle:.1f}%")
-            model_legend_html += f"""
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
-                <span style="width: 12px; height: 12px; border-radius: 50%; background: {mcolor}; display: inline-block; box-shadow: 0 0 6px {mcolor}aa;"></span>
-                <span style="font-weight: 600; font-family: monospace; font-size: 12px;">{mname}:</span>
-                <span style="opacity: 0.7;">{mcount} ({mpct:.1f}%)</span>
-            </div>
-            """
-            current_angle = next_angle
-        model_pie_gradient = f"background: conic-gradient({', '.join(model_grad_parts)});"
+    # 9. Model Usage — canonical source is Langfuse traces (replaces duplicated in-memory counter)
+    # See router trace → LiteLLM trace linkage via X-Langfuse-Trace-Id header.
 
     # Persistent aggregated tokens
     p_tokens = stats.get("prompt_tokens", 0)
@@ -1996,19 +2072,15 @@ async def get_dashboard():
                     </div>
                 </div>
 
-                <!-- Final Model Usage Pie -->
+                <!-- Final Model Usage: canonically tracked in Langfuse -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge('LITELLM', '#34d399')} Final Model Usage</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">% calls per model</span>
+                        <span>{src_badge('LITELLM', '#34d399')} Model Usage</span>
+                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Full traces in Langfuse</span>
                     </div>
-                    <div style="display: flex; gap: 40px; align-items: center; flex-wrap: wrap;">
-                        <div style="width: 130px; height: 130px; border-radius: 50%; {model_pie_gradient} box-shadow: 0 0 25px rgba(0,0,0,0.4); position: relative; flex-shrink: 0;">
-                            <div style="position: absolute; width: 60px; height: 60px; background: #111827; border-radius: 50%; top: 35px; left: 35px; box-shadow: inset 0 0 10px rgba(0,0,0,0.8);"></div>
-                        </div>
-                        <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 180px;">
-                            {model_legend_html if model_legend_html else "<div style='opacity: 0.5; font-size: 13px;'>No model data yet</div>"}
-                        </div>
+                    <div style="text-align: center; padding: 25px 20px;">
+                        <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
+                        <a href="http://localhost:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
                     </div>
                 </div>
 

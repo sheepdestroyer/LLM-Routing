@@ -90,6 +90,12 @@ spec:
       value: unix:path=/run/user/1000/bus
     - name: LITELLM_MASTER_KEY
       value: sk-lit...33bf
+    - name: LANGFUSE_PUBLIC_KEY
+      value: pk-lf-200bbf48-1d23-447d-a79a-8614106497e6
+    - name: LANGFUSE_SECRET_KEY
+      value: sk-lf-...3b49
+    - name: LANGFUSE_HOST
+      value: http://127.0.0.1:3001
     image: localhost/llm-triage-router:latest
     livenessProbe:
       exec:
