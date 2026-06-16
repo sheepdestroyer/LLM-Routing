@@ -19,13 +19,13 @@ classification_rules:
     - extremely complex across many files: agent-advanced-core
     Do not add markdown formatting. Only the model name string.
 
-# 4-tier classifier dispatch backends — all proxied through LiteLLM (port 4000).
+# 5-tier classifier dispatch backends — all proxied through LiteLLM (port 4000).
 #  Tiers (complexity ↑):
 #    agent-simple-core    — trivial / syntax / boilerplate (cheapest model)
 #    agent-medium-core    — moderate logic, light refactoring
-#    agent-reasoning-core — deep logic/agy proxy tier
 #    agent-complex-core   — multi-file tracing, algorithmic
-#    agent-advanced-core  — system architecture, deep reasoning
+#    agent-reasoning-core — heavy reasoning, deep multi-step analysis
+#    agent-advanced-core  — system architecture, deep reasoning (agy proxy tier)
 #  + openrouter-auto      — catch-all fallback (also routed via LiteLLM)
 #  The api_key placeholder is resolved at runtime by main.py:788.
 backends:

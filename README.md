@@ -17,8 +17,8 @@ graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
     
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
-        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-0.8b-routing)"]
-        Router -->|"2. Exec Proxy - Complex Tiers"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-2b-routing)"]
+        Router -->|"2. Exec Proxy - Advanced Tier"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
         
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
         AgyProxy -->|Tier 2| AgyOpus["agy w/ override\n(Claude Opus 4.6)"]
@@ -33,7 +33,7 @@ graph TD
 
     subgraph LiteLLMGateway ["LiteLLM Gateway Context"]
         LiteLLM -->|Semantic Cache| Valkey[("Valkey Cache\n(Port 6379)")]
-        LiteLLM -->|Telemetry Callbacks| Langfuse["Langfuse v3\n(Port 3000)"]
+        LiteLLM -->|Telemetry Callbacks| Langfuse["Langfuse v3\n(Port 3001)"]
     end
 
     subgraph BackendRoutingCascade ["LiteLLM Backend Cascade"]
@@ -100,11 +100,11 @@ sequenceDiagram
     participant Cache as "Valkey (Port 6379)"
     participant Provider as "OpenRouter / Local Qwen"
 
-    Client->>Router: POST /v1/chat/completions (model: agent-complex-core)
-    Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-0.8b-routing)
-    Llama-->>Router: JSON Response (Identifier: agent-simple-core OR agent-complex-core)
+    Client->>Router: POST /v1/chat/completions
+    Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-2b-routing)
+    Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
     
-    alt Complex Task (agent-complex-core)
+    alt Advanced Task (agent-advanced-core)
         Note over Router: Try agy proxy (handles auth via system keyring)
         Router->>Agy: subprocess: agy --print "prompt"
         Note over Router: agy auto-refreshes OAuth via keyring, no manual token management
@@ -135,7 +135,7 @@ sequenceDiagram
                 end
             end
         end
-    else Simple Task (agent-simple-core)
+    else Other Tiers (simple / medium / complex / reasoning)
         Note over Router: Skip agy, route directly to LiteLLM
         Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
         Proxy->>Cache: Query semantic cache
@@ -171,7 +171,7 @@ All configurations, automation scripts, and databases are self-contained within 
 │   └── entrypoint.py    # LiteLLM startup wrapper (reads .env + oauth_creds.json)
 ├── router/
 │   ├── Containerfile    # Container construction rules for the FastAPI server
-│   ├── config.yaml      # 4-tier classifier prompt + backend connection targets
+│   ├── config.yaml      # 5-tier classifier prompt + backend connection targets
 │   ├── main.py          # FastAPI Reverse-Proxy + Glassmorphic Control Dashboard
 │   ├── agy_proxy.py     # 3-tier agy fallback with session continuation
 │   ├── circuit_breaker.py # Exponential cooldown breaker for agy proxy
@@ -193,7 +193,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ## 4. Multi-Tier Gateway Configurations
 
 ### A. Custom Triage Router (`router/main.py`)
-Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local `qwen-0.8b-routing` (Vulkan offloaded Ryzen PRO APU).
+Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local `qwen-2b-routing` (Vulkan offloaded Ryzen PRO APU).
 - **Thinking Support**: Parses both `content` and `reasoning_content` API response fields to gracefully support local models configured with speculative decoding/thinking blocks.
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
@@ -204,8 +204,8 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → reasoning → advanced → local-qwen-3.6 | — |
 | `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → advanced → local-qwen-3.6 | — |
 | `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → local-qwen-3.6 | — |
-| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
-| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | local-qwen-3.6 | — |
+| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → local-qwen-3.6 | — |
+| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
 | `openrouter-auto` | Catch-all / manual override | n/a | — |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
@@ -226,7 +226,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6`
   - **`agent-advanced-core`**: `local-qwen-3.6`
   All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
-*Note: In the hybrid routing setup, the Triage Router dynamically intercepts complex and simple models to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
+*Note: In the hybrid routing setup, the Triage Router dynamically intercepts `agent-advanced-core` requests to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
@@ -285,7 +285,7 @@ Your output should display:
 * `postgres-db` (PostgreSQL 18 + pgvector on :5432)
 * `clickhouse-db` (ClickHouse for Langfuse v3 traces)
 * `langfuse-redis` (Redis for Langfuse v3 BullMQ on :6380)
-* `langfuse-web` (Langfuse v3 web UI on :3000)
+* `langfuse-web` (Langfuse v3 web UI on :3001)
 * `langfuse-worker` (Langfuse v3 background job processor)
 * `minio-s3` (S3-compatible storage for Langfuse v3 events on :9001/:9002)
 
@@ -459,20 +459,20 @@ exec:
 
 ## 9a. agy Proxy Integration (Session-Aware 3-Tier Fallback)
 
-The router includes an **agy proxy** layer that delegates **reasoning-core** tasks (classified by the
-triage router as `agent-reasoning-core`) to the antigravity CLI (`agy --print`) before falling back to
+The router includes an **agy proxy** layer that delegates **advanced-core** tasks (classified by the
+triage router as `agent-advanced-core`) to the antigravity CLI (`agy --print`) before falling back to
 LiteLLM. This provides access to Gemini 3.5 Flash and Claude models using your Google AI Pro
 subscription via the Cloud Code Assist API.
 
-### Triage Trigger: `agent-reasoning-core`
+### Triage Trigger: `agent-advanced-core`
 
-The agy proxy is invoked exclusively for requests classified as **`agent-reasoning-core`** — heavy
-reasoning, advanced architecture, deep multi-step analysis. All other tiers (`agent-simple-core`,
-`agent-medium-core`, `agent-complex-core`, `agent-advanced-core`) bypass agy and route directly
+The agy proxy is invoked exclusively for requests classified as **`agent-advanced-core`** — system
+architecture, extremely complex cross-file reasoning. All other tiers (`agent-simple-core`,
+`agent-medium-core`, `agent-complex-core`, `agent-reasoning-core`) bypass agy and route directly
 to LiteLLM for OpenRouter-backed inference.
 
-This design preserves the limited daily Cloud Code Assist quota (see below) for genuinely complex
-reasoning tasks that benefit from Gemini/Claude, while routine development tasks go through the
+This design preserves the limited daily Cloud Code Assist quota (see below) for the most demanding
+reasoning tasks that benefit from Gemini/Claude, while all other development tasks go through the
 cost-free OpenRouter fallback chain.
 
 Routing flow:
@@ -480,9 +480,9 @@ Routing flow:
 Triage classifier
   ├─ agent-simple-core    → LiteLLM (OpenRouter)
   ├─ agent-medium-core    → LiteLLM (OpenRouter)
-  ├─ agent-reasoning-core → agy proxy (Gemini/Claude) → fallback LiteLLM
   ├─ agent-complex-core   → LiteLLM (OpenRouter)
-  └─ agent-advanced-core  → LiteLLM (OpenRouter)
+  ├─ agent-reasoning-core → LiteLLM (OpenRouter)
+  └─ agent-advanced-core  → agy proxy (Gemini/Claude) → fallback LiteLLM
 ```
 
 ### Authentication: System Keyring (not oauth_creds.json)
@@ -594,7 +594,7 @@ To support low-latency streaming for agent clients (such as `goose-cli`), the ho
 #### 2. Parallel Classification Slots (Lock-Free)
 To maximize throughput under concurrent queries, `llama-server` is configured with 4 parallel processing slots (`--parallel 4` in `models.ini`).
 * The sequential `classification_lock` in `router/main.py` has been removed.
-* Triage queries are processed concurrently by the fast local `qwen-0.8b-routing` model.
+* Triage queries are processed concurrently by the fast local `qwen-2b-routing` model.
 * Fast local memory caching is retained to bypass inference for exact repeat prompts.
 
 #### 3. Custom Memory Endpoint Proxy & MCP Server
