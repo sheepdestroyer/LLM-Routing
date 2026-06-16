@@ -864,11 +864,12 @@ async def proxy_models():
             # Inject llm-routing-* models at the top of the list.
             # Auto models (classifier pipeline) first, then direct models.
             routing_models = [
-                {"id": "llm-routing-auto-free",   "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-auto-agy",    "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-auto-ollama", "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-agy",         "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-ollama",      "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing"},
             ]
             for entry in reversed(routing_models):
                 data["data"].insert(0, entry)
@@ -911,7 +912,7 @@ async def chat_completions(request: Request):
 
     AUTO_MODELS = {
         "llm-routing-auto-free", "llm-routing-auto-agy",
-        "llm-routing-auto-ollama",
+        "llm-routing-auto-ollama", "llm-routing-auto-agy-ollama",
     }
 
     client_model = body.get("model", "llm-routing-auto-free")
@@ -988,11 +989,13 @@ async def chat_completions(request: Request):
 
     should_try_agy = (
         client_model == "llm-routing-agy"
+        or client_model == "llm-routing-auto-agy-ollama"
         or (client_model == "llm-routing-auto-agy" and target_model == "agent-advanced-core")
     )
     should_try_ollama = (
         client_model == "llm-routing-ollama"
         or client_model == "llm-routing-auto-ollama"
+        or client_model == "llm-routing-auto-agy-ollama"
     )
 
     # --- AGY PROXY ---

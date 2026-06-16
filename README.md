@@ -173,10 +173,11 @@ The gateway supports multiple routing modes controlled by the `model` field:
 | Model | Behavior |
 |-------|----------|
 | `llm-routing-auto-free` | **Full classifier pipeline** → routes to best free tier. Recommended default. |
-| `llm-routing-auto-agy` | **Classifier + agy**: if classified as advanced, tries agy (Gemini/Claude) first, then falls back to LiteLLM. |
-| `llm-routing-auto-ollama` | **Classifier + Ollama**: runs classifier, then tries Ollama deepseek-v4-pro (via LiteLLM), falls back to LiteLLM free tiers. |
-| `llm-routing-agy` | **Direct agy**: skips classifier, goes straight to agy proxy (Gemini/Claude) → LiteLLM fallback. |
-| `llm-routing-ollama` | **Direct Ollama**: skips classifier, goes straight to Ollama deepseek-v4-pro (via LiteLLM) → LiteLLM fallback. |
+| `llm-routing-auto-agy` | **Classifier + agy**: if classified as advanced, tries agy (Gemini/Claude) first. |
+| `llm-routing-auto-ollama` | **Classifier + Ollama**: runs classifier, then tries Ollama deepseek-v4-pro. |
+| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama**: runs classifier, chains agy then Ollama before falling back to free tiers. |
+| `llm-routing-agy` | **Direct agy**: skips classifier, agy proxy (Gemini/Claude) → LiteLLM fallback. |
+| `llm-routing-ollama` | **Direct Ollama**: skips classifier, Ollama deepseek-v4-pro → LiteLLM fallback. |
 | `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses classifier, goes straight to LiteLLM with that tier name. |
 | Anything else | Returns HTTP 400 with the list of available models |
 
@@ -231,6 +232,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier |
 | `llm-routing-auto-agy` | ✅ | agy (if advanced tier) | LiteLLM with classified tier |
 | `llm-routing-auto-ollama` | ✅ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
+| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (chained) | LiteLLM with classified tier |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) | LiteLLM agent-advanced-core |
 | `llm-routing-ollama` | ❌ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
 | `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto |
