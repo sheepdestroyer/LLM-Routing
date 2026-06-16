@@ -15,11 +15,11 @@ The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host 
 ```mermaid
 graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
-    
+
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
         Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-2b-routing)"]
-        Router -->|"2. Exec Proxy - Advanced Tier"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
-        
+        Router -->|"2. agy Proxy (Gemini/Claude)"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
+
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
         AgyProxy -->|Tier 2| AgyOpus["agy w/ override\n(Claude Opus 4.6)"]
     end
@@ -27,7 +27,7 @@ graph TD
     AgyGemini -.->|Keyring Auth| Google["Cloud Code Assist API\n(daily-cloudcode-pa.googleapis.com)"]
     AgyOpus -.->|Keyring Auth| Google
 
-    Router -->|3. Fallback Route| RouteSelector{"Tiers Exhausted?"}
+    Router -->|3. Fallback Route| RouteSelector{"Premium Exhausted?"}
     RouteSelector -->|Yes| LiteLLM["LiteLLM Gateway\n(Port 4000)"]
     AgyProxy -->|Quota Exhausted| RouteSelector
 
@@ -37,8 +37,10 @@ graph TD
     end
 
     subgraph BackendRoutingCascade ["LiteLLM Backend Cascade"]
-        LiteLLM -->|Tier 1 - Latency-Based| OpenRouter["OpenRouter Dynamic\n(latency-based routing)"]
-        LiteLLM -->|Tier 2 - Host GPU| QwenLocal["Local Qwen\n(qwen-35b-q4ks)"]
+        LiteLLM -->|Tier 1 - Free Models| OpenRouter["OpenRouter Dynamic\n(latency-based routing)"]
+        LiteLLM -->|Tier 2 - Paid Ollama| OllamaTier["ollama_chat Provider\n(deepseek-v4-pro)"]
+        OpenRouter -.->|API Call| OpenRouterAPI["api.openrouter.ai"]
+        OllamaTier -.->|API Call| OllamaAPI["api.ollama.com"]
     end
 
     subgraph Observability ["Observability Backend (Langfuse v3)"]
@@ -47,12 +49,13 @@ graph TD
         Langfuse -->|Events| Minio[("Minio S3\n(Port 9002)")]
         Langfuse -->|Job Queues| RedisLF[("Redis-LF\n(Port 6380)")]
     end
-    
+
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
     style Router fill:#f9f9f9,stroke:#333,stroke-width:2px;
     style AgyGemini fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style AgyOpus fill:#d9ebff,stroke:#4a90e2,stroke-width:2px;
     style LiteLLM fill:#f2f9f2,stroke:#85c285,stroke-width:2px;
+    style OllamaTier fill:#ffe0cc,stroke:#e09650,stroke-width:2px;
     style Valkey fill:#fff0f0,stroke:#e06666,stroke-width:2px;
     style Langfuse fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
     style Postgres fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
@@ -98,58 +101,66 @@ sequenceDiagram
     participant Agy as "agy CLI (keyring auth)"
     participant Proxy as "LiteLLM (Port 4000)"
     participant Cache as "Valkey (Port 6379)"
-    participant Provider as "OpenRouter / Local Qwen"
+    participant Provider as "OpenRouter / Ollama"
 
-    Client->>Router: POST /v1/chat/completions
-    Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-2b-routing)
-    Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
-    
-    alt Advanced Task (agent-advanced-core)
+    Client->>Router: POST /v1/chat/completions (model: llm-routing-*)
+    Router->>Router: Check model name → decide route
+
+    alt Model = llm-routing-auto-free / auto-agy / auto-ollama
+        Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-2b-routing)
+        Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
+    else Model = direct tier (agent-*-core / llm-routing-agy / llm-routing-ollama)
+        Note over Router: Skip classifier, use model as tier
+    end
+
+    alt Route = agy (llm-routing-agy, or auto-agy + advanced)
         Note over Router: Try agy proxy (handles auth via system keyring)
         Router->>Agy: subprocess: agy --print "prompt"
-        Note over Router: agy auto-refreshes OAuth via keyring, no manual token management
-        
+
         alt Tier 1 Succeeds (quota available)
             Agy-->>Router: Gemini 3.5 Flash response (stdout)
             Router-->>Client: Return chat completion
-        else Tier 1: quota exhausted (rc=0, stdout="")
-            Note over Router: Detect empty output, query cli.log for 429
+        else Tier 1: quota exhausted
             Router->>Agy: retry: --conversation <id> --print "prompt" (w/ Opus override)
             alt Tier 2 Succeeds
                 Agy-->>Router: Claude Opus 4.6 response (stdout)
                 Router-->>Client: Return chat completion
             else Tier 2 also exhausted
-                Note over Router: Fall through to LiteLLM Gateway
-                Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
-                Proxy->>Cache: Query semantic cache
-                alt Cache Hit
-                    Cache-->>Proxy: Return cached response
-                    Proxy-->>Router: Return response
-                    Router-->>Client: Return response
-                else Cache Miss
-                    Proxy->>Provider: Forward down fallback cascade (OR Dynamic / Local MoE)
-                    Provider-->>Proxy: Return completion
-                    Proxy->>Cache: Set cache key
-                    Proxy-->>Router: Return response
-                    Router-->>Client: Return response
-                end
+                Note over Router: Fall through to LiteLLM
+                Router->>Proxy: POST /v1/chat/completions (model=agent-advanced-core)
             end
         end
-    else Other Tiers (simple / medium / complex / reasoning)
-        Note over Router: Skip agy, route directly to LiteLLM
-        Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
-        Proxy->>Cache: Query semantic cache
-        alt Cache Hit
-            Cache-->>Proxy: Return cached response
+
+    else Route = ollama (llm-routing-ollama, or auto-ollama)
+        Note over Router: Proxy to LiteLLM as ollama-deepseek-v4-pro
+        Router->>Proxy: POST /v1/chat/completions (model=ollama-deepseek-v4-pro)
+        Proxy->>Provider: Call api.ollama.com (ollama_chat provider)
+        alt Ollama Succeeds
+            Provider-->>Proxy: deepseek-v4-pro response
             Proxy-->>Router: Return response
-            Router-->>Client: Return response
-        else Cache Miss
-            Proxy->>Provider: Forward down fallback cascade (Gemma 4 / Local Qwen)
-            Provider-->>Proxy: Return completion
-            Proxy->>Cache: Set cache key
-            Proxy-->>Router: Return response
-            Router-->>Client: Return response
+            Router-->>Client: Return chat completion
+        else Ollama fails (rate-limited / unavailable)
+            Note over Proxy: Fallback: ollama-deepseek-v4-pro → agent-advanced-core
+            Proxy->>Provider: Call OpenRouter (agent-advanced-core tier)
         end
+
+    else Route = LiteLLM (all other models)
+        Note over Router: Proxy directly to LiteLLM
+        Router->>Proxy: POST /v1/chat/completions (Master Key Auth)
+    end
+
+    Note over Proxy,Provider: LiteLLM fallback cascade (free tiers)
+    Proxy->>Cache: Query semantic cache
+    alt Cache Hit
+        Cache-->>Proxy: Return cached response
+        Proxy-->>Router: Return response
+        Router-->>Client: Return response
+    else Cache Miss
+        Proxy->>Provider: Forward down fallback cascade
+        Provider-->>Proxy: Return completion
+        Proxy->>Cache: Set cache key
+        Proxy-->>Router: Return response
+        Router-->>Client: Return response
     end
 ```
 
