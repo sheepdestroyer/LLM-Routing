@@ -25,3 +25,4 @@ router/__pycache__/
 # Runtime data (regenerated on each run)
 router/router_stats.json
 router/quantization_report.txt
+router/router_timeline.json
