@@ -108,14 +108,14 @@ sequenceDiagram
     Client->>Router: POST /v1/chat/completions (model: llm-routing-*)
     Router->>Router: Check model name → decide route
 
-    alt Model = llm-routing-auto-free / auto-agy / auto-ollama
+    alt Model = llm-routing-auto-free / auto-agy / auto-ollama / auto-agy-ollama
         Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-2b-routing)
         Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
     else Model = direct tier (agent-*-core / llm-routing-agy / llm-routing-ollama)
         Note over Router: Skip classifier, use model as tier
     end
 
-    alt Route = agy (llm-routing-agy, or auto-agy + advanced)
+    alt Route = agy (llm-routing-agy, auto-agy+advanced, auto-agy-ollama)
         Note over Router: Try agy proxy (handles auth via system keyring)
         Router->>Agy: subprocess: agy --print "prompt"
 
@@ -128,12 +128,18 @@ sequenceDiagram
                 Agy-->>Router: Claude Opus 4.6 response (stdout)
                 Router-->>Client: Return chat completion
             else Tier 2 also exhausted
-                Note over Router: Fall through to LiteLLM
-                Router->>Proxy: POST /v1/chat/completions (model=agent-advanced-core)
+                alt Model = auto-agy-ollama (chain to Ollama)
+                    Note over Router: agy exhausted → chain to Ollama
+                    Router->>Proxy: POST /v1/chat/completions (model=ollama-deepseek-v4-pro)
+                    Proxy->>Provider: Call api.ollama.com (ollama_chat provider)
+                else Other agy models
+                    Note over Router: Fall through to LiteLLM
+                    Router->>Proxy: POST /v1/chat/completions (model=agent-advanced-core)
+                end
             end
         end
 
-    else Route = ollama (llm-routing-ollama, or auto-ollama)
+    else Route = ollama (llm-routing-ollama, auto-ollama, auto-agy-ollama chain)
         Note over Router: Proxy to LiteLLM as ollama-deepseek-v4-pro
         Router->>Proxy: POST /v1/chat/completions (model=ollama-deepseek-v4-pro)
         Proxy->>Provider: Call api.ollama.com (ollama_chat provider)
@@ -666,8 +672,9 @@ the agent tier cascade to OpenRouter's free model pool.
 |-------|----------|
 | `llm-routing-ollama` | Direct — skips classifier, goes straight to Ollama deepseek-v4-pro |
 | `llm-routing-auto-ollama` | Auto — classifier runs first, then Ollama deepseek-v4-pro is tried regardless of tier |
+| `llm-routing-auto-agy-ollama` | Chained — classifier runs, tries agy first, then chains to Ollama if agy exhausted |
 
-Both modes ultimately fall back to LiteLLM's agent tier cascade if Ollama fails.
+All three modes ultimately fall back to LiteLLM's agent tier cascade if the premium backends fail.
 
 ## 9d. Hermes Cron Jobs & Health Check Alerting
 
