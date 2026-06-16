@@ -851,7 +851,7 @@ async def proxy_memory(request: Request, path: str = ""):
 
 @app.get("/v1/models")
 async def proxy_models():
-    """Proxy /v1/models to LiteLLM (authoritative model list, includes dynamic roster)."""
+    """Proxy /v1/models to LiteLLM, injecting llm-routing-auto as the first entry."""
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -860,7 +860,17 @@ async def proxy_models():
                 "http://127.0.0.1:4000/v1/models",
                 headers={"Authorization": auth_header}
             )
-            return JSONResponse(content=r.json(), status_code=r.status_code)
+            data = r.json()
+            # Inject llm-routing-auto as the first model — it uses the full
+            # classifier pipeline and is the recommended default for clients.
+            auto_entry = {
+                "id": "llm-routing-auto",
+                "object": "model",
+                "created": 0,
+                "owned_by": "llm-routing",
+            }
+            data["data"].insert(0, auto_entry)
+            return JSONResponse(content=data, status_code=r.status_code)
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
         raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
@@ -889,10 +899,35 @@ async def chat_completions(request: Request):
             last_user_message = msg.get("content", "")
             break
 
-    bypass_cache = request.headers.get("x-bypass-cache") == "true"
-    # Classify request via local Qwen 2B classifier — returns (model, latency_ms, cache_hit, raw)
-    target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(last_user_message, bypass_cache=bypass_cache)
-    logger.info(f"Triage decision: Routing request to backend model -> '{target_model}'")
+    # Known tier names that can be routed directly (bypass classifier)
+    DIRECT_TIERS = {
+        "agent-simple-core", "agent-medium-core",
+        "agent-complex-core", "agent-reasoning-core",
+        "agent-advanced-core",
+    }
+
+    client_model = body.get("model", "llm-routing-auto")
+
+    if client_model == "llm-routing-auto":
+        # Full pipeline: classify → route to best tier
+        bypass_cache = request.headers.get("x-bypass-cache") == "true"
+        target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
+            last_user_message, bypass_cache=bypass_cache
+        )
+        logger.info(f"Triage decision (auto): Routing to -> '{target_model}'")
+    elif client_model in DIRECT_TIERS:
+        # Direct routing: client knows what tier they want, skip classifier
+        target_model = client_model
+        triage_latency = 0.0
+        was_cache_hit = False
+        raw_classification = f"direct ({client_model})"
+        logger.info(f"Direct routing: Client requested '{client_model}', skipping classifier")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto' for automatic routing, "
+                    f"or one of: {', '.join(sorted(DIRECT_TIERS))}"
+        )
 
     # Update in-memory statistics
     stats["total_requests"] += 1

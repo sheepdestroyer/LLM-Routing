@@ -153,6 +153,16 @@ sequenceDiagram
     end
 ```
 
+### Routing Modes
+
+The gateway supports two routing modes controlled by the `model` field:
+
+| Model | Behavior |
+|-------|----------|
+| `llm-routing-auto` | **Full classifier pipeline**: the local Qwen 2B model analyzes prompt complexity and routes to the optimal tier. Recommended default for most clients. |
+| `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses the classifier entirely. The request goes straight to LiteLLM with that tier name, which handles its own internal fallback chain. Use when you know exactly what complexity level you need. |
+| Anything else | Returns HTTP 400 with the list of available models |
+
 ---
 
 ## 3. Directory Layout
@@ -201,12 +211,13 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 | Backend name | Complexity level | Fallback chain in LiteLLM | agy trigger |
 |:---|:---|:---|---:|
-| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → reasoning → advanced → local-qwen-3.6 | — |
-| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → advanced → local-qwen-3.6 | — |
-| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → local-qwen-3.6 | — |
-| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → local-qwen-3.6 | — |
-| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | local-qwen-3.6 | **Yes** — delegates to agy proxy (§9a) |
-| `openrouter-auto` | Catch-all / manual override | n/a | — |
+| `llm-routing-auto` | **Auto** — classifier picks best tier | Full cascade through chosen tier | If classifier picks advanced |
+| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → reasoning → advanced → openrouter-auto | — |
+| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → advanced → openrouter-auto | — |
+| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → openrouter-auto | — |
+| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → openrouter-auto | — |
+| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | openrouter-auto | **Yes** — delegates to agy proxy (§9a) |
+| `openrouter-auto` | LiteLLM internal fallback terminus | n/a | — |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
@@ -334,9 +345,8 @@ To test the zero-shot router classification and complete gateway execution, run 
 ```bash
 curl -s http://127.0.0.1:5000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer gateway-pass" \
   -d '{
-    "model": "agent-simple-core",
+    "model": "llm-routing-auto",
     "messages": [
       {"role": "user", "content": "Write a quick hello world in Python."}
     ]
