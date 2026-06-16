@@ -63,7 +63,7 @@ graph TD
     style ClickHouse fill:#f0f0e0,stroke:#c9c985,stroke-width:2px;
     style Minio fill:#e0f0e0,stroke:#85c285,stroke-width:2px;
     style RedisLF fill:#ffe0e0,stroke:#e08585,stroke-width:2px;
-    style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px,stroke-dasharray:5;
+    style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
 > **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
