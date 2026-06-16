@@ -237,14 +237,15 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable models before falling back to the local MoE:
-  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen-3.6`
-  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen-3.6`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen-3.6`
-  - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6`
-  - **`agent-advanced-core`**: `local-qwen-3.6`
+  Each tier escalates through increasingly capable models. All chains end at `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `openrouter-auto`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `openrouter-auto`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `openrouter-auto`
+  - **`agent-reasoning-core`**: advanced-core → `openrouter-auto`
+  - **`agent-advanced-core`**: `openrouter-auto`
+  - **`ollama-deepseek-v4-pro`**: advanced-core → `openrouter-auto`
   All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
-*Note: In the hybrid routing setup, the Triage Router dynamically intercepts `agent-advanced-core` requests to execute direct Google AI subscription OAuth routes (`gemini-3.5-flash` / `gemini-3.1-flash-lite`) via the `agy` CLI on the host if a valid token is found, automatically falling back to these LiteLLM chains on expiration.*
+*Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist). `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider). The `agent-advanced-core` tier itself is a plain LiteLLM tier with no agy trigger. See §2 for the full routing table.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
@@ -476,17 +477,20 @@ exec:
 
 ## 9a. agy Proxy Integration (Session-Aware 3-Tier Fallback)
 
-The router includes an **agy proxy** layer that delegates **advanced-core** tasks (classified by the
-triage router as `agent-advanced-core`) to the antigravity CLI (`agy --print`) before falling back to
-LiteLLM. This provides access to Gemini 3.5 Flash and Claude models using your Google AI Pro
-subscription via the Cloud Code Assist API.
+The router includes an **agy proxy** layer that delegates premium tasks to the antigravity CLI
+(`agy --print`). This provides access to Gemini 3.5 Flash and Claude models using your Google
+AI Pro subscription via the Cloud Code Assist API.
 
-### Triage Trigger: `agent-advanced-core`
+### Triage Triggers
 
-The agy proxy is invoked exclusively for requests classified as **`agent-advanced-core`** — system
-architecture, extremely complex cross-file reasoning. All other tiers (`agent-simple-core`,
-`agent-medium-core`, `agent-complex-core`, `agent-reasoning-core`) bypass agy and route directly
-to LiteLLM for OpenRouter-backed inference.
+The agy proxy is invoked for two routing modes (see §2 for full table):
+
+- **`llm-routing-agy`** — direct: skips classifier, goes straight to agy
+- **`llm-routing-auto-agy`** — auto: classifier runs, agy triggered only if classified as `agent-advanced-core`
+
+All other models (`agent-simple-core`, `agent-medium-core`, `agent-complex-core`,
+`agent-reasoning-core`, `agent-advanced-core`, `llm-routing-auto-free`, etc.) bypass agy and route
+directly to LiteLLM.
 
 This design preserves the limited daily Cloud Code Assist quota (see below) for the most demanding
 reasoning tasks that benefit from Gemini/Claude, while all other development tasks go through the
