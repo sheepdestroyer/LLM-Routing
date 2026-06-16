@@ -115,7 +115,8 @@ sequenceDiagram
         Note over Router: Skip classifier, use model as tier
     end
 
-    alt Route = agy (llm-routing-agy, auto-agy+advanced, auto-agy-ollama)
+    alt Route = agy (llm-routing-agy, or auto-agy+advanced, or auto-agy-ollama+advanced/reasoning)
+        Note over Router: agy gated: only if direct model OR classified as advanced/reasoning
         Note over Router: Try agy proxy (handles auth via system keyring)
         Router->>Agy: subprocess: agy --print "prompt"
 
@@ -179,9 +180,9 @@ The gateway supports multiple routing modes controlled by the `model` field:
 | Model | Behavior |
 |-------|----------|
 | `llm-routing-auto-free` | **Full classifier pipeline** → routes to best free tier. Recommended default. |
-| `llm-routing-auto-agy` | **Classifier + agy**: if classified as advanced, tries agy (Gemini/Claude) first. |
-| `llm-routing-auto-ollama` | **Classifier + Ollama**: runs classifier, then tries Ollama deepseek-v4-pro. |
-| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama**: runs classifier, chains agy then Ollama before falling back to free tiers. |
+| `llm-routing-auto-agy` | **Classifier + agy (gated)**: runs classifier, tries agy only if classified as advanced. |
+| `llm-routing-auto-ollama` | **Classifier + Ollama (gated)**: runs classifier, tries Ollama only if advanced. |
+| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama (gated)**: runs classifier, chains agy then Ollama only if advanced. |
 | `llm-routing-agy` | **Direct agy**: skips classifier, agy proxy (Gemini/Claude) → LiteLLM fallback. |
 | `llm-routing-ollama` | **Direct Ollama**: skips classifier, Ollama deepseek-v4-pro → LiteLLM fallback. |
 | `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses classifier, goes straight to LiteLLM with that tier name. |
@@ -233,14 +234,14 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 **Backend targets dispatched by the router** (all resolve through LiteLLM on port 4000):
 
-| Model name | Classifier | Premium backend | Fallback |
+| Model | Classifier | Premium backend | Fallback |
 |:---|---:|:---|:---|
-| `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier |
-| `llm-routing-auto-agy` | ✅ | agy (if advanced tier) | LiteLLM with classified tier |
-| `llm-routing-auto-ollama` | ✅ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
-| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (chained) | LiteLLM with classified tier |
-| `llm-routing-agy` | ❌ | agy (Gemini/Claude) | LiteLLM agent-advanced-core |
-| `llm-routing-ollama` | ❌ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
+| `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 256K |
+| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 256K |
+| `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning → deepseek-v4-flash, advanced → deepseek-v4-pro) | LiteLLM agent-advanced-core | 256K |
+| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced only) | LiteLLM with classified tier | 256K |
+| `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 256K |
+| `llm-routing-ollama` | ❌ | Ollama deepseek-v4-pro — unconditional | LiteLLM agent-advanced-core | 256K |
 | `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain |
@@ -266,7 +267,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - **`agent-advanced-core`**: `openrouter-auto`
   - **`ollama-deepseek-v4-pro`**: advanced-core → `openrouter-auto`
   All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
-*Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist). `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider). `llm-routing-auto-agy-ollama` chains both — agy first, then Ollama if agy is exhausted. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
+*Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
 Connects directly to the high-performance local `valkey-cache` on port `6379`. LiteLLM transparently writes prompt-response mappings to the cache, resulting in **zero-latency completions** for exact repeat prompt structures.
@@ -341,6 +342,29 @@ systemctl --user status agy-daemon.service
 # View live logs
 journalctl --user -fu agy-daemon.service
 ```
+
+### 3b. Logging Configuration
+
+The triage router supports configurable log levels via the `LOG_LEVEL` environment variable:
+
+| Value | Effect |
+|-------|--------|
+| `WARNING` (default) | Only warnings and errors — silent operation |
+| `INFO` | Shows classification decisions, cache hits, proxy routing |
+| `DEBUG` | Full detail including circuit breaker transitions, agy proxy attempts |
+
+Set it in `.env`:
+```bash
+echo 'LOG_LEVEL=info' >> .env
+```
+
+Then redeploy (no rebuild needed):
+```bash
+./start-stack.sh --replace
+```
+
+The router container in `pod.yaml` defaults to `info` for operational visibility.
+Uvicorn's log level follows the same env var via `${LOG_LEVEL:-warning}` in the pod args.
 
 **Security hardening** applied to the unit:
 

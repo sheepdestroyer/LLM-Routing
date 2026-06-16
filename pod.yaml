@@ -32,6 +32,7 @@ spec:
     volumeMounts:
     - mountPath: /data
       name: valkey-storage
+  # LiteLLM Gateway — upstream proxy with adaptive routing
   - command:
     - python3
     - /app/entrypoint.py
@@ -80,8 +81,9 @@ spec:
       subPath: .env
     - mountPath: /config/gemini_auth
       name: gemini-secrets
+  # LLM Triage Router — classification + routing gateway
   - args:
-    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000 --log-level warning
+    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000 --log-level ${LOG_LEVEL:-warning}
     command:
     - /bin/sh
     - -c
@@ -100,6 +102,8 @@ spec:
       value: http://127.0.0.1:3001
     - name: OLLAMA_API_KEY
       value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
+    - name: LOG_LEVEL
+      value: info
     image: localhost/llm-triage-router:latest
     livenessProbe:
       exec:
@@ -141,6 +145,7 @@ spec:
     - mountPath: /config/.env
       name: env-file
       subPath: .env
+  # PostgreSQL — Langfuse + LiteLLM metadata store
   - env:
     - name: POSTGRES_USER
       value: postgres
@@ -171,6 +176,7 @@ spec:
     volumeMounts:
     - mountPath: /var/lib/postgresql
       name: postgres-storage
+  # ClickHouse — Langfuse v3 OLAP trace/observation store
   - env:
     - name: CLICKHOUSE_DB
       value: default
@@ -206,6 +212,7 @@ spec:
     volumeMounts:
     - mountPath: /var/lib/clickhouse
       name: clickhouse-storage
+  # Valkey LF — Langfuse v3 BullMQ job queue
   - command:
     - redis-server
     - --port
@@ -245,6 +252,7 @@ spec:
     volumeMounts:
     - mountPath: /data
       name: redis-lf-storage
+  # Langfuse Web — observability dashboard
   - env:
     - name: DATABASE_URL
       value: postgresql://postgres:***@127.0.0.1:5432/langfuse
@@ -328,6 +336,7 @@ spec:
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
+  # Langfuse Worker — background job processor
   - env:
     - name: DATABASE_URL
       value: postgresql://postgres:***@127.0.0.1:5432/langfuse
@@ -375,6 +384,7 @@ spec:
       periodSeconds: 15
       timeoutSeconds: 5
     name: langfuse-worker
+  # Minio S3 — Langfuse v3 event storage
   - args:
     - server
     - --quiet

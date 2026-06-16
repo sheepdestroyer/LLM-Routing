@@ -175,7 +175,8 @@ def _wrap_response(text: str, model_name: str, prompt: str) -> dict:
 async def try_agy_proxy(prompt: str, messages: list = None,
                         session_id: str = None,
                         total_timeout: float = AGY_TOTAL_TIMEOUT_SECS,
-                        stream: bool = False) -> Optional[dict]:
+                        stream: bool = False,
+                        target_tier: str = "agent-advanced-core") -> Optional[dict]:
     """
     Attempt agy proxy with session-aware tier fallback.
     
@@ -185,10 +186,21 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         session_id: Router session identifier for conversation continuity
         total_timeout: Max total time across all tiers
         stream: If True, returns a dict with {"stream": async_generator, "model": model_name}
+        target_tier: Classified tier — "agent-reasoning-core" uses gemini-3.5-flash (low thinking),
+                     "agent-advanced-core" uses full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
     
     Returns:
         OpenAI-compatible response dict, streaming dict, or None if all tiers failed.
     """
+    # Select model chain based on target tier
+    # Reasoning: single tier, gemini-3.5-flash with low thinking
+    # Advanced: full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
+    if target_tier == "agent-reasoning-core":
+        agy_tiers = [
+            {"model_name": "gemini-3.5-flash", "env_override": ""},  # low thinking default
+        ]
+    else:
+        agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
     # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
     # rate-limit windows (separate 5-hour quota refresh cycles).
     google_breaker = get_google_breaker()
@@ -230,7 +242,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
     
     import httpx
     
-    for tier_idx, tier in enumerate(AGY_FALLBACK_TIERS[start_tier_index:]):
+    for tier_idx, tier in enumerate(agy_tiers[start_tier_index:]):
         actual_tier_idx = start_tier_index + tier_idx
         elapsed = time.time() - start_time
         remaining = total_timeout - elapsed

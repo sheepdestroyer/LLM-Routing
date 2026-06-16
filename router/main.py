@@ -12,9 +12,12 @@ from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from circuit_breaker import get_breaker
 
-# Configure logging
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(message)s")
+# Configure logging — respect LOG_LEVEL env var (default: WARNING)
+_log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
+_log_level = getattr(logging, _log_level_str, logging.WARNING)
+logging.basicConfig(level=_log_level, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("llm-triage-router")
+logger.info(f"Log level set to {_log_level_str} (from LOG_LEVEL env var)")
 
 # Langfuse observability — per-request traces + aggregate score pushes
 _langfuse_client = None
@@ -863,13 +866,15 @@ async def proxy_models():
             data = r.json()
             # Inject llm-routing-* models at the top of the list.
             # Auto models (classifier pipeline) first, then direct models.
+            # context_length: 262144 (256K) — the downstream models (gemini-3.5-flash,
+            # claude-opus-4.6, deepseek-v4-pro/flash) all support 256K+ context.
             routing_models = [
-                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing"},
-                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
             ]
             for entry in reversed(routing_models):
                 data["data"].insert(0, entry)
@@ -981,21 +986,30 @@ async def chat_completions(request: Request):
             logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
 
     # --- PREMIUM PROXY ROUTES ---
-    # agy: triggered for llm-routing-agy (direct) or llm-routing-auto-agy when
-    #      classifier picks agent-advanced-core.
-    # ollama: triggered for llm-routing-ollama (direct) or llm-routing-auto-ollama.
-    #      Proxied to LiteLLM as ollama-deepseek-v4-pro — LiteLLM handles the
+    # agy: triggered unconditionally for llm-routing-agy (direct).
+    #      For AUTO models: only triggered when classifier picks agent-advanced-core
+    #      or agent-reasoning-core.
+    #      Reasoning tier → gemini-3.5-flash (single tier, low thinking)
+    #      Advanced tier → gemini-3.5-flash → claude-opus-4.6 (full 2-tier chain)
+    #      Proxied to host agy daemon on port 5005.
+    # ollama: triggered unconditionally for llm-routing-ollama (direct).
+    #      For AUTO models: only triggered when classifier picks agent-advanced-core
+    #      or agent-reasoning-core.
+    #      Reasoning tier → deepseek-v4-flash (lighter, faster)
+    #      Advanced tier → deepseek-v4-pro (full power)
+    #      Proxied to LiteLLM as ollama-deepseek-v4-* — LiteLLM handles the
     #      native Ollama API call via its built-in ollama_chat provider.
+    # Classification gating (2026-06-16): auto models skip premium proxies entirely
+    # unless classified as advanced or reasoning, avoiding 4-minute agy timeouts on
+    # simple/medium/complex prompts that the fast OpenRouter free tier handles better.
 
     should_try_agy = (
-        client_model == "llm-routing-agy"
-        or client_model == "llm-routing-auto-agy-ollama"
-        or (client_model == "llm-routing-auto-agy" and target_model == "agent-advanced-core")
+        client_model == "llm-routing-agy"  # direct — always try
+        or (client_model in AUTO_MODELS and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
     should_try_ollama = (
-        client_model == "llm-routing-ollama"
-        or client_model == "llm-routing-auto-ollama"
-        or client_model == "llm-routing-auto-agy-ollama"
+        client_model == "llm-routing-ollama"  # direct — always try
+        or (client_model in AUTO_MODELS and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
 
     # --- AGY PROXY ---
@@ -1025,7 +1039,8 @@ async def chat_completions(request: Request):
                     prompt=last_prompt,
                     messages=messages,
                     session_id=session_id,
-                    total_timeout=300.0
+                    total_timeout=300.0,
+                    target_tier=target_model
                 )
                 if agy_response:
                     latency_ms = (time.time() - start_time) * 1000.0
@@ -1085,10 +1100,15 @@ async def chat_completions(request: Request):
 
     # --- OLLAMA (via LiteLLM) ---
     # LiteLLM's ollama_chat provider handles the native Ollama API call.
-    # We just proxy to LiteLLM with model=ollama-deepseek-v4-pro.
-    # LiteLLM's fallback chain: ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto.
+    # We just proxy to LiteLLM with the appropriate model name.
+    # Reasoning tier → deepseek-v4-flash (lighter, faster)
+    # Advanced tier → deepseek-v4-pro (full power)
+    # LiteLLM's fallback chain handles failures.
     if should_try_ollama:
-        target_model = "ollama-deepseek-v4-pro"
+        if target_model == "agent-reasoning-core":
+            target_model = "ollama-deepseek-v4-flash"
+        else:
+            target_model = "ollama-deepseek-v4-pro"
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
     # Resolve backend connection parameters

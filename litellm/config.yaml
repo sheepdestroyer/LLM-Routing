@@ -48,6 +48,8 @@ litellm_settings:
     # - local-qwen-3.6  # DISABLED
   - ollama-deepseek-v4-pro:
     - agent-advanced-core
+  - ollama-deepseek-v4-flash:
+    - agent-reasoning-core
 model_list:
 - litellm_params:
     model: openrouter/openrouter/auto
@@ -76,6 +78,17 @@ model_list:
 - model_name: ollama-deepseek-v4-pro
   litellm_params:
     model: ollama_chat/deepseek-v4-pro
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    request_timeout: 120
+
+# ================================================================================
+# OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
+# Fallback: ollama-deepseek-v4-flash → agent-reasoning-core → openrouter-auto.
+# ================================================================================
+- model_name: ollama-deepseek-v4-flash
+  litellm_params:
+    model: ollama_chat/deepseek-v4-flash
     api_base: https://api.ollama.com
     api_key: os.environ/OLLAMA_API_KEY
     request_timeout: 120
