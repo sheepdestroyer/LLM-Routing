@@ -193,8 +193,8 @@ async def sync_adaptive_router_roster(master_key: str):
             continue
 
         # 1. Enforce Tool/Function Calling Support
-        supported_params = m.get("supported_parameters", [])
-        if "tools" not in supported_params:
+        supported_params = m.get('supported_parameters') or []
+        if 'tools' not in supported_params:
             logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
             continue
 
