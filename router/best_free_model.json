@@ -1,8 +1,8 @@
 {
-  "id": "moonshotai/kimi-k2.6:free",
-  "name": "MoonshotAI: Kimi K2.6 (free)",
-  "score": 54.0,
-  "context_length": 262144,
+  "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "name": "NVIDIA: Nemotron 3 Ultra (free)",
+  "score": 48.0,
+  "context_length": 1000000,
   "is_fallback": false,
-  "updated_at": "2026-06-10T14:15:49.087517Z"
+  "updated_at": "2026-06-16T09:40:39.580474Z"
 }
