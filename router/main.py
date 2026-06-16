@@ -434,7 +434,9 @@ def get_live_gemini_oauth_token() -> str | None:
                     logger.info("🔑 Found valid, unexpired Gemini OAuth token from host!")
                     return access_token
                 else:
-                    logger.warning("⚠️ Gemini OAuth token on disk is expired or missing.")
+                    # agy CLI uses the OS system keyring (GNOME Keyring), not this
+                    # stale disk file. The file being expired is expected — don't warn.
+                    logger.debug("Gemini OAuth token on disk is expired — agy uses system keyring instead.")
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
@@ -887,19 +889,9 @@ async def chat_completions(request: Request):
             last_user_message = msg.get("content", "")
             break
 
-    # Prompt-length triage bypass: large prompts skip the 0.8B routing model
-    # Threshold: >2000 chars → automatically complex (saves routing tokens for big contexts)
-    PROMPT_LENGTH_THRESHOLD = 2000
     bypass_cache = request.headers.get("x-bypass-cache") == "true"
-    if len(last_user_message) > PROMPT_LENGTH_THRESHOLD:
-        target_model = "agent-complex-core"
-        triage_latency = 0.0
-        was_cache_hit = False
-        raw_classification = "complex (length bypass)"
-        logger.info(f"Triage bypass: prompt too long ({len(last_user_message)} chars > {PROMPT_LENGTH_THRESHOLD}), auto-classified as complex")
-    else:
-        # Classify request via local Qwen 2B classifier — returns (model, latency_ms, cache_hit, raw)
-        target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(last_user_message, bypass_cache=bypass_cache)
+    # Classify request via local Qwen 2B classifier — returns (model, latency_ms, cache_hit, raw)
+    target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(last_user_message, bypass_cache=bypass_cache)
     logger.info(f"Triage decision: Routing request to backend model -> '{target_model}'")
 
     # Update in-memory statistics
@@ -944,9 +936,10 @@ async def chat_completions(request: Request):
         except Exception as e:
             logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
 
-    # --- AGY PROXY ROUTE (3-TIER FALLBACK) ---
-    # Only for reasoning tasks; complex/simple tasks go directly to LiteLLM
-    if target_model == "agent-reasoning-core":
+    # --- AGY PROXY ROUTE ---
+    # Reserved for agent-advanced-core only — preserves agy (Google OAuth) quota.
+    # All other tiers (reasoning, complex, medium, simple) go through LiteLLM's free-model roster.
+    if target_model == "agent-advanced-core":
         try:
             from agy_proxy import try_agy_proxy
             
