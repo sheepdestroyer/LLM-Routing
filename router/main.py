@@ -851,7 +851,7 @@ async def proxy_memory(request: Request, path: str = ""):
 
 @app.get("/v1/models")
 async def proxy_models():
-    """Proxy /v1/models to LiteLLM, injecting llm-routing-auto as the first entry."""
+    """Proxy /v1/models to LiteLLM, injecting llm-routing-auto-free as the first entry."""
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -861,15 +861,17 @@ async def proxy_models():
                 headers={"Authorization": auth_header}
             )
             data = r.json()
-            # Inject llm-routing-auto as the first model — it uses the full
-            # classifier pipeline and is the recommended default for clients.
-            auto_entry = {
-                "id": "llm-routing-auto",
-                "object": "model",
-                "created": 0,
-                "owned_by": "llm-routing",
-            }
-            data["data"].insert(0, auto_entry)
+            # Inject llm-routing-* models at the top of the list.
+            # Auto models (classifier pipeline) first, then direct models.
+            routing_models = [
+                {"id": "llm-routing-auto-free",   "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-agy",    "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-auto-ollama", "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-agy",         "object": "model", "created": 0, "owned_by": "llm-routing"},
+                {"id": "llm-routing-ollama",      "object": "model", "created": 0, "owned_by": "llm-routing"},
+            ]
+            for entry in reversed(routing_models):
+                data["data"].insert(0, entry)
             return JSONResponse(content=data, status_code=r.status_code)
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
@@ -904,11 +906,17 @@ async def chat_completions(request: Request):
         "agent-simple-core", "agent-medium-core",
         "agent-complex-core", "agent-reasoning-core",
         "agent-advanced-core",
+        "llm-routing-agy", "llm-routing-ollama",
     }
 
-    client_model = body.get("model", "llm-routing-auto")
+    AUTO_MODELS = {
+        "llm-routing-auto-free", "llm-routing-auto-agy",
+        "llm-routing-auto-ollama",
+    }
 
-    if client_model == "llm-routing-auto":
+    client_model = body.get("model", "llm-routing-auto-free")
+
+    if client_model in AUTO_MODELS:
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
         target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
@@ -925,7 +933,7 @@ async def chat_completions(request: Request):
     else:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto' for automatic routing, "
+            detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
                     f"or one of: {', '.join(sorted(DIRECT_TIERS))}"
         )
 
@@ -971,21 +979,33 @@ async def chat_completions(request: Request):
         except Exception as e:
             logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
 
-    # --- AGY PROXY ROUTE ---
-    # Reserved for agent-advanced-core only — preserves agy (Google OAuth) quota.
-    # All other tiers (reasoning, complex, medium, simple) go through LiteLLM's free-model roster.
-    if target_model == "agent-advanced-core":
+    # --- PREMIUM PROXY ROUTES ---
+    # agy: triggered for llm-routing-agy (direct) or llm-routing-auto-agy when
+    #      classifier picks agent-advanced-core.
+    # ollama: triggered for llm-routing-ollama (direct) or llm-routing-auto-ollama.
+    #      Proxied to LiteLLM as ollama-deepseek-v4-pro — LiteLLM handles the
+    #      native Ollama API call via its built-in ollama_chat provider.
+
+    should_try_agy = (
+        client_model == "llm-routing-agy"
+        or (client_model == "llm-routing-auto-agy" and target_model == "agent-advanced-core")
+    )
+    should_try_ollama = (
+        client_model == "llm-routing-ollama"
+        or client_model == "llm-routing-auto-ollama"
+    )
+
+    # --- AGY PROXY ---
+    if should_try_agy:
         try:
             from agy_proxy import try_agy_proxy
-            
-            # Build the prompt from the user's last message
+
             last_prompt = ""
             for msg in reversed(messages):
                 if msg.get("role") == "user":
                     last_prompt = msg.get("content", "")
                     break
-            
-            # Derive a stable session ID from conversation fingerprint
+
             session_id = None
             if len(messages) >= 2:
                 import hashlib
@@ -996,7 +1016,7 @@ async def chat_completions(request: Request):
                         fingerprint_parts.append(c[:200])
                 fingerprint = "|".join(fingerprint_parts)
                 session_id = hashlib.md5(fingerprint.encode()).hexdigest()
-            
+
             if last_prompt:
                 agy_response = await try_agy_proxy(
                     prompt=last_prompt,
@@ -1015,7 +1035,7 @@ async def chat_completions(request: Request):
                         model_name, latency_ms, route="google_oauth_direct"
                     )
                     logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
-                    
+
                     if body.get("stream", False):
                         content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                         async def agy_stream_generator():
@@ -1038,7 +1058,7 @@ async def chat_completions(request: Request):
                                 }
                                 yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
                                 await asyncio.sleep(0.005)
-                            
+
                             finish_data = {
                                 "id": chunk_id,
                                 "object": "chat.completion.chunk",
@@ -1056,92 +1076,17 @@ async def chat_completions(request: Request):
                     else:
                         return agy_response
         except ImportError:
-            logger.warning("agy_proxy module not available, falling back to direct API call")
+            logger.warning("agy_proxy module not available, falling back to LiteLLM")
         except Exception as e:
-            logger.error(f"agy proxy failed: {e}, falling back to direct API call")
-    
-    # --- DIRECT GOOGLE OAUTH ROUTE (legacy fallback) ---
-    # Protected by google circuit breaker — avoids hammering Google when rate-limited.
-    from circuit_breaker import get_google_breaker
-    google_breaker = get_google_breaker()
-    
-    if not google_breaker.is_allowed():
-        logger.info(
-            f"Direct Google OAuth: blocked by circuit breaker "
-            f"(tier {google_breaker.tier}). Falling through to LiteLLM."
-        )
-        oauth_token = None
-    else:
-        oauth_token = get_live_gemini_oauth_token()
-    
-    if oauth_token:
-        google_model = "gemini-3.5-flash" if target_model in ("agent-complex-core", "agent-reasoning-core") else "gemini-3.1-flash-lite"
-        logger.info(f"🔄 Direct Gemini OAuth Route: Mapping '{target_model}' to Google '{google_model}'...")
-        
-        google_body = body.copy()
-        google_body["model"] = google_model
-        
-        google_headers = {
-            "Authorization": f"Bearer {oauth_token}",
-            "Content-Type": "application/json"
-        }
-        google_api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
-        
-        try:
-            logger.info("Attempting direct Google Gemini API call...")
-            
-            if body.get("stream", False):
-                client = httpx.AsyncClient(timeout=3600.0)
-                req = client.build_request(
-                    "POST",
-                    f"{google_api_base}/chat/completions",
-                    json=google_body,
-                    headers=google_headers
-                )
-                r = await client.send(req, stream=True)
-                if r.status_code == 200:
-                    async def google_stream_generator():
-                        completion_chars = 0
-                        request_tokens = len(json.dumps(google_body)) // 4
-                        try:
-                            async for chunk in r.aiter_bytes():
-                                completion_chars += len(chunk)
-                                yield chunk
-                            latency_ms = (time.time() - start_time) * 1000.0
-                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, google_model, latency_ms, route="google_oauth_direct")
-                        except Exception as ex:
-                            logger.error(f"Stream generation error on direct Google call: {ex}")
-                        finally:
-                            await r.aclose()
-                            await client.aclose()
-                    return StreamingResponse(google_stream_generator(), media_type="text/event-stream")
-                else:
-                    google_breaker.record_failure()
-                    logger.warning(f"Direct Google stream call failed with status {r.status_code}. Falling back to default LiteLLM path.")
-                    await r.aclose()
-                    await client.aclose()
-            else:
-                client = httpx.AsyncClient(timeout=3600.0)
-                r = await client.post(
-                    f"{google_api_base}/chat/completions",
-                    json=google_body,
-                    headers=google_headers
-                )
-                await client.aclose()
-                if r.status_code == 200:
-                    resp_json = r.json()
-                    usage = resp_json.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(google_body)) // 4)
-                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
-                    latency_ms = (time.time() - start_time) * 1000.0
-                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, google_model, latency_ms, route="google_oauth_direct")
-                    return resp_json
-                else:
-                    google_breaker.record_failure()
-                    logger.warning(f"Direct Google completion call failed with status {r.status_code}. Falling back to default LiteLLM path.")
-        except Exception as e:
-            google_breaker.record_failure()
-            logger.error(f"Direct Google call encountered exception: {e}. Falling back to default LiteLLM path.")
+            logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
+
+    # --- OLLAMA (via LiteLLM) ---
+    # LiteLLM's ollama_chat provider handles the native Ollama API call.
+    # We just proxy to LiteLLM with model=ollama-deepseek-v4-pro.
+    # LiteLLM's fallback chain: ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto.
+    if should_try_ollama:
+        target_model = "ollama-deepseek-v4-pro"
+        logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
     # Resolve backend connection parameters
     backend_conf = backends.get(target_model)

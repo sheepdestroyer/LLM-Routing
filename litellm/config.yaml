@@ -46,6 +46,8 @@ litellm_settings:
   - agent-advanced-core:
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
+  - ollama-deepseek-v4-pro:
+    - agent-advanced-core
 model_list:
 - litellm_params:
     model: openrouter/openrouter/auto
@@ -65,6 +67,18 @@ model_list:
     model: openai/nomic-embed-text-v1.5-Q4_K_M
     request_timeout: 30
   model_name: local-nomic-embed
+
+# ================================================================================
+# OLLAMA PAID TIER — ollama.com via LiteLLM's native ollama_chat provider.
+# LiteLLM calls https://api.ollama.com/api/chat with Bearer auth (OLLAMA_API_KEY).
+# Fallback: ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto.
+# ================================================================================
+- model_name: ollama-deepseek-v4-pro
+  litellm_params:
+    model: ollama_chat/deepseek-v4-pro
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    request_timeout: 120
 
 # ================================================================================
 # AGENT TIER DEPLOYMENTS — safety-net entries (one per tier)

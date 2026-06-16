@@ -25,7 +25,9 @@ classification_rules:
 #    agent-medium-core    — moderate logic, light refactoring
 #    agent-complex-core   — multi-file tracing, algorithmic
 #    agent-reasoning-core — heavy reasoning, deep multi-step analysis
-#    agent-advanced-core  — system architecture, deep reasoning (agy proxy tier)
+#    agent-advanced-core  — system architecture, deep reasoning
+#  Premium backends (also proxied through LiteLLM):
+#    ollama-deepseek-v4-pro — paid Ollama.com tier (LiteLLM ollama_chat provider)
 #  + openrouter-auto      — catch-all fallback (also routed via LiteLLM)
 #  The api_key placeholder is resolved at runtime by main.py:788.
 backends:
@@ -42,6 +44,9 @@ backends:
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "agent-advanced-core"
+    api_base: "http://127.0.0.1:4000/v1"
+    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+  - name: "ollama-deepseek-v4-pro"
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "openrouter-auto"

@@ -155,12 +155,16 @@ sequenceDiagram
 
 ### Routing Modes
 
-The gateway supports two routing modes controlled by the `model` field:
+The gateway supports multiple routing modes controlled by the `model` field:
 
 | Model | Behavior |
 |-------|----------|
-| `llm-routing-auto` | **Full classifier pipeline**: the local Qwen 2B model analyzes prompt complexity and routes to the optimal tier. Recommended default for most clients. |
-| `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses the classifier entirely. The request goes straight to LiteLLM with that tier name, which handles its own internal fallback chain. Use when you know exactly what complexity level you need. |
+| `llm-routing-auto-free` | **Full classifier pipeline** → routes to best free tier. Recommended default. |
+| `llm-routing-auto-agy` | **Classifier + agy**: if classified as advanced, tries agy (Gemini/Claude) first, then falls back to LiteLLM. |
+| `llm-routing-auto-ollama` | **Classifier + Ollama**: runs classifier, then tries Ollama deepseek-v4-pro (via LiteLLM), falls back to LiteLLM free tiers. |
+| `llm-routing-agy` | **Direct agy**: skips classifier, goes straight to agy proxy (Gemini/Claude) → LiteLLM fallback. |
+| `llm-routing-ollama` | **Direct Ollama**: skips classifier, goes straight to Ollama deepseek-v4-pro (via LiteLLM) → LiteLLM fallback. |
+| `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses classifier, goes straight to LiteLLM with that tier name. |
 | Anything else | Returns HTTP 400 with the list of available models |
 
 ---
@@ -209,15 +213,18 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 **Backend targets dispatched by the router** (all resolve through LiteLLM on port 4000):
 
-| Backend name | Complexity level | Fallback chain in LiteLLM | agy trigger |
-|:---|:---|:---|---:|
-| `llm-routing-auto` | **Auto** — classifier picks best tier | Full cascade through chosen tier | If classifier picks advanced |
-| `agent-simple-core` | Trivial syntax fixes / boilerplate | medium → complex → reasoning → advanced → openrouter-auto | — |
-| `agent-medium-core` | Moderate logic / light refactoring | complex → reasoning → advanced → openrouter-auto | — |
-| `agent-complex-core` | Multi-file tracing / algorithmic / complex refactoring | reasoning → advanced → openrouter-auto | — |
-| `agent-reasoning-core` | Heavy reasoning / advanced architecture / deep multi-step analysis | advanced → openrouter-auto | — |
-| `agent-advanced-core` | System architecture / extremely complex cross-file reasoning | openrouter-auto | **Yes** — delegates to agy proxy (§9a) |
-| `openrouter-auto` | LiteLLM internal fallback terminus | n/a | — |
+| Model name | Classifier | Premium backend | Fallback |
+|:---|---:|:---|:---|
+| `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier |
+| `llm-routing-auto-agy` | ✅ | agy (if advanced tier) | LiteLLM with classified tier |
+| `llm-routing-auto-ollama` | ✅ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
+| `llm-routing-agy` | ❌ | agy (Gemini/Claude) | LiteLLM agent-advanced-core |
+| `llm-routing-ollama` | ❌ | Ollama deepseek-v4-pro (via LiteLLM) | LiteLLM agent-advanced-core |
+| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto |
+| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain |
+| `agent-complex-core` | ❌ | — | LiteLLM fallback chain |
+| `agent-medium-core` | ❌ | — | LiteLLM fallback chain |
+| `agent-simple-core` | ❌ | — | LiteLLM fallback chain |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
@@ -346,7 +353,7 @@ To test the zero-shot router classification and complete gateway execution, run 
 curl -s http://127.0.0.1:5000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "llm-routing-auto",
+    "model": "llm-routing-auto-free",
     "messages": [
       {"role": "user", "content": "Write a quick hello world in Python."}
     ]
@@ -485,14 +492,11 @@ This design preserves the limited daily Cloud Code Assist quota (see below) for 
 reasoning tasks that benefit from Gemini/Claude, while all other development tasks go through the
 cost-free OpenRouter fallback chain.
 
-Routing flow:
+Routing flow (via `llm-routing-agy` and `llm-routing-auto-agy`):
 ```
-Triage classifier
-  ├─ agent-simple-core    → LiteLLM (OpenRouter)
-  ├─ agent-medium-core    → LiteLLM (OpenRouter)
-  ├─ agent-complex-core   → LiteLLM (OpenRouter)
-  ├─ agent-reasoning-core → LiteLLM (OpenRouter)
-  └─ agent-advanced-core  → agy proxy (Gemini/Claude) → fallback LiteLLM
+llm-routing-agy         → agy proxy (Gemini/Claude) → fallback LiteLLM
+llm-routing-auto-agy    → classifier → if advanced: agy proxy → fallback LiteLLM
+                          if other tier: LiteLLM directly
 ```
 
 ### Authentication: System Keyring (not oauth_creds.json)
@@ -612,6 +616,39 @@ To allow Goose (and other agents) to store, list, and delete persistent preferen
 * **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
 * **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
+
+## 9c. Ollama Proxy Integration (via LiteLLM ollama_chat)
+
+The router supports paid Ollama.com models through LiteLLM's native `ollama_chat` provider.
+LiteLLM calls `https://api.ollama.com/api/chat` with Bearer authentication using the
+`OLLAMA_API_KEY` environment variable.
+
+### Available Models
+
+| Model | Ollama tag | Purpose |
+|-------|-----------|---------|
+| `ollama-deepseek-v4-pro` | `deepseek-v4-pro` | Primary paid tier — 1.6T parameter model |
+
+Additional Ollama.com models can be added to `litellm/config.yaml` using the same
+`ollama_chat/` prefix pattern.
+
+### Fallback Chain
+
+```
+ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto
+```
+
+If Ollama.com is rate-limited or unavailable, LiteLLM automatically falls back through
+the agent tier cascade to OpenRouter's free model pool.
+
+### Routing Modes
+
+| Model | Behavior |
+|-------|----------|
+| `llm-routing-ollama` | Direct — skips classifier, goes straight to Ollama deepseek-v4-pro |
+| `llm-routing-auto-ollama` | Auto — classifier runs first, then Ollama deepseek-v4-pro is tried regardless of tier |
+
+Both modes ultimately fall back to LiteLLM's agent tier cascade if Ollama fails.
 
 ## 9d. Hermes Cron Jobs & Health Check Alerting
 

@@ -46,6 +46,8 @@ spec:
       value: http://127.0.0.1:3001
     - name: LITELLM_MASTER_KEY
       value: sk-lit...33bf
+    - name: OLLAMA_API_KEY
+      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
     image: ghcr.io/berriai/litellm:v1.88.0
     livenessProbe:
       exec:
@@ -96,6 +98,8 @@ spec:
       value: sk-lf-...3b49
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
+    - name: OLLAMA_API_KEY
+      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
     image: localhost/llm-triage-router:latest
     livenessProbe:
       exec:
