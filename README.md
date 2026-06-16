@@ -41,6 +41,7 @@ graph TD
         LiteLLM -->|Tier 2 - Paid Ollama| OllamaTier["ollama_chat Provider\n(deepseek-v4-pro)"]
         OpenRouter -.->|API Call| OpenRouterAPI["api.openrouter.ai"]
         OllamaTier -.->|API Call| OllamaAPI["api.ollama.com"]
+        LiteLLM -.->|"DISABLED (23GB RAM)"| QwenLocal["Local Qwen 35B\n(qwen-35b-q4ks)\n(llama.cpp :8080)"]
     end
 
     subgraph Observability ["Observability Backend (Langfuse v3)"]
@@ -62,6 +63,7 @@ graph TD
     style ClickHouse fill:#f0f0e0,stroke:#c9c985,stroke-width:2px;
     style Minio fill:#e0f0e0,stroke:#85c285,stroke-width:2px;
     style RedisLF fill:#ffe0e0,stroke:#e08585,stroke-width:2px;
+    style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px,stroke-dasharray:5;
 ```
 
 > **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
