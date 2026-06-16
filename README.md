@@ -48,7 +48,7 @@ graph TD
         Langfuse -->|Metadata| Postgres[("PostgreSQL 18\n(Port 5432)")]
         Langfuse -->|Traces| ClickHouse[("ClickHouse\n(Port 8123/9000)")]
         Langfuse -->|Events| Minio[("Minio S3\n(Port 9002)")]
-        Langfuse -->|Job Queues| RedisLF[("Redis-LF\n(Port 6380)")]
+        Langfuse -->|Job Queues| ValkeyLF[("Valkey-LF\n(Port 6380)")]
     end
 
     style Client fill:#ececff,stroke:#9393c9,stroke-width:2px;
@@ -62,7 +62,7 @@ graph TD
     style Postgres fill:#fbf2fa,stroke:#d5a6bd,stroke-width:2px;
     style ClickHouse fill:#f0f0e0,stroke:#c9c985,stroke-width:2px;
     style Minio fill:#e0f0e0,stroke:#85c285,stroke-width:2px;
-    style RedisLF fill:#ffe0e0,stroke:#e08585,stroke-width:2px;
+    style ValkeyLF fill:#ffe0e0,stroke:#e08585,stroke-width:2px;
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
@@ -81,7 +81,7 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | **llm-triage-router** | Python `urllib` GET `/dashboard` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
-| **langfuse-redis** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
+| **valkey-lf** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
 | **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3001/` every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep -f langfuse-worker` every 15s | — |
 | **minio-s3** | TCP socket check on port 9002 every 15s | Same, every 10s |
@@ -209,7 +209,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
-├── redis-lf-data/       # [Git Ignored] Persistent job queues for Langfuse v3
+├── valkey-lf-data/      # [Git Ignored] Persistent job queues for Langfuse v3
 ├── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
 ├── test_agy_tiers.py    # agy proxy model tier test suite
 └── test_classifier_accuracy.py # Classifier accuracy benchmark
@@ -316,7 +316,7 @@ Your output should display:
 * `llm-triage-router` (FastAPI entry point on :5000)
 * `postgres-db` (PostgreSQL 18 + pgvector on :5432)
 * `clickhouse-db` (ClickHouse for Langfuse v3 traces)
-* `langfuse-redis` (Redis for Langfuse v3 BullMQ on :6380)
+* `valkey-lf` (Valkey for Langfuse v3 BullMQ on :6380)
 * `langfuse-web` (Langfuse v3 web UI on :3001)
 * `langfuse-worker` (Langfuse v3 background job processor)
 * `minio-s3` (S3-compatible storage for Langfuse v3 events on :9001/:9002)
@@ -461,7 +461,7 @@ Langfuse 3.x requires an **S3-compatible object store** for event upload persist
 | **PostgreSQL** | Metadata — users, projects, API keys, model prices |
 | **ClickHouse** | Traces & observations — high-volume OLAP analytics |
 | **Minio S3** | Event payloads — raw LLM request/response bodies |
-| **Redis-LF** | Job queues — BullMQ for background processing |
+| **Valkey-LF** | Job queues — BullMQ for background processing |
 
 Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity at boot via the `LANGFUSE_S3_EVENT_UPLOAD_*` environment variables.
 
