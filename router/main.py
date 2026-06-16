@@ -348,8 +348,12 @@ async def check_http_endpoint(url: str) -> bool:
     except Exception:
         return False
 
-async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str, float, bool, str]:
-    """Queries the local fast Qwen instance to classify request complexity with TTL caching."""
+async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_trace_id: str | None = None) -> tuple[str, float, bool, str]:
+    """Queries the local fast Qwen instance to classify request complexity with TTL caching.
+    
+    When langfuse_trace_id is provided, the classifier HTTP call is wrapped in a child
+    observation (span) so latency and output appear as a nested span in Langfuse traces.
+    """
     global triage_cache, stats
     
     # Normalize the prompt text for cache mapping
@@ -392,6 +396,23 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 headers = {"Authorization": f"Bearer {router_api_key}"}
                 
                 logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
+
+                # --- Langfuse child span: classifier call ---
+                class_span_obj = None
+                if langfuse_trace_id:
+                    lf_cls = get_langfuse()
+                    if lf_cls:
+                        try:
+                            class_span_obj = lf_cls.start_observation(
+                                trace_context={"trace_id": langfuse_trace_id},
+                                name="classifier-qwen",
+                                input=prompt[:200],
+                                metadata={"model": router_model_name},
+                                level="DEFAULT",
+                            )
+                        except Exception:
+                            pass
+
                 response = await client.post(
                     f"{router_api_base}/chat/completions",
                     json=payload,
@@ -401,6 +422,14 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                 latency = (time.time() - start_time) * 1000.0
                 
                 if response.status_code != 200:
+                    if class_span_obj:
+                        try:
+                            class_span_obj.end(
+                                output={"status": response.status_code, "error": "classification_failed"},
+                                metadata={"latency_ms": latency},
+                            )
+                        except Exception:
+                            pass
                     logger.error(f"Classification failed with status {response.status_code}: {response.text}")
                     return "agent-advanced-core", latency, False, "advanced (fallback)"
                     
@@ -420,6 +449,16 @@ async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str
                     decision = content_clean
                 else:
                     decision = "agent-advanced-core"
+                
+                # Finalize classifier child span
+                if class_span_obj:
+                    try:
+                        class_span_obj.end(
+                            output={"tier": decision, "raw": raw_result},
+                            metadata={"latency_ms": latency},
+                        )
+                    except Exception:
+                        pass
                     
                 # Store in cache
                 triage_cache[normalized_prompt] = (decision, time.time())
@@ -929,11 +968,29 @@ async def chat_completions(request: Request):
 
     client_model = body.get("model", "llm-routing-auto-free")
 
+    # --- Langfuse parent trace: create early so child spans can reference it ---
+    langfuse_trace_id = None
+    parent_obs = None
+    lf = get_langfuse()
+    if lf:
+        try:
+            langfuse_trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
+            parent_obs = lf.start_observation(
+                trace_context={"trace_id": langfuse_trace_id},
+                name=f"triage-{client_model}",
+                input=last_user_message[:200],
+                level="DEFAULT",
+            )
+        except Exception as e:
+            logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
+            langfuse_trace_id = None
+            parent_obs = None
+
     if client_model in AUTO_MODELS:
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
         target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
-            last_user_message, bypass_cache=bypass_cache
+            last_user_message, bypass_cache=bypass_cache, langfuse_trace_id=langfuse_trace_id
         )
         logger.info(f"Triage decision (auto): Routing to -> '{target_model}'")
     elif client_model in DIRECT_TIERS:
@@ -968,29 +1025,19 @@ async def chat_completions(request: Request):
         stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
     save_persisted_stats()
 
-    # Push classification trace to Langfuse (v4 API: start_observation)
-    langfuse_trace_id = None
-    lf = get_langfuse()
-    if lf:
+    # Update the parent Langfuse observation with classification results
+    if parent_obs:
         try:
-            # Create a trace ID first, then start an observation with it
-            trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
-            lf.start_observation(
-                trace_context={"trace_id": trace_id},
-                name=f"triage-{target_model}",
-                input=last_user_message[:200],
+            parent_obs.update(
                 output={"tier": target_model, "raw": raw_classification},
                 metadata={
                     "triage_latency_ms": round(triage_latency, 2),
                     "cache_hit": was_cache_hit,
                     "total_requests": stats["total_requests"],
                 },
-                level="DEFAULT",
             )
-            lf.flush()
-            langfuse_trace_id = trace_id
         except Exception as e:
-            logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
+            logger.warning(f"Langfuse trace update failed (non-fatal): {e}")
 
     # --- PREMIUM PROXY ROUTES ---
     # agy: triggered unconditionally for llm-routing-agy (direct).
@@ -1042,6 +1089,22 @@ async def chat_completions(request: Request):
                 session_id = hashlib.md5(fingerprint.encode()).hexdigest()
 
             if last_prompt:
+                # --- Langfuse child span: agy proxy ---
+                agy_span_obj = None
+                if langfuse_trace_id:
+                    lf_agy = get_langfuse()
+                    if lf_agy:
+                        try:
+                            agy_span_obj = lf_agy.start_observation(
+                                trace_context={"trace_id": langfuse_trace_id},
+                                name="agy-proxy",
+                                input=last_prompt[:200],
+                                metadata={"tier": target_model},
+                                level="DEFAULT",
+                            )
+                        except Exception:
+                            pass
+
                 agy_response = await try_agy_proxy(
                     prompt=last_prompt,
                     messages=messages,
@@ -1060,6 +1123,16 @@ async def chat_completions(request: Request):
                         model_name, latency_ms, route="google_oauth_direct"
                     )
                     logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
+
+                    # Finalize agy span
+                    if agy_span_obj:
+                        try:
+                            agy_span_obj.end(
+                                output={"model": model_name, "tokens": completion_tokens},
+                                metadata={"latency_ms": latency_ms, "tier": target_model},
+                            )
+                        except Exception:
+                            pass
 
                     if body.get("stream", False):
                         content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -1101,8 +1174,24 @@ async def chat_completions(request: Request):
                     else:
                         return agy_response
         except ImportError:
+            if agy_span_obj:
+                try:
+                    agy_span_obj.end(
+                        output={"error": "module_not_available"},
+                        metadata={"status": "skipped"},
+                    )
+                except Exception:
+                    pass
             logger.warning("agy_proxy module not available, falling back to LiteLLM")
         except Exception as e:
+            if agy_span_obj:
+                try:
+                    agy_span_obj.end(
+                        output={"error": str(e)[:200]},
+                        metadata={"status": "failed"},
+                    )
+                except Exception:
+                    pass
             logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
 
     # --- OLLAMA (via LiteLLM) ---
@@ -1133,6 +1222,22 @@ async def chat_completions(request: Request):
     # Router sends model=agent-complex-core (or agent-simple-core)
     # LiteLLM maps this to Nemotron → Kimi → GPT-OSS → local Qwen
     logger.info(f"Proxying to LiteLLM as model={target_model}")
+
+    # --- Langfuse child span: LiteLLM proxy ---
+    litellm_span_obj = None
+    if langfuse_trace_id:
+        lf_litellm = get_langfuse()
+        if lf_litellm:
+            try:
+                litellm_span_obj = lf_litellm.start_observation(
+                    trace_context={"trace_id": langfuse_trace_id},
+                    name="litellm-proxy",
+                    input=target_model,
+                    metadata={"model": target_model},
+                    level="DEFAULT",
+                )
+            except Exception:
+                pass
 
     # Set up outgoing proxy request
     client = httpx.AsyncClient(timeout=3600.0)
@@ -1167,6 +1272,15 @@ async def chat_completions(request: Request):
                         stats["total_proxy_time_ms"] += proxy_latency
                         stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                         record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
+                        # Finalize LiteLLM span (streaming path)
+                        if litellm_span_obj:
+                            try:
+                                litellm_span_obj.end(
+                                    output={"model": model_name, "stream": True},
+                                    metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
+                                )
+                            except Exception:
+                                pass
                     except Exception as ex:
                         logger.error(f"Stream error: {ex}")
                     finally:
@@ -1191,6 +1305,15 @@ async def chat_completions(request: Request):
                 prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
                 completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
                 record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
+                # Finalize LiteLLM span (non-streaming path)
+                if litellm_span_obj:
+                    try:
+                        litellm_span_obj.end(
+                            output={"model": model_name, "tokens": completion_tokens},
+                            metadata={"latency_ms": proxy_latency},
+                        )
+                    except Exception:
+                        pass
                 return resp_json
             else:
                 logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
