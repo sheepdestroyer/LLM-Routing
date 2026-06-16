@@ -191,6 +191,13 @@ async def sync_adaptive_router_roster(master_key: str):
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
         if not mid or (len(mid) > 64 and "/" not in mid):
             continue
+
+        # 1. Enforce Tool/Function Calling Support
+        supported_params = m.get('supported_parameters') or []
+        if 'tools' not in supported_params:
+            logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
+            continue
+
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
             try:
