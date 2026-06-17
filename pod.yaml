@@ -127,6 +127,8 @@ spec:
     volumeMounts:
     - mountPath: /config/router_dir
       name: router-config
+    - mountPath: /app/data
+      name: dataset-data
     - mountPath: /config/gemini_auth
       name: gemini-secrets
     - mountPath: /root/.gemini
@@ -466,3 +468,6 @@ spec:
   - hostPath:
       path: /home/gpav/Vrac/LAB/AI/LLM-Routing
     name: env-file
+  - hostPath:
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/data
+    name: dataset-data

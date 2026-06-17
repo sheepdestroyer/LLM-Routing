@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Classifier Dataset Visualizer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; }
+.header { background: #16213e; padding: 12px 20px; border-bottom: 2px solid #0f3460; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+.header h1 { font-size: 1.2em; color: #e94560; }
+.stats { display: flex; gap: 15px; flex-wrap: wrap; }
+.stat { background: #0f3460; padding: 6px 14px; border-radius: 6px; font-size: 0.85em; }
+.stat .val { color: #e94560; font-weight: bold; }
+.controls { background: #16213e; padding: 10px 20px; border-bottom: 1px solid #0f3460; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.controls button, .controls select { background: #0f3460; color: #e0e0e0; border: 1px solid #1a1a4e; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+.controls button:hover { background: #1a1a5e; }
+.controls button.active { background: #e94560; border-color: #e94560; }
+.main { display: flex; height: calc(100vh - 100px); }
+.list { width: 380px; min-width: 300px; overflow-y: auto; border-right: 1px solid #0f3460; background: #1a1a2e; }
+.list-item { padding: 10px 14px; border-bottom: 1px solid #0f3460; cursor: pointer; font-size: 0.82em; }
+.list-item:hover { background: #16213e; }
+.list-item.selected { background: #0f3460; border-left: 3px solid #e94560; }
+.list-item .id { color: #888; font-size: 0.75em; }
+.list-item .snippet { margin: 4px 0; color: #ccc; max-height: 2.4em; overflow: hidden; }
+.list-item .tags { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.tag { padding: 2px 8px; border-radius: 3px; font-size: 0.72em; font-weight: 600; }
+.tag.agree { background: #1a4a1a; color: #4caf50; }
+.tag.conflict { background: #4a1a1a; color: #f44336; }
+.tag.human { background: #1a1a4a; color: #64b5f6; }
+.detail { flex: 1; overflow-y: auto; padding: 20px; }
+.prompt-box { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.prompt-box h3 { color: #888; font-size: 0.8em; margin-bottom: 8px; text-transform: uppercase; }
+.prompt-text { white-space: pre-wrap; word-break: break-word; font-size: 0.9em; line-height: 1.5; max-height: 300px; overflow-y: auto; }
+.evals { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.eval-card { flex: 1; min-width: 200px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 14px; }
+.eval-card h3 { font-size: 0.75em; color: #888; margin-bottom: 8px; text-transform: uppercase; }
+.eval-card .tier { font-size: 1em; font-weight: bold; padding: 4px 0; }
+.eval-card.match { border-color: #4caf50; background: #0a2a0a; }
+.eval-card.mismatch { border-color: #f44336; background: #2a0a0a; }
+.human-review { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; }
+.human-review h3 { font-size: 0.8em; color: #888; margin-bottom: 10px; text-transform: uppercase; }
+.tier-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.tier-btn { padding: 8px 14px; border: 1px solid #0f3460; border-radius: 4px; cursor: pointer; font-size: 0.8em; background: #1a1a2e; color: #ccc; transition: all 0.15s; }
+.tier-btn:hover { background: #0f3460; }
+.tier-btn.selected-human { border-color: #64b5f6; background: #1a1a4a; color: #64b5f6; }
+.tier-btn.llm-label { border-style: dashed; border-color: #ff9800; }
+.tier-btn.classifier-label { border-style: dashed; border-color: #9c27b0; }
+.legend { display: flex; gap: 12px; margin-top: 8px; font-size: 0.75em; color: #888; }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.legend .dot { width: 10px; height: 10px; border-radius: 2px; border: 1px dashed; }
+.legend .dot.llm { border-color: #ff9800; }
+.legend .dot.cls { border-color: #9c27b0; }
+.legend .dot.hum { border-color: #64b5f6; background: #1a1a4a; }
+.empty-state { text-align: center; padding: 40px; color: #888; }
+.empty-state h2 { font-size: 1.1em; margin-bottom: 8px; }
+.annotation-bar { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+.annotation-bar input { flex: 1; background: #0f3460; border: 1px solid #1a1a4e; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 0.85em; }
+.annotation-bar button { background: #e94560; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
+.annotation-bar button.save { background: #4caf50; }
+.progress-bar { height: 4px; background: #0f3460; border-radius: 2px; margin-top: 8px; }
+.progress-fill { height: 100%; background: #64b5f6; border-radius: 2px; transition: width 0.3s; }
+.filter-count { color: #e94560; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📊 Dataset Visualizer</h1>
+  <div class="stats">
+    <div class="stat">Total: <span class="val" id="stat-total">0</span></div>
+    <div class="stat">Agree: <span class="val" id="stat-agree">0</span></div>
+    <div class="stat">Conflict: <span class="val" id="stat-conflict">0</span></div>
+    <div class="stat">Reviewed: <span class="val" id="stat-reviewed">0</span></div>
+  </div>
+</div>
+<div class="controls">
+  <button id="btn-all" class="active" onclick="setFilter('all')">All</button>
+  <button id="btn-conflict" onclick="setFilter('conflict')">⚡ Conflicts</button>
+  <button id="btn-agree" onclick="setFilter('agree')">✓ Agreements</button>
+  <button id="btn-unreviewed" onclick="setFilter('unreviewed')">✎ Unreviewed</button>
+  <span style="margin-left:auto;color:#888;font-size:0.8em">Showing <span class="filter-count" id="filter-count">0</span></span>
+  <button onclick="exportAnnotations()" style="background:#4caf50;border-color:#4caf50;">💾 Export Annotations</button>
+</div>
+<div class="main">
+  <div class="list" id="list"></div>
+  <div class="detail" id="detail">
+    <div class="empty-state">
+      <h2>Select a prompt from the list</h2>
+      <p>LLM evaluation vs classifier prediction side by side</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// Configuration
+const TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'];
+const TIER_COLORS = {
+  'agent-simple-core': '#4caf50',
+  'agent-medium-core': '#2196f3',
+  'agent-complex-core': '#ff9800',
+  'agent-reasoning-core': '#9c27b0',
+  'agent-advanced-core': '#f44336',
+};
+
+let dataset = [];
+let benchmark = {};
+let annotations = {};
+let currentFilter = 'all';
+let selectedIdx = -1;
+
+// Load data
+async function init() {
+  try {
+    const resp = await fetch('data/classified_dataset.json');
+    dataset = (await resp.json()).prompts;
+  } catch(e) {
+    console.warn('Dataset not found, trying local path...');
+    dataset = [];
+  }
+  
+  // Load benchmark results if available
+  try {
+    const resp = await fetch('data/benchmark_results.json');
+    benchmark = await resp.json();
+    // Map benchmark results to dataset by index
+  } catch(e) {
+    console.warn('No benchmark results yet — classifier column will show "pending"');
+  }
+  
+  // Load annotations
+  try {
+    const resp = await fetch('data/annotations.json');
+    annotations = await resp.json();
+  } catch(e) {
+    annotations = {};
+  }
+  
+  render();
+}
+
+function getBenchmarkPrediction(idx) {
+  if (benchmark.details && benchmark.details[idx]) {
+    return benchmark.details[idx].predicted;
+  }
+  return null;
+}
+
+function getAnnotation(idx) {
+  return annotations[idx] || null;
+}
+
+function isConflict(idx) {
+  const pred = getBenchmarkPrediction(idx);
+  if (!pred || pred.startsWith('ERROR')) return null; // unknown
+  return pred !== dataset[idx].tier;
+}
+
+function setFilter(filter) {
+  currentFilter = filter;
+  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + filter).classList.add('active');
+  render();
+}
+
+function getFilteredIndices() {
+  let indices = dataset.map((_, i) => i);
+  
+  if (currentFilter === 'conflict') {
+    indices = indices.filter(i => isConflict(i) === true);
+  } else if (currentFilter === 'agree') {
+    indices = indices.filter(i => isConflict(i) === false);
+  } else if (currentFilter === 'unreviewed') {
+    indices = indices.filter(i => !getAnnotation(i));
+  }
+  
+  return indices;
+}
+
+function render() {
+  const filtered = getFilteredIndices();
+  document.getElementById('filter-count').textContent = filtered.length;
+  
+  // Stats
+  let agree = 0, conflict = 0, reviewed = 0, unknown = 0;
+  dataset.forEach((_, i) => {
+    const c = isConflict(i);
+    if (c === true) conflict++;
+    else if (c === false) agree++;
+    else unknown++;
+    if (getAnnotation(i)) reviewed++;
+  });
+  
+  document.getElementById('stat-total').textContent = dataset.length;
+  document.getElementById('stat-agree').textContent = agree;
+  document.getElementById('stat-conflict').textContent = conflict;
+  document.getElementById('stat-reviewed').textContent = reviewed;
+  
+  // List
+  const listEl = document.getElementById('list');
+  listEl.innerHTML = filtered.map(i => {
+    const p = dataset[i];
+    const pred = getBenchmarkPrediction(i);
+    const ann = getAnnotation(i);
+    const conflict = isConflict(i);
+    
+    let tags = '';
+    if (conflict === true) tags += '<span class="tag conflict">CONFLICT</span>';
+    else if (conflict === false) tags += '<span class="tag agree">AGREE</span>';
+    else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
+    if (ann) tags += '<span class="tag human">REVIEWED</span>';
+    
+    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})">
+      <div class="id">#${i} · LLM: ${p.tier.replace('agent-','')}${pred ? ' · CLS: ' + pred.replace('agent-','') : ''}</div>
+      <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
+      <div class="tags">${tags}</div>
+    </div>`;
+  }).join('');
+  
+  if (selectedIdx >= 0) {
+    renderDetail(selectedIdx);
+  }
+}
+
+function selectPrompt(idx) {
+  selectedIdx = idx;
+  render();
+}
+
+function renderDetail(idx) {
+  const p = dataset[idx];
+  const pred = getBenchmarkPrediction(idx);
+  const ann = getAnnotation(idx);
+  const conflict = isConflict(idx);
+  
+  let predCardClass = 'eval-card';
+  let llmCardClass = 'eval-card';
+  if (conflict === true) {
+    predCardClass += ' mismatch';
+    llmCardClass += ' mismatch';
+  } else if (conflict === false) {
+    predCardClass += ' match';
+    llmCardClass += ' match';
+  }
+  
+  const effectiveTier = ann ? ann.tier : (conflict === false ? p.tier : '?');
+  
+  let tierBtns = TIERS.map(tier => {
+    let cls = 'tier-btn';
+    if (ann && ann.tier === tier) cls += ' selected-human';
+    if (p.tier === tier && !ann) cls += ' llm-label';
+    if (pred === tier) cls += ' classifier-label';
+    return `<button class="${cls}" onclick="annotate(${idx}, '${tier}')">${tier.replace('agent-','')}</button>`;
+  }).join('');
+  
+  document.getElementById('detail').innerHTML = `
+    <div class="prompt-box">
+      <h3>Prompt #${idx} · ${p.prompt.length} chars</h3>
+      <div class="prompt-text">${escapeHtml(p.prompt)}</div>
+    </div>
+    
+    <div class="evals">
+      <div class="${llmCardClass}">
+        <h3>🤖 LLM Evaluation (kanban worker)</h3>
+        <div class="tier" style="color:${TIER_COLORS[p.tier]}">${p.tier}</div>
+        <div style="font-size:0.7em;color:#888;margin-top:4px">original dataset label</div>
+      </div>
+      <div class="${predCardClass}">
+        <h3>🧠 Classifier Prediction (gemma4-26a4b)</h3>
+        <div class="tier" style="color:${pred ? TIER_COLORS[pred] || '#888' : '#888'}">${pred || 'pending...'}</div>
+        <div style="font-size:0.7em;color:#888;margin-top:4px">${conflict === true ? '⚠ Differs from LLM label' : conflict === false ? '✓ Matches LLM label' : 'no data yet'}</div>
+      </div>
+    </div>
+    
+    <div class="human-review">
+      <h3>✎ Human Review</h3>
+      <div class="tier-buttons">${tierBtns}</div>
+      <div class="legend">
+        <span><span class="dot llm"></span> LLM label</span>
+        <span><span class="dot cls"></span> Classifier pred</span>
+        <span><span class="dot hum"></span> Human selection</span>
+      </div>
+      <div class="annotation-bar">
+        <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? ann.note || '' : ''}">
+        <button onclick="saveNote(${idx})">Save Note</button>
+      </div>
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${ann.tier}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+    </div>
+  `;
+}
+
+function annotate(idx, tier) {
+  annotations[idx] = { tier, note: annotations[idx]?.note || '', ts: new Date().toISOString() };
+  saveAnnotations();
+  render();
+}
+
+function saveNote(idx) {
+  const note = document.getElementById('note-input').value;
+  if (!annotations[idx]) {
+    annotations[idx] = { tier: dataset[idx].tier, note: '', ts: new Date().toISOString() };
+  }
+  annotations[idx].note = note;
+  saveAnnotations();
+}
+
+function clearAnnotation(idx) {
+  delete annotations[idx];
+  saveAnnotations();
+  render();
+}
+
+function saveAnnotations() {
+  // Save to localStorage and trigger download
+  localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
+}
+
+function exportAnnotations() {
+  const blob = new Blob([JSON.stringify(annotations, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'annotations.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  
+  // Also try to save via POST if a save endpoint exists
+  fetch('/dashboard/save-annotations', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(annotations),
+  }).catch(() => {});
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Restore from localStorage
+const saved = localStorage.getItem('classifier-annotations');
+if (saved) {
+  try { annotations = JSON.parse(saved); } catch(e) {}
+}
+
+init();
+</script>
+</body>
+</html>

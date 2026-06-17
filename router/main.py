@@ -12,6 +12,8 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from circuit_breaker import get_breaker
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
@@ -157,11 +159,24 @@ def _atomic_write_json_sync(path: str, data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    f = None
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
+        f = os.fdopen(fd, "w")
+        json.dump(data, f, indent=2)
+        f.close()
+        f = None
         os.replace(tmp_path, path)
     except Exception:
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        else:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
         try:
             os.unlink(tmp_path)
         except Exception:
@@ -196,9 +211,9 @@ async def save_persisted_stats(force=False):
     if not force and (now - _last_stats_save < 2.0):
         return
 
+    _last_stats_save = now  # Set immediately to prevent concurrent writes during await
     try:
         await _atomic_write_json_async(STATS_JSON_PATH, stats)
-        _last_stats_save = now  # only advance on successful write
     except Exception as e:
         logger.error(f"Failed to persist stats to disk: {e}")
 
@@ -2499,6 +2514,33 @@ async def get_dashboard():
     </html>
     """
     return html_content
+
+# --- Static files (visualizer, data files) ---
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+
+@app.get("/visualizer", response_class=HTMLResponse)
+async def get_visualizer():
+    """Serve the dataset visualizer for human review."""
+    vis_path = STATIC_DIR / "visualizer.html"
+    if vis_path.exists():
+        return HTMLResponse(vis_path.read_text())
+    return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
+
+@app.post("/dashboard/save-annotations")
+async def save_annotations(request: Request):
+    """Save human review annotations to disk."""
+    try:
+        body = await request.json()
+        ann_path = DATA_DIR / "annotations.json"
+        ann_path.write_text(json.dumps(body, indent=2, ensure_ascii=False))
+        return JSONResponse({"status": "ok", "saved": len(body)})
+    except Exception as e:
+        logger.error(f"Failed to save annotations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
