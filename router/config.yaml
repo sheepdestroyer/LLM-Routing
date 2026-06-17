@@ -7,17 +7,19 @@ router:
   router_model:
     api_base: "http://127.0.0.1:8080/v1"
     api_key: "local-token"
-    model: "qwen-2b-routing"
+    model: "gemma4-26a4b-routing"
 
 classification_rules:
   system_prompt: |
-    Analyze the request complexity. Respond with exactly one of:
-    - simple boilerplate: agent-simple-core
-    - moderate complexity: agent-medium-core
-    - deep algorithms: agent-complex-core
-    - heavy reasoning, advanced architecture, deep multi-step analysis: agent-reasoning-core
-    - extremely complex across many files: agent-advanced-core
-    Do not add markdown formatting. Only the model name string.
+    Classify the coding task complexity. Output ONLY the tier name.
+
+    agent-simple-core: trivial one-liners, syntax fixes, single-line edits
+    agent-medium-core: single-function changes, light refactoring, simple tests
+    agent-complex-core: multi-file changes, algorithmic work, data pipelines
+    agent-reasoning-core: deep analysis, architecture decisions, debugging complex systems
+    agent-advanced-core: system-level architecture, cross-cutting concerns, novel design
+
+    Task:
 
 # 5-tier classifier dispatch backends — all proxied through LiteLLM (port 4000).
 #  Tiers (complexity ↑):
@@ -47,6 +49,9 @@ backends:
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "ollama-deepseek-v4-pro"
+    api_base: "http://127.0.0.1:4000/v1"
+    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+  - name: "ollama-deepseek-v4-flash"
     api_base: "http://127.0.0.1:4000/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "openrouter-auto"

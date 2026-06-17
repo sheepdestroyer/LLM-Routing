@@ -396,12 +396,10 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
                 payload = {
                     "model": router_model_name,
                     "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
+                        {"role": "user", "content": system_prompt + prompt}
                     ],
                     "temperature": 0.0,
                     "max_tokens": 15,
-                    "grammar": 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
                 }
                 headers = {"Authorization": f"Bearer {router_api_key}"}
                 
