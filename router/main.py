@@ -5,6 +5,7 @@ import time
 import socket
 import asyncio
 import logging
+import copy
 import tempfile
 import yaml
 import httpx
@@ -152,10 +153,42 @@ def load_persisted_stats():
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
+def _atomic_write_json_sync(path: str, data) -> None:
+    """Synchronously write JSON data to path using atomic temp-file + os.replace."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise
+
+
+async def _atomic_write_json_async(path: str, data) -> None:
+    """Asynchronously write JSON data to path via thread pool executor.
+
+    Deep-copies the data to prevent concurrent modification from the main thread
+    while the executor thread is serializing it.
+    """
+    loop = asyncio.get_running_loop()
+    data_copy = copy.deepcopy(data)
+    await loop.run_in_executor(None, _atomic_write_json_sync, path, data_copy)
+
+
 _last_stats_save = 0.0
 
-def save_persisted_stats(force=False):
-    """Persists current statistics in-memory structure to disk securely."""
+async def save_persisted_stats(force=False):
+    """Persists current statistics in-memory structure to disk securely (non-blocking).
+
+    Offloads the synchronous file write to a thread pool executor so the
+    event loop is not blocked. The 2-second throttle is checked before
+    dispatching.
+    """
     global _last_stats_save
     now = time.monotonic()
 
@@ -164,19 +197,7 @@ def save_persisted_stats(force=False):
         return
 
     try:
-        os.makedirs(os.path.dirname(STATS_JSON_PATH), exist_ok=True)
-        # Atomic write via temp file + os.replace to prevent file corruption
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(STATS_JSON_PATH), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(stats, f, indent=2)
-            os.replace(tmp_path, STATS_JSON_PATH)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            raise
+        await _atomic_write_json_async(STATS_JSON_PATH, stats)
         _last_stats_save = now  # only advance on successful write
     except Exception as e:
         logger.error(f"Failed to persist stats to disk: {e}")
@@ -360,21 +381,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # Flush any buffered stats/timeline on clean shutdown
-    save_persisted_stats(force=True)
+    await save_persisted_stats(force=True)
     try:
         timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-        os.makedirs(os.path.dirname(timeline_path), exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(timeline_path), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(stats["timeline"], f)
-            os.replace(tmp_path, timeline_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            raise
+        await _atomic_write_json_async(timeline_path, stats["timeline"])
     except Exception as e:
         logger.warning(f"Failed to persist timeline on shutdown: {e}")
 
@@ -417,7 +427,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
         if time.time() - cached_time < CACHE_TTL_SECONDS:
             logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
             stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-            save_persisted_stats()
+            await save_persisted_stats()
             return cached_decision, 0.0, True, cached_decision  # was_cache_hit=True
             
     start_time = time.time()
@@ -430,7 +440,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
             if time.time() - cached_time < CACHE_TTL_SECONDS:
                 logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
                 stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-                save_persisted_stats()
+                await save_persisted_stats()
                 return cached_decision, 0.0, True, cached_decision
                 
         try:
@@ -639,7 +649,12 @@ def detect_active_tool(body: dict) -> str:
     return "none"
 
 def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float, route: str = "litellm_fallback"):
-    """Accumulates token counts in memory for active tools and tracks request timelines."""
+    """Accumulates token counts in memory for active tools and tracks request timelines.
+
+    File writes are offloaded to a thread pool executor to avoid blocking the
+    event loop. The 2-second throttle is checked synchronously before
+    dispatching.
+    """
     if tool_name == "none":
         tool_name = "other"
     
@@ -667,25 +682,39 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     stats["timeline"].append(event)
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
-    save_persisted_stats()
-    # Throttle timeline file writes independently of the stats file (max once per 2 s)
+
+    # Fire-and-forget stats write via thread pool (non-blocking)
+    global _last_stats_save
     now = time.monotonic()
+    if now - _last_stats_save >= 2.0:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _atomic_write_json_sync, STATS_JSON_PATH, copy.deepcopy(dict(stats)))
+            _last_stats_save = now
+        except RuntimeError:
+            # No running event loop (e.g. during early startup) — fall back to sync write
+            try:
+                _atomic_write_json_sync(STATS_JSON_PATH, stats)
+                _last_stats_save = now
+            except Exception as e:
+                logger.error(f"Failed to persist stats to disk: {e}")
+        except Exception as e:
+            logger.error(f"Failed to persist stats to disk: {e}")
+
+    # Throttle timeline file writes independently of the stats file (max once per 2 s)
+    timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
     if now - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
         try:
-            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-            os.makedirs(os.path.dirname(timeline_path), exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(timeline_path), suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(stats["timeline"], f)
-                os.replace(tmp_path, timeline_path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-                raise
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _atomic_write_json_sync, timeline_path, copy.deepcopy(list(stats["timeline"])))
             record_tool_usage._last_save = now
+        except RuntimeError:
+            # No running event loop — fall back to sync write
+            try:
+                _atomic_write_json_sync(timeline_path, stats["timeline"])
+                record_tool_usage._last_save = now
+            except Exception as e:
+                logger.warning(f"Failed to persist timeline: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist timeline: {e}")
 
@@ -1093,7 +1122,7 @@ async def chat_completions(request: Request):
         stats["reasoning_requests"] = stats.get("reasoning_requests", 0) + 1
     elif target_model == "agent-advanced-core":
         stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
-    save_persisted_stats()
+    await save_persisted_stats()
 
     # Update the parent Langfuse observation with classification results
     if parent_obs:
