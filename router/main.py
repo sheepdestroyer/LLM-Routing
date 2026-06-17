@@ -5,6 +5,7 @@ import time
 import socket
 import asyncio
 import logging
+import tempfile
 import yaml
 import httpx
 from contextlib import asynccontextmanager
@@ -164,8 +165,18 @@ def save_persisted_stats(force=False):
 
     try:
         os.makedirs(os.path.dirname(STATS_JSON_PATH), exist_ok=True)
-        with open(STATS_JSON_PATH, "w") as f:
-            json.dump(stats, f, indent=2)
+        # Atomic write via temp file + os.replace to prevent file corruption
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(STATS_JSON_PATH), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(stats, f, indent=2)
+            os.replace(tmp_path, STATS_JSON_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
         _last_stats_save = now  # only advance on successful write
     except Exception as e:
         logger.error(f"Failed to persist stats to disk: {e}")
@@ -335,24 +346,37 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(1)
     else:
         logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
-        yield
-        return
-    # Sync free-model roster into LiteLLM (separate try so sync failure doesn't loop)
-    try:
-        await sync_adaptive_router_roster(litellm_master_key)
-    except Exception as e:
-        logger.error(f"Roster sync failed: {e}")
+
+    # Sync free-model roster into LiteLLM (non-fatal if it fails)
+    if litellm_master_key:
+        try:
+            await sync_adaptive_router_roster(litellm_master_key)
+        except Exception as e:
+            logger.error(f"Roster sync failed: {e}")
+
+    # Start background task before yield so it runs during app lifetime
+    asyncio.create_task(push_aggregate_scores())
+
     yield
+
     # Flush any buffered stats/timeline on clean shutdown
     save_persisted_stats(force=True)
     try:
         timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-        with open(timeline_path, "w") as f:
-            json.dump(stats["timeline"], f)
-    except Exception:
-        pass
-    # Start aggregate score-push background task (runs for server lifetime)
-    asyncio.create_task(push_aggregate_scores())
+        os.makedirs(os.path.dirname(timeline_path), exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(timeline_path), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(stats["timeline"], f)
+            os.replace(tmp_path, timeline_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+    except Exception as e:
+        logger.warning(f"Failed to persist timeline on shutdown: {e}")
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
@@ -645,12 +669,23 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
         stats["timeline"].pop(0)
     save_persisted_stats()
     # Throttle timeline file writes independently of the stats file (max once per 2 s)
-    if time.monotonic() - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
+    now = time.monotonic()
+    if now - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
         try:
             timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-            with open(timeline_path, "w") as f:
-                json.dump(stats["timeline"], f)
-            record_tool_usage._last_save = time.monotonic()
+            os.makedirs(os.path.dirname(timeline_path), exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(timeline_path), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(stats["timeline"], f)
+                os.replace(tmp_path, timeline_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+                raise
+            record_tool_usage._last_save = now
         except Exception as e:
             logger.warning(f"Failed to persist timeline: {e}")
 
