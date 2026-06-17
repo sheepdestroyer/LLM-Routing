@@ -156,19 +156,17 @@ _last_stats_save = 0.0
 def save_persisted_stats(force=False):
     """Persists current statistics in-memory structure to disk securely."""
     global _last_stats_save
-    import time
-    now = time.time()
+    now = time.monotonic()
 
     # Throttle disk writes to max once per 2 seconds, unless forced
     if not force and (now - _last_stats_save < 2.0):
         return
 
-    _last_stats_save = now
-
     try:
         os.makedirs(os.path.dirname(STATS_JSON_PATH), exist_ok=True)
         with open(STATS_JSON_PATH, "w") as f:
             json.dump(stats, f, indent=2)
+        _last_stats_save = now  # only advance on successful write
     except Exception as e:
         logger.error(f"Failed to persist stats to disk: {e}")
 
@@ -345,6 +343,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Roster sync failed: {e}")
     yield
+    # Flush any buffered stats/timeline on clean shutdown
+    save_persisted_stats(force=True)
+    try:
+        timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+        with open(timeline_path, "w") as f:
+            json.dump(stats["timeline"], f)
+    except Exception:
+        pass
     # Start aggregate score-push background task (runs for server lifetime)
     asyncio.create_task(push_aggregate_scores())
 
@@ -638,16 +644,15 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
     save_persisted_stats()
-    # Throttled timeline save (handled together with stats save internally,
-    # but we also explicitly throttle this specific file)
-    if time.time() - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
+    # Throttle timeline file writes independently of the stats file (max once per 2 s)
+    if time.monotonic() - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
         try:
             timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
             with open(timeline_path, "w") as f:
                 json.dump(stats["timeline"], f)
-            record_tool_usage._last_save = time.time()
-        except Exception:
-            pass  # disk persistence failure is non-fatal
+            record_tool_usage._last_save = time.monotonic()
+        except Exception as e:
+            logger.warning(f"Failed to persist timeline: {e}")
 
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
