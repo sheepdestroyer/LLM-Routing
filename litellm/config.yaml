@@ -150,11 +150,10 @@ router_settings:
   # Per-error-type cooldown thresholds (overrides allowed_fails for specific errors).
   # Upstream rate limits ("temporarily rate-limited upstream") can last minutes —
   # a 30s cooldown just wastes retries. 300s gives providers time to clear the limit.
-  # RateLimitError: cooldown after 2nd 429 (aggressive — 1 user request = 2 attempts with num_retries=1)
-  # TimeoutError: cooldown after 4th timeout (lenient — timeouts are often transient)
-  # BadRequestError: cooldown after 2nd 400 (context limit, bad params — don't retry)
+  # RateLimitError: cooldown on FIRST 429 (upstream rate limits persist for minutes —
+  # allowing even 1 retry wastes a request against a provider that's still throttling)
   allowed_fails_policy:
-    RateLimitErrorAllowedFails: 1
+    RateLimitErrorAllowedFails: 0
     TimeoutErrorAllowedFails: 3
     BadRequestErrorAllowedFails: 1
 vector_store_settings:
