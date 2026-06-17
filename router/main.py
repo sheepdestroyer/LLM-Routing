@@ -198,6 +198,16 @@ async def sync_adaptive_router_roster(master_key: str):
             logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
             continue
 
+        # 2. Denylist: skip models known to be problematic (stale, wrong context_length, etc.)
+        # llama-3.3-70b reports 131K ctx but actual endpoint enforces 65K → context_limit errors.
+        # All meta-llama and llama-derived models are too old and unreliable on free tier.
+        _denylist_prefixes = (
+            "meta-llama/", "nousresearch/hermes-3-llama",
+        )
+        if any(mid.startswith(p) for p in _denylist_prefixes):
+            logger.info(f"🚫 Skipping {mid} — denylisted (stale/unreliable free tier model)")
+            continue
+
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
             try:
@@ -787,6 +797,12 @@ async def get_best_free_model() -> dict:
                 
                 for m in data:
                     mid = m.get("id", "")
+                    # Denylist: skip stale/unreliable free tier models
+                    _denylist_prefixes = (
+                        "meta-llama/", "nousresearch/hermes-3-llama",
+                    )
+                    if any(mid.startswith(p) for p in _denylist_prefixes):
+                        continue
                     pricing = m.get("pricing", {})
                     # Standard pricing is string or float
                     p_prompt = pricing.get("prompt")
@@ -1249,9 +1265,41 @@ async def chat_completions(request: Request):
     proxy_start = time.time()
     model_name = target_model  # LiteLLM handles fallback internally
     
+    # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
+    # Hermes agents set max_tokens=65536 unconditionally, but some free models have
+    # context limits as low as 32K. Without clamping, input+output exceeds the limit
+    # and the request fails with a 400 BadRequest (context_length exceeded).
+    # We estimate input tokens and clamp max_tokens to leave a 2K safety margin.
     try:
         body_to_send = body.copy()
         body_to_send["model"] = model_name
+        requested_max_tokens = body_to_send.get("max_tokens", 4096)
+        if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
+            # Tier-aware minimum context length (from actual roster data):
+            # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
+            # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
+            # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
+            _tier_min_ctx = {
+                "agent-simple-core": 32768,
+                "ollama-deepseek-v4-pro": 1000000,
+                "ollama-deepseek-v4-flash": 1000000,
+            }
+            _min_ctx = _tier_min_ctx.get(model_name, 262144)
+            # Rough input token estimate: 1 token ≈ 4 chars of JSON
+            _est_input = len(json.dumps(body_to_send)) // 4
+            _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
+            if requested_max_tokens > _safe_max:
+                logger.warning(
+                    f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
+                    f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
+                )
+                body_to_send["max_tokens"] = _safe_max
+    except Exception as e:
+        logger.warning(f"Pre-screening failed (non-fatal): {e}")
+        body_to_send = body.copy()
+        body_to_send["model"] = model_name
+    
+    try:
         if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
             body_to_send["metadata"] = {}
         body_to_send["metadata"]["trace_name"] = "agent-completion"

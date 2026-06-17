@@ -6,7 +6,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir fastapi uvicorn httpx pyyaml python-multipart asyncpg langfuse
 
 # Copy all source in one layer — removes dead config COPY (volume-mounted at runtime)
-COPY main.py agy_proxy.py circuit_breaker.py aa_scores.json /app/
+COPY main.py agy_proxy.py circuit_breaker.py aa_scores.json free_models_roster.json best_free_model.json /app/
 
 EXPOSE 5000
 

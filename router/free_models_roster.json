@@ -121,24 +121,6 @@
       "context_length": 32768
     },
     {
-      "id": "meta-llama/llama-3.3-70b-instruct:free",
-      "name": "Meta: Llama 3.3 70B Instruct (free)",
-      "score": 25.0,
-      "context_length": 131072
-    },
-    {
-      "id": "meta-llama/llama-3.2-3b-instruct:free",
-      "name": "Meta: Llama 3.2 3B Instruct (free)",
-      "score": 25.0,
-      "context_length": 131072
-    },
-    {
-      "id": "nousresearch/hermes-3-llama-3.1-405b:free",
-      "name": "Nous: Hermes 3 405B Instruct (free)",
-      "score": 25.0,
-      "context_length": 131072
-    },
-    {
       "id": "poolside/laguna-xs.2:free",
       "name": "Poolside: Laguna XS.2 (free)",
       "score": 22.0,
@@ -157,6 +139,6 @@
       "context_length": 32768
     }
   ],
-  "updated_at": "2026-06-16T15:40:59.687282Z",
-  "count": 26
+  "updated_at": "2026-06-17T20:17:56.981195Z",
+  "count": 23
 }
