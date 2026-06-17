@@ -26,6 +26,7 @@ router/__pycache__/
 router/router_stats.json
 router/quantization_report.txt
 router/router_timeline.json
+router/best_free_model.json
 
 # Hermes agent artifacts
 .hermes/
