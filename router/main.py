@@ -1516,32 +1516,43 @@ async def get_dashboard():
     # 2b. Fetch live llama.cpp metrics
     llamacpp = await get_llamacpp_metrics()
 
-    # 3. Calculative metrics — 5-tier triage ratios
-    tier_data = {
-        "simple":  {"count": stats.get("simple_requests", 0),    "label": "Simple Core (Lite/Gemma)",  "color": "#34d399"},
-        "medium":  {"count": stats.get("medium_requests", 0),    "label": "Medium Core",                "color": "#fbbf24"},
-        "complex": {"count": stats.get("complex_requests", 0),   "label": "Complex Core (Qwen)",         "color": "#a78bfa"},
-        "reasoning":{"count": stats.get("reasoning_requests", 0),"label": "Reasoning Core (Claude)",      "color": "#60a5fa"},
-        "advanced":{"count": stats.get("advanced_requests", 0),  "label": "Advanced Core (Nemotron)",    "color": "#f472b6"},
-    }
-    for k, v in tier_data.items():
-        v["ratio"] = (v["count"] / stats["total_requests"] * 100.0) if stats["total_requests"] > 0 else 0.0
+    # 3. Calculative metrics — 5-tier triage table
+    tier_data = [
+        {"tier": "agent-simple-core",    "count": stats.get("simple_requests", 0),    "color": "#34d399"},
+        {"tier": "agent-medium-core",    "count": stats.get("medium_requests", 0),    "color": "#fbbf24"},
+        {"tier": "agent-complex-core",   "count": stats.get("complex_requests", 0),   "color": "#a78bfa"},
+        {"tier": "agent-reasoning-core", "count": stats.get("reasoning_requests", 0), "color": "#60a5fa"},
+        {"tier": "agent-advanced-core",  "count": stats.get("advanced_requests", 0),  "color": "#f472b6"},
+    ]
+    total_tier = sum(t["count"] for t in tier_data)
+    for t in tier_data:
+        t["ratio"] = (t["count"] / total_tier * 100.0) if total_tier > 0 else 0.0
 
-    # Build 5-segment stacked bar widths for inline CSS
-    tier_bar_segments = ""
-    for k, v in tier_data.items():
-        if v["ratio"] > 0:
-            tier_bar_segments += f'<div style="width:{v["ratio"]:.2f}%;background:linear-gradient(90deg,{v["color"]},{v["color"]}dd);transition:width 0.5s ease;height:100%;"></div>'
-
-    # Build 5-item legend rows
-    tier_legend_rows = ""
-    for k, v in tier_data.items():
-        tier_legend_rows += f"""
-        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
-            <span style="width:10px;height:10px;border-radius:2px;background:{v['color']};display:inline-block;box-shadow:0 0 4px {v['color']}aa;"></span>
-            <span style="font-weight:600;">{v['label']}:</span>
-            <span style="opacity:0.7;">{v['count']} requests ({v['ratio']:.1f}%)</span>
-        </div>"""
+    # Build tier table rows
+    tier_table_rows = ""
+    for t in tier_data:
+        tier_table_rows += f"""
+        <tr>
+            <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{t['color']};">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{t['color']};margin-right:8px;box-shadow:0 0 4px {t['color']}aa;"></span>
+                {t['tier']}
+            </td>
+            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{t['count']}</td>
+            <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{t['ratio']:.1f}%</td>
+        </tr>"""
+    tier_table_html = f"""
+    <table style="width:100%;border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+                <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Tier</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Requests</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Share</th>
+            </tr>
+        </thead>
+        <tbody>
+            {tier_table_rows}
+        </tbody>
+    </table>"""
 
     # 4. Generate dynamic conic-gradient CSS background for the Pie Chart
     pie_gradient = get_pie_chart_gradient()
@@ -2190,12 +2201,7 @@ async def get_dashboard():
 
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
                         <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
-                        <div class="ratio-container">
-                            {tier_bar_segments}
-                        </div>
-                        <div style="display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:12px;justify-content:center;">
-                            {tier_legend_rows}
-                        </div>
+                        {tier_table_html}
                     </div>
                 </div>
 
