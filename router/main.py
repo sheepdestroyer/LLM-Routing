@@ -287,6 +287,7 @@ async def sync_adaptive_router_roster(master_key: str):
     if max_score < 1.0:
         max_score = 55.0  # safety floor
     def norm(s: float) -> float:
+        """Helper to scale raw model index score against max score in roster to 0-100 range."""
         return (s / max_score) * 100.0
     for score, mid in free_models:  # include all models — top 2 are also assigned to their correct tier
         n = norm(score)
@@ -548,6 +549,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 def get_live_gemini_oauth_token() -> str | None:
+    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
         creds_path = "/config/gemini_auth/oauth_creds.json"
         if os.path.exists(creds_path):
@@ -730,6 +732,7 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
             record_tool_usage._last_save = now
             
             def done_callback(f):
+                """Log any uncaught exceptions returned from the background timeline executor thread."""
                 try:
                     f.result()
                 except Exception as e:
@@ -830,6 +833,7 @@ _AA_SCORES_CACHE: dict[str, float] = {}
 _AA_SCORES_LOADED = False
 
 def _load_aa_scores():
+    """Load the Artificial Analysis agentic scores cache from local config."""
     global _AA_SCORES_CACHE, _AA_SCORES_LOADED
     if _AA_SCORES_LOADED:
         return
@@ -1058,6 +1062,7 @@ async def proxy_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    """Handle incoming OpenAI-compatible chat completions requests and route them dynamically based on triage logic."""
     global stats
     start_time = time.time()
     
@@ -1264,6 +1269,7 @@ async def chat_completions(request: Request):
                     if body.get("stream", False):
                         content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                         async def agy_stream_generator():
+                            """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
                             import uuid
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -1421,6 +1427,7 @@ async def chat_completions(request: Request):
             r = await client.send(req, stream=True)
             if r.status_code == 200:
                 async def stream_generator():
+                    """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                     completion_chars = 0
                     request_tokens = len(json.dumps(body_to_send)) // 4
                     try:
@@ -1558,6 +1565,7 @@ async def metrics():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
+    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
     # 1. Run live health checks
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
@@ -1813,6 +1821,7 @@ async def get_dashboard():
     
     # Source badge helper: generates a colored inline source tag
     def src_badge(label, color):
+        """Generate inline HTML span styled as a colored status/category badge."""
         return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
 
     # 10. Pre-compute llama.cpp HTML cards
@@ -2547,6 +2556,7 @@ async def get_visualizer():
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
 class AnnotationItem(BaseModel):
+    """Pydantic model representing a single human dataset review annotation."""
     tier: Union[int, str, None] = None
     note: str = ""
     ts: Optional[str] = None

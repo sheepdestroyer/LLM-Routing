@@ -117,7 +117,7 @@ async function init() {
     dataset = raw.prompts || [];
     // Extract global stats from combined dataset
     if (raw.agreement !== undefined) {
-      document.getElementById('stat-agreement').textContent = raw.agreement + '%';
+      document.getElementById('stat-agreement').querySelector('.val').textContent = raw.agreement + '%';
       document.getElementById('stat-agreement').style.display = '';
     }
   } catch(e) {
@@ -259,8 +259,6 @@ function renderDetail(idx) {
     llmCardClass += ' match';
   }
   
-  const effectiveTier = ann ? ann.tier : (conflict === false ? (p.tier || p.llm_tier || '?') : '?');
-  
   let tierBtns = TIERS.map(tier => {
     let cls = 'tier-btn';
     if (ann && ann.tier === tier) cls += ' selected-human';
@@ -318,6 +316,7 @@ function saveNote(idx) {
   }
   annotations[idx].note = note;
   saveAnnotations();
+  render();
 }
 
 function clearAnnotation(idx) {

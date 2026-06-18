@@ -253,7 +253,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         # Determine which breaker to use for this tier
         # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
         # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
-        is_google_tier = (actual_tier_idx == 0)
+        is_google_tier = "gemini" in tier.get("model_name", "").lower()
         tier_breaker = google_breaker if is_google_tier else vendor_breaker
 
         if not tier_breaker.is_allowed():
@@ -323,8 +323,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     
             # Success! Stream has started.
             tier_breaker.record_success()
-            # Define the async generator
             async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id):
+                """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
                 # Yield the initial token if it was a token
                 init_data = json.loads(initial_line)
                 if init_data.get("type") == "token" and init_data.get("content"):

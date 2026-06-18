@@ -36,6 +36,7 @@ def fetch_observations(page=1, limit=50):
         return json.loads(resp.read())
 
 def extract_user_prompt(obs):
+    """Extract and parse the raw user prompt from the observation input payload."""
     inp = obs.get('input')
     if not inp:
         return None
@@ -55,6 +56,7 @@ def extract_user_prompt(obs):
     return None
 
 def is_trivial(prompt):
+    """Check if the prompt matches a list of trivial test patterns to filter out."""
     lower = prompt.strip().lower()
     if len(lower) < 20:
         return True

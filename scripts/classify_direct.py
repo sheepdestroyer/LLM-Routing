@@ -18,6 +18,7 @@ TIERS = {
 }
 
 def classify(prompt):
+    """Query the llama-server to classify the prompt task complexity."""
     payload = {
         "model": "gemma4-26a4b-routing",
         "messages": [{"role": "user", "content": PROMPT_TEMPLATE + prompt}],

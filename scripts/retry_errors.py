@@ -33,6 +33,7 @@ MODEL_URL = f"http://127.0.0.1:{MODEL_PORT}/v1/chat/completions"
 print(f"Using model directly on port {MODEL_PORT}")
 
 def classify(prompt):
+    """Query the direct model port to classify the prompt complexity, handling truncations."""
     if len(prompt) > MAX_CHARS:
         prompt = prompt[:MAX_CHARS]
     payload = {

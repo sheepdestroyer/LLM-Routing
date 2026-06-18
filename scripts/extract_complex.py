@@ -30,6 +30,7 @@ if dataset_path.exists():
 print(f"Already classified: {len(existing)} prompts")
 
 def fetch_observations(page=1, limit=50):
+    """Fetch a paginated list of observations from the Langfuse public API."""
     url = f"{base_url}/api/public/observations?limit={limit}&page={page}&orderBy=timestamp.desc&level=DEFAULT&name=litellm-acompletion"
     req = urllib.request.Request(url)
     req.add_header("Authorization", f"Basic {auth}")
@@ -37,6 +38,7 @@ def fetch_observations(page=1, limit=50):
         return json.loads(resp.read())
 
 def extract_user_prompt(obs):
+    """Extract and parse the raw user prompt from the observation input payload."""
     inp = obs.get('input')
     if not inp: return None
     if isinstance(inp, str):

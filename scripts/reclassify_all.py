@@ -18,6 +18,7 @@ PROMPT_TEMPLATE = """Analyze the request complexity. Respond with exactly one of
 Request: """
 
 def classify(prompt):
+    """Query the llama-server to classify the prompt complexity with grammar enforcement."""
     payload = {
         'model': 'gemma4-26a4b-routing',
         'messages': [{'role': 'user', 'content': PROMPT_TEMPLATE + prompt}],
