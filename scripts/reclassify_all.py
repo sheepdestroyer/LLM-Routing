@@ -50,7 +50,7 @@ for i, item in enumerate(dataset['prompts']):
     prompt = item['prompt']
     
     # Original LLM/kanban eval
-    llm_tier = item.get('tier', '?')
+    llm_tier = item.get('llm_tier') or item.get('tier', '?')
     
     # Classifier eval
     try:

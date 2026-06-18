@@ -163,7 +163,7 @@ def _atomic_write_json_sync(path: str, data) -> None:
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
     try:
         try:
-            f = os.fdopen(fd, "w")
+            f = os.fdopen(fd, "w", encoding="utf-8")
         except Exception:
             os.close(fd)
             raise

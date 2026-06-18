@@ -24,7 +24,7 @@ def get_model_port():
         if 'gemma4-26a4b' in m.get('id', ''):
             args = m.get('status', {}).get('args', [])
             for i, v in enumerate(args):
-                if v == '--port':
+                if v == '--port' and i + 1 < len(args):
                     return args[i + 1]
     raise RuntimeError("gemma4-26a4b-routing model port not found")
 
@@ -91,7 +91,7 @@ for batch_start in range(0, len(error_indices), 5):
         time.sleep(5)
 
 from collections import Counter
-new_counts = Counter(p.get('tier', 'ERROR') for p in dataset.get('prompts', []))
+new_counts = Counter(p.get('llm_tier') or p.get('tier', 'ERROR') for p in dataset.get('prompts', []))
 dataset['counts'] = {k: v for k, v in new_counts.items()}
 dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
                    if new_counts.get(t, 0) < 20]

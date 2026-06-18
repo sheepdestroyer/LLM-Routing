@@ -59,7 +59,7 @@ def extract_first_user_prompt(obs):
     if isinstance(inp, str):
         try:
             inp = json.loads(inp)
-        except:
+        except Exception:
             return None
     if not isinstance(inp, dict):
         return None
