@@ -84,8 +84,6 @@ class PerModelBreaker:
 
         if self.tier == 0:
             new_tier = 1
-        elif self.probe_granted:
-            new_tier = min(self.tier + 1, MAX_TIER)
         else:
             new_tier = min(self.tier + 1, MAX_TIER)
 

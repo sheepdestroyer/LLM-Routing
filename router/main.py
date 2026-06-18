@@ -15,6 +15,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from circuit_breaker import get_breaker
+from pydantic import BaseModel
+from typing import Dict, Optional, Union
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -166,17 +168,14 @@ def _atomic_write_json_sync(path: str, data) -> None:
             os.close(fd)
             raise
         
-        try:
-            with f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp_path, path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-            raise
+        with f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
     except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
         raise
 
 
@@ -2547,11 +2546,16 @@ async def get_visualizer():
         return HTMLResponse(vis_path.read_text())
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
+class AnnotationItem(BaseModel):
+    tier: Union[int, str, None] = None
+    note: str = ""
+    ts: Optional[str] = None
+
 @app.post("/dashboard/save-annotations")
-async def save_annotations(request: Request):
+async def save_annotations(payload: Dict[str, AnnotationItem]):
     """Save human review annotations to disk."""
     try:
-        body = await request.json()
+        body = {k: (v.model_dump() if hasattr(v, "model_dump") else v.dict()) for k, v in payload.items()}
         ann_path = DATA_DIR / "annotations.json"
         await _atomic_write_json_async(str(ann_path), body)
         return JSONResponse({"status": "ok", "saved": len(body)})

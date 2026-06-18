@@ -22,7 +22,7 @@ def get_model_port():
         data = json.loads(resp.read())
     for m in data.get('data', []):
         if 'gemma4-26a4b' in m.get('id', ''):
-            args = m['status']['args']
+            args = m.get('status', {}).get('args', [])
             for i, v in enumerate(args):
                 if v == '--port':
                     return args[i + 1]
@@ -48,7 +48,10 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    content = data["choices"][0]["message"].get("content", "").strip()
+    choices = data.get("choices", [])
+    content = ""
+    if choices:
+        content = choices[0].get("message", {}).get("content", "").strip()
     # Normalize: strip "tier:" prefix, extract just the tier name
     for tier in TIERS:
         if tier in content:
@@ -63,7 +66,7 @@ with open(data_dir / "classified_dataset.json") as f:
 with open(data_dir / "raw_prompts_hermes.json") as f:
     all_prompts = json.load(f)
 
-error_indices = [i for i, p in enumerate(dataset['prompts']) if p['tier'] == 'ERROR']
+error_indices = [i for i, p in enumerate(dataset.get('prompts', [])) if p.get('tier') == 'ERROR']
 print(f"Retrying {len(error_indices)} failed prompts (max {MAX_CHARS} chars)...")
 
 fixed = 0
@@ -72,10 +75,12 @@ errors = 0
 for batch_start in range(0, len(error_indices), 5):
     batch = error_indices[batch_start:batch_start + 5]
     for idx in batch:
-        prompt = dataset['prompts'][idx]['prompt']
+        prompts_list = dataset.get('prompts', [])
+        prompt = prompts_list[idx].get('prompt') if idx < len(prompts_list) else ""
         try:
             tier = classify(prompt)
-            dataset['prompts'][idx]['tier'] = tier
+            if idx < len(prompts_list):
+                prompts_list[idx]['tier'] = tier
             fixed += 1
         except Exception as e:
             errors += 1
@@ -86,7 +91,7 @@ for batch_start in range(0, len(error_indices), 5):
         time.sleep(5)
 
 from collections import Counter
-new_counts = Counter(p['tier'] for p in dataset['prompts'])
+new_counts = Counter(p.get('tier', 'ERROR') for p in dataset.get('prompts', []))
 dataset['counts'] = {k: v for k, v in new_counts.items()}
 dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
                    if new_counts.get(t, 0) < 20]

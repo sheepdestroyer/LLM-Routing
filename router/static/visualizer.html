@@ -161,7 +161,7 @@ function getAnnotation(idx) {
 function isConflict(idx) {
   const p = dataset[idx];
   if (!p) return null;
-  const llm = p.llm_tier || p.tier;  // support both old and new format
+  const llm = p.llm_tier || p.tier || '?';  // support both old and new format
   const pred = p.clf_tier || getBenchmarkPrediction(idx);
   if (!pred || pred.startsWith('ERROR')) return null;
   return pred !== llm;
@@ -211,7 +211,7 @@ function render() {
   const listEl = document.getElementById('list');
   listEl.innerHTML = filtered.map(i => {
     const p = dataset[i];
-    const llm = p.llm_tier || p.tier;
+    const llm = p.llm_tier || p.tier || '?';
     const pred = p.clf_tier;
     const ann = getAnnotation(i);
     const conflict = isConflict(i);
@@ -222,7 +222,7 @@ function render() {
     else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
     if (ann) tags += '<span class="tag human">REVIEWED</span>';
     
-    const displayLlm = escapeHtml(llm.replace('agent-',''));
+    const displayLlm = typeof llm === 'string' ? escapeHtml(llm.replace('agent-','')) : '?';
     const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
     
     return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})">
@@ -244,7 +244,7 @@ function selectPrompt(idx) {
 
 function renderDetail(idx) {
   const p = dataset[idx];
-  const llm = p.llm_tier || p.tier;
+  const llm = p.llm_tier || p.tier || '?';
   const pred = p.clf_tier;
   const ann = getAnnotation(idx);
   const conflict = pred && !pred.startsWith('ERROR') ? (pred !== llm) : null;
@@ -259,7 +259,7 @@ function renderDetail(idx) {
     llmCardClass += ' match';
   }
   
-  const effectiveTier = ann ? ann.tier : (conflict === false ? p.tier : '?');
+  const effectiveTier = ann ? ann.tier : (conflict === false ? (p.tier || p.llm_tier || '?') : '?');
   
   let tierBtns = TIERS.map(tier => {
     let cls = 'tier-btn';
@@ -314,7 +314,7 @@ function annotate(idx, tier) {
 function saveNote(idx) {
   const note = document.getElementById('note-input').value;
   if (!annotations[idx]) {
-    annotations[idx] = { tier: dataset[idx].tier, note: '', ts: new Date().toISOString() };
+    annotations[idx] = { tier: dataset[idx].tier || dataset[idx].llm_tier || '?', note: '', ts: new Date().toISOString() };
   }
   annotations[idx].note = note;
   saveAnnotations();

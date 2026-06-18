@@ -100,12 +100,16 @@ for exp_tier in TIERS:
     row = f"{exp_tier:30s}"
     for pred_tier in TIERS:
         count = confusion[exp_tier].get(pred_tier, 0)
+        count_str = f"{count:3d}"
         if exp_tier == pred_tier:
-            row += f"  \033[32m{count:3d}\033[0m" + " " * 20
+            cell = f"  \033[32m{count_str}\033[0m"
+            row += f"{cell:34s}"
         elif count > 0:
-            row += f"  \033[31m{count:3d}\033[0m" + " " * 20
+            cell = f"  \033[31m{count_str}\033[0m"
+            row += f"{cell:34s}"
         else:
-            row += f"  {count:3d}" + " " * 20
+            cell = f"  {count_str}"
+            row += f"{cell:25s}"
     print(row)
 
 # Save detailed results
