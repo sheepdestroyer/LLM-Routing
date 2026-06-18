@@ -1237,75 +1237,152 @@ async def chat_completions(request: Request):
                         except Exception:
                             pass
 
+                is_stream_requested = body.get("stream", False)
                 agy_response = await try_agy_proxy(
                     prompt=last_prompt,
                     messages=messages,
                     session_id=session_id,
                     total_timeout=300.0,
+                    stream=is_stream_requested,
                     target_tier=target_model
                 )
                 if agy_response:
-                    latency_ms = (time.time() - start_time) * 1000.0
                     model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
-                    usage = agy_response.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    record_tool_usage(
-                        active_tool, prompt_tokens, completion_tokens,
-                        model_name, latency_ms, route="google_oauth_direct"
-                    )
-                    logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
-
-                    # Finalize agy span
-                    if agy_span_obj:
-                        try:
-                            agy_span_obj.end(
-                                output={"model": model_name, "tokens": completion_tokens},
-                                metadata={"latency_ms": latency_ms, "tier": target_model},
-                            )
-                        except Exception:
-                            pass
-
-                    if body.get("stream", False):
-                        content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        async def agy_stream_generator():
-                            """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
+                    
+                    if "stream" in agy_response:
+                        # Real native stream generator
+                        async def native_agy_stream_generator(stream_gen, model_name):
+                            """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
                             import uuid
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-                            chunk_size = 40
-                            for i in range(0, len(content), chunk_size):
-                                chunk_text = content[i:i+chunk_size]
-                                chunk_data = {
+                            token_count = 0
+                            try:
+                                async for token in stream_gen:
+                                    if not token:
+                                        continue
+                                    token_count += 1
+                                    chunk_data = {
+                                        "id": chunk_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_time,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": token},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
+
+                                # End of stream chunk
+                                finish_data = {
                                     "id": chunk_id,
                                     "object": "chat.completion.chunk",
                                     "created": created_time,
                                     "model": model_name,
                                     "choices": [{
                                         "index": 0,
-                                        "delta": {"content": chunk_text},
-                                        "finish_reason": None
+                                        "delta": {},
+                                        "finish_reason": "stop"
                                     }]
                                 }
-                                yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
-                                await asyncio.sleep(0.005)
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
+                                yield b"data: [DONE]\n\n"
 
-                            finish_data = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model_name,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }]
-                            }
-                            yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
-                            yield b"data: [DONE]\n\n"
-                        return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
+                                # Success telemetry
+                                latency_ms = (time.time() - start_time) * 1000.0
+                                # Approximate prompt tokens based on messages characters
+                                prompt_chars = sum(len(m.get("content", "")) for m in messages)
+                                approx_prompt_tokens = max(1, prompt_chars // 4)
+                                
+                                record_tool_usage(
+                                    active_tool, approx_prompt_tokens, token_count,
+                                    model_name, latency_ms, route="google_oauth_direct"
+                                )
+                                logger.info(f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms")
+                                if agy_span_obj:
+                                    try:
+                                        agy_span_obj.end(
+                                            output={"model": model_name, "tokens": token_count},
+                                            metadata={"latency_ms": latency_ms, "tier": target_model},
+                                        )
+                                    except Exception:
+                                        pass
+                            except Exception as stream_err:
+                                logger.error(f"Error during native agy stream generation: {stream_err}")
+                                if agy_span_obj:
+                                    try:
+                                        agy_span_obj.end(
+                                            output={"error": str(stream_err)[:200]},
+                                            metadata={"status": "failed"},
+                                        )
+                                    except Exception:
+                                        pass
+                                raise
+                        return StreamingResponse(native_agy_stream_generator(agy_response["stream"], model_name), media_type="text/event-stream")
                     else:
-                        return agy_response
+                        latency_ms = (time.time() - start_time) * 1000.0
+                        usage = agy_response.get("usage", {})
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+                        record_tool_usage(
+                            active_tool, prompt_tokens, completion_tokens,
+                            model_name, latency_ms, route="google_oauth_direct"
+                        )
+                        logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
+
+                        # Finalize agy span
+                        if agy_span_obj:
+                            try:
+                                agy_span_obj.end(
+                                    output={"model": model_name, "tokens": completion_tokens},
+                                    metadata={"latency_ms": latency_ms, "tier": target_model},
+                                )
+                            except Exception:
+                                pass
+
+                        if is_stream_requested:
+                            # Robust fallback: simulate stream if we requested stream but got buffered response
+                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            async def agy_stream_generator():
+                                """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
+                                import uuid
+                                created_time = int(time.time())
+                                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+                                chunk_size = 40
+                                for i in range(0, len(content), chunk_size):
+                                    chunk_text = content[i:i+chunk_size]
+                                    chunk_data = {
+                                        "id": chunk_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_time,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": chunk_text},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
+                                    await asyncio.sleep(0.005)
+
+                                finish_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model_name,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
+                                yield b"data: [DONE]\n\n"
+                            return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
+                        else:
+                            return agy_response
         except ImportError:
             if agy_span_obj:
                 try:
@@ -2561,9 +2638,50 @@ class AnnotationItem(BaseModel):
     note: str = ""
     ts: Optional[str] = None
 
+VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
     """Save human review annotations to disk."""
+    if len(payload) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
+        )
+    
+    for k, item in payload.items():
+        if not k.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid payload key '{k}': keys must be numeric strings (dataset indexes)."
+            )
+        
+        t = item.tier
+        if t is not None:
+            if isinstance(t, int):
+                if t < 0 or t > 4:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier index {t} for index {k}: must be between 0 and 4."
+                    )
+            elif isinstance(t, str):
+                if t not in VALID_TIERS and t != "?":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier string '{t}' for index {k}."
+                    )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid tier type for index {k}: must be int, str, or null."
+                )
+        
+        if len(item.note) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."
+            )
+
     try:
         body = {k: (v.model_dump() if hasattr(v, "model_dump") else v.dict()) for k, v in payload.items()}
         ann_path = DATA_DIR / "annotations.json"

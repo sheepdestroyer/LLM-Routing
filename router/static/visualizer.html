@@ -326,8 +326,14 @@ function clearAnnotation(idx) {
 }
 
 function saveAnnotations() {
-  // Save to localStorage and trigger download
+  // Save to localStorage
   localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
+  // Auto-sync by posting to dashboard save endpoint
+  fetch('/dashboard/save-annotations', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(annotations),
+  }).catch((err) => console.error('Failed to auto-sync annotations:', err));
 }
 
 function exportAnnotations() {
@@ -339,12 +345,8 @@ function exportAnnotations() {
   a.click();
   URL.revokeObjectURL(url);
   
-  // Also try to save via POST if a save endpoint exists
-  fetch('/dashboard/save-annotations', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(annotations),
-  }).catch(() => {});
+  // Save locally and sync
+  saveAnnotations();
 }
 
 function escapeHtml(text) {
