@@ -23,7 +23,8 @@ if dataset_path.exists():
         with open(dataset_path) as f:
             existing_data = json.load(f)
         for p in existing_data.get('prompts', []):
-            existing.add(p['prompt'].strip().lower())
+            if 'prompt' in p and p['prompt']:
+                existing.add(p['prompt'].strip().lower())
     except Exception as e:
         print(f"Warning: Failed to load existing dataset: {e}")
 

@@ -16,9 +16,9 @@ Simulates consecutive quota failures and verifies:
 import sys
 import time
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'router'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
+from router.circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
 
 
 def reset_breakers():
@@ -67,7 +67,7 @@ def test_probe_granted_after_cooldown():
     b.google.probe_granted = False
     
     assert b.google.is_allowed(), "Probe should be granted"
-    assert b.google.probe_granted == True, "Probe flag should be set"
+    assert b.google.probe_granted, "Probe flag should be set"
     assert not b.google.is_allowed(), "Second call should be denied"
     print("✓ Probe granted after cooldown expiry, consumed on next check")
 

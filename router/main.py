@@ -2656,12 +2656,15 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
             status_code=400,
             detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
         )
-    
     for k, item in payload.items():
-        if not k.isdigit():
+        # Allow numeric strings (dataset indexes) or stable hash keys starting with 'h' (hexadecimal)
+        is_valid_key = k.isdigit() or (
+            k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
+        )
+        if not is_valid_key:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid payload key '{k}': keys must be numeric strings (dataset indexes)."
+                detail=f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
             )
         
         t = item.tier
@@ -2691,10 +2694,22 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
             )
 
     try:
-        body = {k: (v.model_dump() if hasattr(v, "model_dump") else v.dict()) for k, v in payload.items()}
         ann_path = DATA_DIR / "annotations.json"
-        await _atomic_write_json_async(str(ann_path), body)
-        return JSONResponse({"status": "ok", "saved": len(body)})
+        existing = {}
+        if ann_path.exists():
+            try:
+                import json
+                with open(ann_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception as read_err:
+                logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
+        
+        # Merge new annotations into existing
+        for k, item in payload.items():
+            existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+            
+        await _atomic_write_json_async(str(ann_path), existing)
+        return JSONResponse({"status": "ok", "saved": len(payload)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
         raise HTTPException(status_code=500, detail="Failed to save annotations")

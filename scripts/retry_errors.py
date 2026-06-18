@@ -68,10 +68,15 @@ with open(data_dir / "classified_dataset.json") as f:
 with open(data_dir / "raw_prompts_hermes.json") as f:
     all_prompts = json.load(f)
 
+def is_error_val(val):
+    if not val:
+        return False
+    return str(val) == "ERROR" or str(val).startswith("ERROR:")
+
 # Schema-aware: support both old schema ("tier") and new reclassify_all.py schema ("clf_tier")
 error_indices = [
     i for i, p in enumerate(dataset.get('prompts', []))
-    if p.get('tier') == 'ERROR' or p.get('clf_tier') == 'ERROR'
+    if is_error_val(p.get('tier')) or is_error_val(p.get('clf_tier'))
 ]
 print(f"Retrying {len(error_indices)} failed prompts (max {MAX_CHARS} chars)...")
 
@@ -87,7 +92,9 @@ for batch_start in range(0, len(error_indices), 5):
             tier = classify(prompt)
             if idx < len(prompts_list):
                 prompts_list[idx]['tier'] = tier
-            if tier != 'ERROR':  # only count as fixed if classification succeeded
+                if 'clf_tier' in prompts_list[idx]:
+                    prompts_list[idx]['clf_tier'] = tier
+            if not is_error_val(tier):  # only count as fixed if classification succeeded
                 fixed += 1
         except Exception as e:
             errors += 1
@@ -98,7 +105,7 @@ for batch_start in range(0, len(error_indices), 5):
         time.sleep(5)
 
 from collections import Counter
-new_counts = Counter(p.get('llm_tier') or p.get('tier', 'ERROR') for p in dataset.get('prompts', []))
+new_counts = Counter(p.get('clf_tier') or p.get('tier') or p.get('llm_tier', 'ERROR') for p in dataset.get('prompts', []))
 dataset['counts'] = {k: v for k, v in new_counts.items()}
 dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
                    if new_counts.get(t, 0) < 20]

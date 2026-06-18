@@ -18,7 +18,7 @@ for sub in (b.google, b.vendor):
     # Force cooldown expiry
     sub.cooldown_until = 0
     assert sub.is_allowed(), 'Probe should be granted'
-    assert sub.probe_granted == True
+    assert sub.probe_granted
     sub.record_failure()  # probe fails
     assert sub.tier == 2, 'Should advance to Tier 2'
 
