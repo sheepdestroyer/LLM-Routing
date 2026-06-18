@@ -2,7 +2,7 @@ version: 2
 updates:
   # Docker image dependency updates
   - package-ecosystem: "docker"
-    directory: "/router"
+    directory: "/"
     schedule:
       interval: "daily"
       time: "18:22"

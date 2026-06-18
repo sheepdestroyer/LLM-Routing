@@ -143,19 +143,10 @@ redis_settings:
   redis_port: 6379
 router_settings:
   allowed_fails: 2
-  cooldown_time: 300
+  cooldown_time: 30
   enable_pre_call_checks: false
   num_retries: 1
   routing_strategy: latency-based-routing
-  # Per-error-type cooldown thresholds (overrides allowed_fails for specific errors).
-  # Upstream rate limits ("temporarily rate-limited upstream") can last minutes —
-  # a 30s cooldown just wastes retries. 300s gives providers time to clear the limit.
-  # RateLimitError: cooldown on FIRST 429 (upstream rate limits persist for minutes —
-  # allowing even 1 retry wastes a request against a provider that's still throttling)
-  allowed_fails_policy:
-    RateLimitErrorAllowedFails: 0
-    TimeoutErrorAllowedFails: 3
-    BadRequestErrorAllowedFails: 1
 vector_store_settings:
   collection_name: litellm_semantic_cache
   connection_string: postgresql://postgres:***@127.0.0.1:5432/postgres

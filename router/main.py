@@ -5,18 +5,12 @@ import time
 import socket
 import asyncio
 import logging
-import copy
-import tempfile
 import yaml
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from circuit_breaker import get_breaker
-from pydantic import BaseModel
-from typing import Dict, Optional, Union
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -157,60 +151,25 @@ def load_persisted_stats():
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
-def _atomic_write_json_sync(path: str, data) -> None:
-    """Synchronously write JSON data to path using atomic temp-file + os.replace."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-    try:
-        try:
-            f = os.fdopen(fd, "w", encoding="utf-8")
-        except Exception:
-            os.close(fd)
-            raise
-        
-        with f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-        raise
-
-
-async def _atomic_write_json_async(path: str, data) -> None:
-    """Asynchronously write JSON data to path via thread pool executor.
-
-    Deep-copies the data to prevent concurrent modification from the main thread
-    while the executor thread is serializing it.
-    """
-    loop = asyncio.get_running_loop()
-    data_copy = copy.deepcopy(data)
-    await loop.run_in_executor(None, _atomic_write_json_sync, path, data_copy)
-
-
 _last_stats_save = 0.0
 
-async def save_persisted_stats(force=False):
-    """Persists current statistics in-memory structure to disk securely (non-blocking).
-
-    Offloads the synchronous file write to a thread pool executor so the
-    event loop is not blocked. The 2-second throttle is checked before
-    dispatching.
-    """
+def save_persisted_stats(force=False):
+    """Persists current statistics in-memory structure to disk securely."""
     global _last_stats_save
-    now = time.monotonic()
+    import time
+    now = time.time()
 
     # Throttle disk writes to max once per 2 seconds, unless forced
     if not force and (now - _last_stats_save < 2.0):
         return
 
-    _last_stats_save = now  # Set immediately to prevent concurrent writes during await
+    _last_stats_save = now
+
     try:
-        await _atomic_write_json_async(STATS_JSON_PATH, stats)
+        os.makedirs(os.path.dirname(STATS_JSON_PATH), exist_ok=True)
+        with open(STATS_JSON_PATH, "w") as f:
+            json.dump(stats, f, indent=2)
     except Exception as e:
-        _last_stats_save = 0.0  # Reset on failure to allow immediate retry
         logger.error(f"Failed to persist stats to disk: {e}")
 
 # Load initial stats from persistent storage
@@ -244,23 +203,6 @@ async def sync_adaptive_router_roster(master_key: str):
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
         if not mid or (len(mid) > 64 and "/" not in mid):
             continue
-
-        # 1. Enforce Tool/Function Calling Support
-        supported_params = m.get('supported_parameters') or []
-        if 'tools' not in supported_params:
-            logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
-            continue
-
-        # 2. Denylist: skip models known to be problematic (stale, wrong context_length, etc.)
-        # llama-3.3-70b reports 131K ctx but actual endpoint enforces 65K → context_limit errors.
-        # All meta-llama and llama-derived models are too old and unreliable on free tier.
-        _denylist_prefixes = (
-            "meta-llama/", "nousresearch/hermes-3-llama",
-        )
-        if any(mid.startswith(p) for p in _denylist_prefixes):
-            logger.info(f"🚫 Skipping {mid} — denylisted (stale/unreliable free tier model)")
-            continue
-
         pricing = m.get("pricing", {})
         if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
             try:
@@ -378,33 +320,16 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(1)
     else:
         logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
-
-    # Sync free-model roster into LiteLLM (non-fatal if it fails)
-    if litellm_master_key:
-        try:
-            await sync_adaptive_router_roster(litellm_master_key)
-        except Exception as e:
-            logger.error(f"Roster sync failed: {e}")
-
-    # Start background task before yield so it runs during app lifetime
-    task = asyncio.create_task(push_aggregate_scores())
-
-    yield
-
-    # Cancel background score task
-    task.cancel()
+        yield
+        return
+    # Sync free-model roster into LiteLLM (separate try so sync failure doesn't loop)
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-    # Flush any buffered stats/timeline on clean shutdown
-    await save_persisted_stats(force=True)
-    try:
-        timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-        await _atomic_write_json_async(timeline_path, stats["timeline"])
+        await sync_adaptive_router_roster(litellm_master_key)
     except Exception as e:
-        logger.warning(f"Failed to persist timeline on shutdown: {e}")
+        logger.error(f"Roster sync failed: {e}")
+    yield
+    # Start aggregate score-push background task (runs for server lifetime)
+    asyncio.create_task(push_aggregate_scores())
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
@@ -428,12 +353,8 @@ async def check_http_endpoint(url: str) -> bool:
     except Exception:
         return False
 
-async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_trace_id: str | None = None) -> tuple[str, float, bool, str]:
-    """Queries the local fast Qwen instance to classify request complexity with TTL caching.
-    
-    When langfuse_trace_id is provided, the classifier HTTP call is wrapped in a child
-    observation (span) so latency and output appear as a nested span in Langfuse traces.
-    """
+async def classify_request(prompt: str, bypass_cache: bool = False) -> tuple[str, float, bool, str]:
+    """Queries the local fast Qwen instance to classify request complexity with TTL caching."""
     global triage_cache, stats
     
     # Normalize the prompt text for cache mapping
@@ -445,7 +366,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
         if time.time() - cached_time < CACHE_TTL_SECONDS:
             logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
             stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-            await save_persisted_stats()
+            save_persisted_stats()
             return cached_decision, 0.0, True, cached_decision  # was_cache_hit=True
             
     start_time = time.time()
@@ -458,7 +379,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
             if time.time() - cached_time < CACHE_TTL_SECONDS:
                 logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
                 stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-                await save_persisted_stats()
+                save_persisted_stats()
                 return cached_decision, 0.0, True, cached_decision
                 
         try:
@@ -466,31 +387,16 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
                 payload = {
                     "model": router_model_name,
                     "messages": [
-                        {"role": "user", "content": system_prompt + prompt}
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.0,
                     "max_tokens": 15,
+                    "grammar": 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
                 }
                 headers = {"Authorization": f"Bearer {router_api_key}"}
                 
                 logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
-
-                # --- Langfuse child span: classifier call ---
-                class_span_obj = None
-                if langfuse_trace_id:
-                    lf_cls = get_langfuse()
-                    if lf_cls:
-                        try:
-                            class_span_obj = lf_cls.start_observation(
-                                trace_context={"trace_id": langfuse_trace_id},
-                                name="classifier-qwen",
-                                input=prompt[:200],
-                                metadata={"model": router_model_name},
-                                level="DEFAULT",
-                            )
-                        except Exception:
-                            pass
-
                 response = await client.post(
                     f"{router_api_base}/chat/completions",
                     json=payload,
@@ -500,14 +406,6 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
                 latency = (time.time() - start_time) * 1000.0
                 
                 if response.status_code != 200:
-                    if class_span_obj:
-                        try:
-                            class_span_obj.end(
-                                output={"status": response.status_code, "error": "classification_failed"},
-                                metadata={"latency_ms": latency},
-                            )
-                        except Exception:
-                            pass
                     logger.error(f"Classification failed with status {response.status_code}: {response.text}")
                     return "agent-advanced-core", latency, False, "advanced (fallback)"
                     
@@ -527,16 +425,6 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
                     decision = content_clean
                 else:
                     decision = "agent-advanced-core"
-                
-                # Finalize classifier child span
-                if class_span_obj:
-                    try:
-                        class_span_obj.end(
-                            output={"tier": decision, "raw": raw_result},
-                            metadata={"latency_ms": latency},
-                        )
-                    except Exception:
-                        pass
                     
                 # Store in cache
                 triage_cache[normalized_prompt] = (decision, time.time())
@@ -667,12 +555,7 @@ def detect_active_tool(body: dict) -> str:
     return "none"
 
 def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float, route: str = "litellm_fallback"):
-    """Accumulates token counts in memory for active tools and tracks request timelines.
-
-    File writes are offloaded to a thread pool executor to avoid blocking the
-    event loop. The 2-second throttle is checked synchronously before
-    dispatching.
-    """
+    """Accumulates token counts in memory for active tools and tracks request timelines."""
     if tool_name == "none":
         tool_name = "other"
     
@@ -700,51 +583,17 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     stats["timeline"].append(event)
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
-
-    # Fire-and-forget stats write via save_persisted_stats (non-blocking)
-    now = time.monotonic()
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(save_persisted_stats())
-    except RuntimeError:
-        # No running event loop (e.g. during early startup) — fall back to sync write
+    save_persisted_stats()
+    # Throttled timeline save (handled together with stats save internally,
+    # but we also explicitly throttle this specific file)
+    if time.time() - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
         try:
-            global _last_stats_save
-            if now - _last_stats_save >= 2.0:
-                _atomic_write_json_sync(STATS_JSON_PATH, stats)
-                _last_stats_save = now
-        except Exception as e:
-            logger.error(f"Failed to persist stats to disk: {e}")
-
-    # Throttle timeline file writes independently of the stats file (max once per 2 s)
-    timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-    if now - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
-        try:
-            loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(
-                None, 
-                _atomic_write_json_sync, 
-                timeline_path, 
-                copy.deepcopy(list(stats["timeline"]))
-            )
-            record_tool_usage._last_save = now
-            
-            def done_callback(f):
-                try:
-                    f.result()
-                except Exception as e:
-                    logger.warning(f"Failed to persist timeline in background: {e}")
-            
-            fut.add_done_callback(done_callback)
-        except RuntimeError:
-            # No running event loop — fall back to sync write
-            try:
-                _atomic_write_json_sync(timeline_path, stats["timeline"])
-                record_tool_usage._last_save = now
-            except Exception as e:
-                logger.warning(f"Failed to persist timeline: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to persist timeline: {e}")
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+            with open(timeline_path, "w") as f:
+                json.dump(stats["timeline"], f)
+            record_tool_usage._last_save = time.time()
+        except Exception:
+            pass  # disk persistence failure is non-fatal
 
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
@@ -908,12 +757,6 @@ async def get_best_free_model() -> dict:
                 
                 for m in data:
                     mid = m.get("id", "")
-                    # Denylist: skip stale/unreliable free tier models
-                    _denylist_prefixes = (
-                        "meta-llama/", "nousresearch/hermes-3-llama",
-                    )
-                    if any(mid.startswith(p) for p in _denylist_prefixes):
-                        continue
                     pricing = m.get("pricing", {})
                     # Standard pricing is string or float
                     p_prompt = pricing.get("prompt")
@@ -1095,29 +938,11 @@ async def chat_completions(request: Request):
 
     client_model = body.get("model", "llm-routing-auto-free")
 
-    # --- Langfuse parent trace: create early so child spans can reference it ---
-    langfuse_trace_id = None
-    parent_obs = None
-    lf = get_langfuse()
-    if lf:
-        try:
-            langfuse_trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
-            parent_obs = lf.start_observation(
-                trace_context={"trace_id": langfuse_trace_id},
-                name=f"triage-{client_model}",
-                input=last_user_message[:200],
-                level="DEFAULT",
-            )
-        except Exception as e:
-            logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
-            langfuse_trace_id = None
-            parent_obs = None
-
     if client_model in AUTO_MODELS:
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
         target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
-            last_user_message, bypass_cache=bypass_cache, langfuse_trace_id=langfuse_trace_id
+            last_user_message, bypass_cache=bypass_cache
         )
         logger.info(f"Triage decision (auto): Routing to -> '{target_model}'")
     elif client_model in DIRECT_TIERS:
@@ -1150,21 +975,31 @@ async def chat_completions(request: Request):
         stats["reasoning_requests"] = stats.get("reasoning_requests", 0) + 1
     elif target_model == "agent-advanced-core":
         stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
-    await save_persisted_stats()
+    save_persisted_stats()
 
-    # Update the parent Langfuse observation with classification results
-    if parent_obs:
+    # Push classification trace to Langfuse (v4 API: start_observation)
+    langfuse_trace_id = None
+    lf = get_langfuse()
+    if lf:
         try:
-            parent_obs.update(
+            # Create a trace ID first, then start an observation with it
+            trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
+            lf.start_observation(
+                trace_context={"trace_id": trace_id},
+                name=f"triage-{target_model}",
+                input=last_user_message[:200],
                 output={"tier": target_model, "raw": raw_classification},
                 metadata={
                     "triage_latency_ms": round(triage_latency, 2),
                     "cache_hit": was_cache_hit,
                     "total_requests": stats["total_requests"],
                 },
+                level="DEFAULT",
             )
+            lf.flush()
+            langfuse_trace_id = trace_id
         except Exception as e:
-            logger.warning(f"Langfuse trace update failed (non-fatal): {e}")
+            logger.warning(f"Langfuse trace push failed (non-fatal): {e}")
 
     # --- PREMIUM PROXY ROUTES ---
     # agy: triggered unconditionally for llm-routing-agy (direct).
@@ -1216,22 +1051,6 @@ async def chat_completions(request: Request):
                 session_id = hashlib.md5(fingerprint.encode()).hexdigest()
 
             if last_prompt:
-                # --- Langfuse child span: agy proxy ---
-                agy_span_obj = None
-                if langfuse_trace_id:
-                    lf_agy = get_langfuse()
-                    if lf_agy:
-                        try:
-                            agy_span_obj = lf_agy.start_observation(
-                                trace_context={"trace_id": langfuse_trace_id},
-                                name="agy-proxy",
-                                input=last_prompt[:200],
-                                metadata={"tier": target_model},
-                                level="DEFAULT",
-                            )
-                        except Exception:
-                            pass
-
                 agy_response = await try_agy_proxy(
                     prompt=last_prompt,
                     messages=messages,
@@ -1250,16 +1069,6 @@ async def chat_completions(request: Request):
                         model_name, latency_ms, route="google_oauth_direct"
                     )
                     logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
-
-                    # Finalize agy span
-                    if agy_span_obj:
-                        try:
-                            agy_span_obj.end(
-                                output={"model": model_name, "tokens": completion_tokens},
-                                metadata={"latency_ms": latency_ms, "tier": target_model},
-                            )
-                        except Exception:
-                            pass
 
                     if body.get("stream", False):
                         content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -1301,24 +1110,8 @@ async def chat_completions(request: Request):
                     else:
                         return agy_response
         except ImportError:
-            if agy_span_obj:
-                try:
-                    agy_span_obj.end(
-                        output={"error": "module_not_available"},
-                        metadata={"status": "skipped"},
-                    )
-                except Exception:
-                    pass
             logger.warning("agy_proxy module not available, falling back to LiteLLM")
         except Exception as e:
-            if agy_span_obj:
-                try:
-                    agy_span_obj.end(
-                        output={"error": str(e)[:200]},
-                        metadata={"status": "failed"},
-                    )
-                except Exception:
-                    pass
             logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
 
     # --- OLLAMA (via LiteLLM) ---
@@ -1350,22 +1143,6 @@ async def chat_completions(request: Request):
     # LiteLLM maps this to Nemotron → Kimi → GPT-OSS → local Qwen
     logger.info(f"Proxying to LiteLLM as model={target_model}")
 
-    # --- Langfuse child span: LiteLLM proxy ---
-    litellm_span_obj = None
-    if langfuse_trace_id:
-        lf_litellm = get_langfuse()
-        if lf_litellm:
-            try:
-                litellm_span_obj = lf_litellm.start_observation(
-                    trace_context={"trace_id": langfuse_trace_id},
-                    name="litellm-proxy",
-                    input=target_model,
-                    metadata={"model": target_model},
-                    level="DEFAULT",
-                )
-            except Exception:
-                pass
-
     # Set up outgoing proxy request
     client = httpx.AsyncClient(timeout=3600.0)
     headers = {"Authorization": f"Bearer {backend_api_key}"}
@@ -1376,41 +1153,9 @@ async def chat_completions(request: Request):
     proxy_start = time.time()
     model_name = target_model  # LiteLLM handles fallback internally
     
-    # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
-    # Hermes agents set max_tokens=65536 unconditionally, but some free models have
-    # context limits as low as 32K. Without clamping, input+output exceeds the limit
-    # and the request fails with a 400 BadRequest (context_length exceeded).
-    # We estimate input tokens and clamp max_tokens to leave a 2K safety margin.
     try:
         body_to_send = body.copy()
         body_to_send["model"] = model_name
-        requested_max_tokens = body_to_send.get("max_tokens", 4096)
-        if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
-            # Tier-aware minimum context length (from actual roster data):
-            # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-            # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-            # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-            _tier_min_ctx = {
-                "agent-simple-core": 32768,
-                "ollama-deepseek-v4-pro": 1000000,
-                "ollama-deepseek-v4-flash": 1000000,
-            }
-            _min_ctx = _tier_min_ctx.get(model_name, 262144)
-            # Rough input token estimate: 1 token ≈ 4 chars of JSON
-            _est_input = len(json.dumps(body_to_send)) // 4
-            _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
-            if requested_max_tokens > _safe_max:
-                logger.warning(
-                    f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
-                    f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
-                )
-                body_to_send["max_tokens"] = _safe_max
-    except Exception as e:
-        logger.warning(f"Pre-screening failed (non-fatal): {e}")
-        body_to_send = body.copy()
-        body_to_send["model"] = model_name
-    
-    try:
         if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
             body_to_send["metadata"] = {}
         body_to_send["metadata"]["trace_name"] = "agent-completion"
@@ -1431,15 +1176,6 @@ async def chat_completions(request: Request):
                         stats["total_proxy_time_ms"] += proxy_latency
                         stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                         record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
-                        # Finalize LiteLLM span (streaming path)
-                        if litellm_span_obj:
-                            try:
-                                litellm_span_obj.end(
-                                    output={"model": model_name, "stream": True},
-                                    metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
-                                )
-                            except Exception:
-                                pass
                     except Exception as ex:
                         logger.error(f"Stream error: {ex}")
                     finally:
@@ -1464,15 +1200,6 @@ async def chat_completions(request: Request):
                 prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
                 completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
                 record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
-                # Finalize LiteLLM span (non-streaming path)
-                if litellm_span_obj:
-                    try:
-                        litellm_span_obj.end(
-                            output={"model": model_name, "tokens": completion_tokens},
-                            metadata={"latency_ms": proxy_latency},
-                        )
-                    except Exception:
-                        pass
                 return resp_json
             else:
                 logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
@@ -1627,43 +1354,32 @@ async def get_dashboard():
     # 2b. Fetch live llama.cpp metrics
     llamacpp = await get_llamacpp_metrics()
 
-    # 3. Calculative metrics — 5-tier triage table
-    tier_data = [
-        {"tier": "agent-simple-core",    "count": stats.get("simple_requests", 0),    "color": "#34d399"},
-        {"tier": "agent-medium-core",    "count": stats.get("medium_requests", 0),    "color": "#fbbf24"},
-        {"tier": "agent-complex-core",   "count": stats.get("complex_requests", 0),   "color": "#a78bfa"},
-        {"tier": "agent-reasoning-core", "count": stats.get("reasoning_requests", 0), "color": "#60a5fa"},
-        {"tier": "agent-advanced-core",  "count": stats.get("advanced_requests", 0),  "color": "#f472b6"},
-    ]
-    total_tier = sum(t["count"] for t in tier_data)
-    for t in tier_data:
-        t["ratio"] = (t["count"] / total_tier * 100.0) if total_tier > 0 else 0.0
+    # 3. Calculative metrics — 5-tier triage ratios
+    tier_data = {
+        "simple":  {"count": stats.get("simple_requests", 0),    "label": "Simple Core (Lite/Gemma)",  "color": "#34d399"},
+        "medium":  {"count": stats.get("medium_requests", 0),    "label": "Medium Core",                "color": "#fbbf24"},
+        "complex": {"count": stats.get("complex_requests", 0),   "label": "Complex Core (Qwen)",         "color": "#a78bfa"},
+        "reasoning":{"count": stats.get("reasoning_requests", 0),"label": "Reasoning Core (Claude)",      "color": "#60a5fa"},
+        "advanced":{"count": stats.get("advanced_requests", 0),  "label": "Advanced Core (Nemotron)",    "color": "#f472b6"},
+    }
+    for k, v in tier_data.items():
+        v["ratio"] = (v["count"] / stats["total_requests"] * 100.0) if stats["total_requests"] > 0 else 0.0
 
-    # Build tier table rows
-    tier_table_rows = ""
-    for t in tier_data:
-        tier_table_rows += f"""
-        <tr>
-            <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{t['color']};">
-                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{t['color']};margin-right:8px;box-shadow:0 0 4px {t['color']}aa;"></span>
-                {t['tier']}
-            </td>
-            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{t['count']}</td>
-            <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{t['ratio']:.1f}%</td>
-        </tr>"""
-    tier_table_html = f"""
-    <table style="width:100%;border-collapse:collapse;">
-        <thead>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
-                <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Tier</th>
-                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Requests</th>
-                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Share</th>
-            </tr>
-        </thead>
-        <tbody>
-            {tier_table_rows}
-        </tbody>
-    </table>"""
+    # Build 5-segment stacked bar widths for inline CSS
+    tier_bar_segments = ""
+    for k, v in tier_data.items():
+        if v["ratio"] > 0:
+            tier_bar_segments += f'<div style="width:{v["ratio"]:.2f}%;background:linear-gradient(90deg,{v["color"]},{v["color"]}dd);transition:width 0.5s ease;height:100%;"></div>'
+
+    # Build 5-item legend rows
+    tier_legend_rows = ""
+    for k, v in tier_data.items():
+        tier_legend_rows += f"""
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:2px;background:{v['color']};display:inline-block;box-shadow:0 0 4px {v['color']}aa;"></span>
+            <span style="font-weight:600;">{v['label']}:</span>
+            <span style="opacity:0.7;">{v['count']} requests ({v['ratio']:.1f}%)</span>
+        </div>"""
 
     # 4. Generate dynamic conic-gradient CSS background for the Pie Chart
     pie_gradient = get_pie_chart_gradient()
@@ -2273,9 +1989,6 @@ async def get_dashboard():
                 <div class="logo-text">Antigravity Gateway</div>
             </div>
             <div class="dashboard-title">System Control Center</div>
-            <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-                <a href="/visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
-            </div>
         </header>
 
         {oauth_banner_html}
@@ -2315,7 +2028,12 @@ async def get_dashboard():
 
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
                         <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
-                        {tier_table_html}
+                        <div class="ratio-container">
+                            {tier_bar_segments}
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:12px;justify-content:center;">
+                            {tier_legend_rows}
+                        </div>
                     </div>
                 </div>
 
@@ -2530,38 +2248,6 @@ async def get_dashboard():
     </html>
     """
     return html_content
-
-# --- Static files (visualizer, data files) ---
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-DATA_DIR = Path(__file__).resolve().parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
-
-@app.get("/visualizer", response_class=HTMLResponse)
-async def get_visualizer():
-    """Serve the dataset visualizer for human review."""
-    vis_path = STATIC_DIR / "visualizer.html"
-    if vis_path.exists():
-        return HTMLResponse(vis_path.read_text())
-    return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
-
-class AnnotationItem(BaseModel):
-    tier: Union[int, str, None] = None
-    note: str = ""
-    ts: Optional[str] = None
-
-@app.post("/dashboard/save-annotations")
-async def save_annotations(payload: Dict[str, AnnotationItem]):
-    """Save human review annotations to disk."""
-    try:
-        body = {k: (v.model_dump() if hasattr(v, "model_dump") else v.dict()) for k, v in payload.items()}
-        ann_path = DATA_DIR / "annotations.json"
-        await _atomic_write_json_async(str(ann_path), body)
-        return JSONResponse({"status": "ok", "saved": len(body)})
-    except Exception as e:
-        logger.error(f"Failed to save annotations: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save annotations")
 
 if __name__ == "__main__":
     import uvicorn

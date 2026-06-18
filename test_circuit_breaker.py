@@ -1,176 +1,135 @@
 #!/usr/bin/env python3
 """
-Integration test for the agy dual circuit breaker.
+Integration test for the agy circuit breaker.
 
-Simulates consecutive quota failures and verifies:
-  - Independent google and vendor breakers
+Simulates 4 consecutive quota failures and verifies:
   - Tier 1 cooldown (5 min) after 1st failure
   - Tier 2 cooldown (30 min) after 2nd failure  
   - Tier 3 cooldown (5 hours) after 3rd failure
   - Probe behavior: one allowed attempt after cooldown
   - Reset to Tier 0 on success
   - Stay at Tier 3 on repeated failure
-  - Backward compatibility of master breaker methods
 """
 
 import sys
 import time
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'router'))
+sys.path.insert(0, '/home/gpav/Vrac/LAB/AI/LLM-Routing/router')
 
 from circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
 
 
-def reset_breakers():
-    b = get_breaker()
-    for sub in (b.google, b.vendor):
-        sub.tier = 0
-        sub.cooldown_until = 0.0
-        sub.probe_granted = False
-        sub.total_trips = 0
-        sub.last_trip_time = 0.0
-
-
 def test_initial_state():
     """Breaker starts at Tier 0 (open)."""
-    reset_breakers()
     b = get_breaker()
+    b.tier = 0
+    b.cooldown_until = 0
+    b.probe_granted = False
+    b.total_trips = 0
     assert b.is_allowed() == True
     assert b.tier == 0
-    assert b.google.is_allowed() == True
-    assert b.vendor.is_allowed() == True
-    print("✓ Initial state: Tier 0, allowed")
+    print("✓ Initial state: Tier 0, agy allowed")
 
 
 def test_first_failure_trips_to_tier1():
     """1st failure → Tier 1, 5 min cooldown."""
-    reset_breakers()
     b = get_breaker()
-    
-    b.google.record_failure()
-    assert b.google.tier == 1
-    assert b.google.cooldown_until > time.time()
-    assert b.google.is_allowed() == False
-    
-    # Master breaker is still allowed because vendor is allowed (backward compatible fallback)
-    assert b.is_allowed() == True
-    print("✓ 1st failure → Tier 1 (5 min cooldown) on google breaker")
+    b.tier = 0
+    b.cooldown_until = 0
+    b.probe_granted = False
+    b.record_failure()
+    assert b.tier == 1, f"Expected tier 1, got {b.tier}"
+    assert b.cooldown_until > time.time(), "Cooldown should be set"
+    assert b.is_allowed() == False, "Should block during cooldown"
+    print("✓ 1st failure → Tier 1 (5 min cooldown)")
 
 
 def test_probe_granted_after_cooldown():
     """After cooldown expires, exactly one probe is allowed."""
-    reset_breakers()
     b = get_breaker()
-    
-    b.google.tier = 1
-    b.google.cooldown_until = time.time() - 10  # expired 10s ago
-    b.google.probe_granted = False
-    
-    assert b.google.is_allowed() == True, "Probe should be granted"
-    assert b.google.probe_granted == True, "Probe flag should be set"
-    assert b.google.is_allowed() == False, "Second call should be denied"
+    b.tier = 1
+    b.cooldown_until = time.time() - 10  # expired 10s ago
+    b.probe_granted = False
+    assert b.is_allowed() == True, "Probe should be granted"
+    assert b.probe_granted == True, "Probe flag should be set"
+    assert b.is_allowed() == False, "Second call should be denied"
     print("✓ Probe granted after cooldown expiry, consumed on next check")
 
 
 def test_probe_failure_advances_tier():
     """Probe failure → advance to next tier."""
-    reset_breakers()
     b = get_breaker()
-    
-    b.google.tier = 1
-    b.google.cooldown_until = time.time() - 10
-    b.google.probe_granted = True  # probe was granted
-    b.google.record_failure()  # probe fails
-    
-    assert b.google.tier == 2, f"Expected tier 2, got {b.google.tier}"
-    assert b.google.probe_granted == False
+    b.tier = 1
+    b.cooldown_until = time.time() - 10
+    b.probe_granted = True  # probe was granted
+    b.record_failure()  # probe fails
+    assert b.tier == 2, f"Expected tier 2, got {b.tier}"
+    assert b.probe_granted == False
     print("✓ Failed probe at Tier 1 → advanced to Tier 2 (30 min)")
 
 
 def test_tier3_stays_at_tier3():
     """At Tier 3, failure → stays at Tier 3 (renews cooldown)."""
-    reset_breakers()
     b = get_breaker()
-    
-    b.google.tier = MAX_TIER
-    b.google.cooldown_until = time.time() - 10
-    b.google.probe_granted = True
-    old_until = b.google.cooldown_until
-    b.google.record_failure()
-    
-    assert b.google.tier == MAX_TIER, "Should stay at Tier 3"
-    assert b.google.cooldown_until > old_until, "Cooldown should be renewed"
-    assert b.google.probe_granted == False
+    b.tier = MAX_TIER
+    b.cooldown_until = time.time() - 10
+    b.probe_granted = True
+    old_until = b.cooldown_until
+    b.record_failure()
+    assert b.tier == MAX_TIER, "Should stay at Tier 3"
+    assert b.cooldown_until > old_until, "Cooldown should be renewed"
+    assert b.probe_granted == False
     print("✓ Tier 3 failure → stays at Tier 3 (renews 5-hour cooldown)")
 
 
 def test_success_resets():
     """Success at any tier → reset to Tier 0."""
-    reset_breakers()
     b = get_breaker()
-    
-    b.google.tier = 2
-    b.google.cooldown_until = time.time() + 1000
-    b.google.probe_granted = False
-    b.google.record_success()
-    
-    assert b.google.tier == 0
-    assert b.google.is_allowed() == True
-    print("✓ Success resets breaker to Tier 0 from any tier")
-
-
-def test_backward_compatibility():
-    """Master breaker record_failure and record_success affect both breakers."""
-    reset_breakers()
-    b = get_breaker()
-    
-    b.record_failure()
-    assert b.google.tier == 1
-    assert b.vendor.tier == 1
-    assert b.is_allowed() == False  # both blocked
-    
+    b.tier = 2
+    b.cooldown_until = time.time() + 1000
+    b.probe_granted = False
     b.record_success()
-    assert b.google.tier == 0
-    assert b.vendor.tier == 0
+    assert b.tier == 0
     assert b.is_allowed() == True
-    print("✓ Master record_failure and record_success maintain compatibility")
+    print("✓ Success resets breaker to Tier 0 from any tier")
 
 
 def test_full_cycle():
     """Complete cycle: success → 3 failures → probe success → reset."""
-    reset_breakers()
     b = get_breaker()
-    sub = b.google
+    b.tier = 0
+    b.cooldown_until = 0
+    b.probe_granted = False
+    b.total_trips = 0
 
     # Operate normally
-    assert sub.is_allowed()
-    sub.record_success()
-    assert sub.tier == 0
+    assert b.is_allowed()
+    b.record_success()
+    assert b.tier == 0
 
     # 1st failure
-    sub.record_failure()
-    assert sub.tier == 1
-    assert not sub.is_allowed()
+    b.record_failure()
+    assert b.tier == 1
+    assert not b.is_allowed()
 
     # Simulate cooldown expiry
-    sub.cooldown_until = time.time() - 10
-    assert sub.is_allowed()  # probe granted
-    sub.record_failure()  # probe fails
-    assert sub.tier == 2
+    b.cooldown_until = time.time() - 10
+    assert b.is_allowed()  # probe granted
+    b.record_failure()  # probe fails
+    assert b.tier == 2
 
     # Simulate cooldown expiry
-    sub.cooldown_until = time.time() - 10
-    assert sub.is_allowed()  # probe granted
-    sub.record_failure()  # probe fails again
-    assert sub.tier == 3
+    b.cooldown_until = time.time() - 10
+    assert b.is_allowed()  # probe granted
+    b.record_failure()  # probe fails again
+    assert b.tier == 3
     assert TIER_COOLDOWNS[3] == 18000, "Tier 3 must be 5 hours"
 
     # Simulate cooldown expiry + probe success
-    sub.cooldown_until = time.time() - 10
-    assert sub.is_allowed()  # probe granted
-    sub.record_success()  # probe succeeds
-    assert sub.tier == 0
-    assert sub.total_trips == 3
+    b.cooldown_until = time.time() - 10
+    assert b.is_allowed()  # probe granted
+    b.record_success()  # probe succeeds
+    assert b.tier == 0
+    assert b.total_trips == 3
 
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
 
@@ -182,7 +141,6 @@ if __name__ == "__main__":
     test_probe_failure_advances_tier()
     test_tier3_stays_at_tier3()
     test_success_resets()
-    test_backward_compatibility()
     test_full_cycle()
     
     print("\n" + "=" * 60)

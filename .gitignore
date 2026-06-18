@@ -26,12 +26,3 @@ router/__pycache__/
 router/router_stats.json
 router/quantization_report.txt
 router/router_timeline.json
-router/best_free_model.json
-router/free_models_roster.json
-
-# Hermes agent artifacts
-.hermes/
-workdirs/
-
-# Dataset work in progress
-data/
