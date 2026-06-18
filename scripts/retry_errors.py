@@ -1,0 +1,99 @@
+"""Retry the 94 failed prompts with 800-char truncation (safe for 4096-ctx model)."""
+import json, urllib.request, time, subprocess
+from pathlib import Path
+from collections import Counter
+
+PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.
+
+agent-simple-core: trivial one-liners, syntax fixes, single-line edits
+agent-medium-core: single-function changes, light refactoring, simple tests
+agent-complex-core: multi-file changes, algorithmic work, data pipelines
+agent-reasoning-core: deep analysis, architecture decisions, debugging complex systems
+agent-advanced-core: system-level architecture, cross-cutting concerns, novel design
+
+Task: """
+
+MAX_CHARS = 600  # proven safe across all prompt types in this dataset
+
+def get_model_port():
+    """Discover the gemma4-26a4b-routing model's direct port (bypass router prompt-cache bug)."""
+    req = urllib.request.Request('http://127.0.0.1:8080/v1/models')
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read())
+    for m in data.get('data', []):
+        if 'gemma4-26a4b' in m.get('id', ''):
+            args = m['status']['args']
+            for i, v in enumerate(args):
+                if v == '--port':
+                    return args[i + 1]
+    raise RuntimeError("gemma4-26a4b-routing model port not found")
+
+MODEL_PORT = get_model_port()
+MODEL_URL = f"http://127.0.0.1:{MODEL_PORT}/v1/chat/completions"
+print(f"Using model directly on port {MODEL_PORT}")
+
+def classify(prompt):
+    if len(prompt) > MAX_CHARS:
+        prompt = prompt[:MAX_CHARS]
+    payload = {
+        "model": "gemma4-26a4b-routing",
+        "messages": [{"role": "user", "content": PROMPT_TEMPLATE + prompt}],
+        "temperature": 0.0,
+        "max_tokens": 15,
+    }
+    req = urllib.request.Request(
+        MODEL_URL,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    content = data["choices"][0]["message"].get("content", "").strip()
+    # Normalize: strip "tier:" prefix, extract just the tier name
+    for tier in TIERS:
+        if tier in content:
+            return tier
+    return content
+
+TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
+
+data_dir = Path(__file__).resolve().parent.parent / "data"
+with open(data_dir / "classified_dataset.json") as f:
+    dataset = json.load(f)
+with open(data_dir / "raw_prompts_hermes.json") as f:
+    all_prompts = json.load(f)
+
+error_indices = [i for i, p in enumerate(dataset['prompts']) if p['tier'] == 'ERROR']
+print(f"Retrying {len(error_indices)} failed prompts (max {MAX_CHARS} chars)...")
+
+fixed = 0
+errors = 0
+
+for batch_start in range(0, len(error_indices), 5):
+    batch = error_indices[batch_start:batch_start + 5]
+    for idx in batch:
+        prompt = all_prompts[idx]['prompt']
+        try:
+            tier = classify(prompt)
+            dataset['prompts'][idx]['tier'] = tier
+            fixed += 1
+        except Exception as e:
+            errors += 1
+            print(f"  [{idx}] still failing: {str(e)[:80]}")
+        time.sleep(3)  # single-slot server needs headroom
+    if batch_start + 5 < len(error_indices):
+        print(f"  batch {batch_start//5 + 1}/{(len(error_indices)+4)//5}: {fixed} fixed, {errors} errors")
+        time.sleep(5)
+
+from collections import Counter
+new_counts = Counter(p['tier'] for p in dataset['prompts'])
+dataset['counts'] = {k: v for k, v in new_counts.items()}
+dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
+                   if new_counts.get(t, 0) < 20]
+
+with open(data_dir / "classified_dataset.json", 'w') as f:
+    json.dump(dataset, f, indent=2, ensure_ascii=False)
+
+print(f"\nDone. Fixed: {fixed}, Errors: {errors}")
+for tier in sorted(new_counts.keys()):
+    print(f"  {tier:30s} {new_counts[tier]:3d}")
