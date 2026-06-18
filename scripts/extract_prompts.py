@@ -1,5 +1,12 @@
-"""Extract 300 meaningful coding prompts from Langfuse observations."""
-import os, base64, json, urllib.request, urllib.error, sys, time
+"""Re-extract prompts using FIRST user message (not last) — fixes truncation."""
+import os
+import base64
+import json
+import urllib.request
+import urllib.error
+import sys
+import time
+import re
 from pathlib import Path
 
 env = {}
@@ -25,13 +32,15 @@ TRIVIAL_PATTERNS = [
 ]
 
 def is_trivial(prompt):
-    """Filter out test pings and trivial prompts."""
+    """Filter out test pings and trivial prompts using word boundaries to avoid partial matches."""
     lower = prompt.strip().lower()
     if len(lower) < 20:
         return True
     for pat in TRIVIAL_PATTERNS:
-        if pat in lower and len(lower) < 50:
-            return True
+        if len(lower) < 50:
+            escaped = re.escape(pat)
+            if re.search(r'\b' + escaped + r'\b', lower):
+                return True
     return False
 
 def fetch_observations(page=1, limit=50):
@@ -42,34 +51,46 @@ def fetch_observations(page=1, limit=50):
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
 
-def extract_user_prompt(obs):
-    """Extract the last user message from an observation's input."""
+def extract_first_user_prompt(obs):
+    """Extract the FIRST real user message (skip system notes)."""
     inp = obs.get('input')
     if not inp:
         return None
     if isinstance(inp, str):
         try:
             inp = json.loads(inp)
-        except:
+        except Exception:
             return None
     if not isinstance(inp, dict):
         return None
     messages = inp.get('messages', [])
     if not messages:
         return None
-    for msg in reversed(messages):
-        if isinstance(msg, dict) and msg.get('role') == 'user':
-            content = msg.get('content', '')
-            if isinstance(content, str) and len(content.strip()) > 3:
-                return content.strip()
+    
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get('role') != 'user':
+            continue
+        content = msg.get('content', '')
+        if not isinstance(content, str) or len(content.strip()) <= 3:
+            continue
+        # Skip Hermes system notes injected as user messages
+        stripped = content.strip()
+        if stripped.startswith('[System:') or stripped.startswith('[Note:'):
+            continue
+        if stripped.startswith('[IMPORTANT:'):
+            # Skill invocations — keep these, they're real prompts
+            pass
+        return stripped
     return None
 
-print("Extracting meaningful coding prompts from Langfuse observations...")
+print("Re-extracting prompts using FIRST user message...")
 prompts = []
 seen = set()
 page = 1
 target = 300
-max_pages = 50  # 50 pages × 50 = 2500 observations
+max_pages = 100
 
 while len(prompts) < target and page <= max_pages:
     try:
@@ -79,26 +100,21 @@ while len(prompts) < target and page <= max_pages:
         break
     
     obs_list = data.get('data', [])
-    total_available = data.get('meta', {}).get('totalItems', 0)
-    
     if not obs_list:
         print(f"  Page {page}: empty, stopping")
         break
     
-    added_this_page = 0
+    added = 0
     for obs in obs_list:
         if len(prompts) >= target:
             break
         
-        prompt = extract_user_prompt(obs)
+        prompt = extract_first_user_prompt(obs)
         if not prompt:
             continue
-        
-        # Skip trivial test pings
         if is_trivial(prompt):
             continue
         
-        # Deduplicate
         norm = prompt.strip().lower()
         if norm in seen:
             continue
@@ -111,26 +127,23 @@ while len(prompts) < target and page <= max_pages:
             "timestamp": obs.get('startTime', ''),
             "model": obs.get('model', ''),
         })
-        added_this_page += 1
+        added += 1
     
-    print(f"  Page {page}: {len(obs_list)} obs, +{added_this_page} new → {len(prompts)} total (of {total_available} available)")
+    print(f"  Page {page}: +{added} new → {len(prompts)} total")
     page += 1
-    time.sleep(0.1)  # gentle rate limit
+    time.sleep(0.1)
 
-# Save
 out_dir = Path(__file__).resolve().parent.parent / "data"
-out_dir.mkdir(exist_ok=True)
-out_path = out_dir / "raw_prompts.json"
-
+out_path = out_dir / "raw_prompts_v2.json"
 with open(out_path, 'w') as f:
     json.dump(prompts, f, indent=2, ensure_ascii=False)
 
 print(f"\nSaved {len(prompts)} prompts to {out_path}")
 
-# Stats
 lengths = [len(p['prompt']) for p in prompts]
-print(f"Length range: {min(lengths)}-{max(lengths)} chars")
-print(f"Avg length: {sum(lengths)/len(lengths):.0f} chars")
-print(f"\nSample (first 10):")
-for p in prompts[:10]:
-    print(f"  [{p['timestamp'][:19]}] {p['prompt'][:120]}...")
+if lengths:
+    print(f"Length: min={min(lengths)}, max={max(lengths)}, median={sorted(lengths)[len(lengths)//2]}, avg={sum(lengths)/len(lengths):.0f}")
+    print(f"Short (<100 chars): {sum(1 for l in lengths if l < 100)}")
+    print(f"\nSample (first 10):")
+    for p in prompts[:10]:
+        print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])}c) {p['prompt'][:120]}...")

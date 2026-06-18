@@ -34,6 +34,7 @@ class PerModelBreaker:
     """Tracks quota exhaustion for a specific model family with exponential cooldown."""
 
     def __init__(self, name: str):
+        """Initialize the per-model circuit breaker with a name and default tier/cooldown states."""
         self.name = name
         self.tier: int = 0        # 0 = open (allowed), 1-3 = cooldown active
         self.cooldown_until: float = 0.0
@@ -84,8 +85,6 @@ class PerModelBreaker:
 
         if self.tier == 0:
             new_tier = 1
-        elif self.probe_granted:
-            new_tier = min(self.tier + 1, MAX_TIER)
         else:
             new_tier = min(self.tier + 1, MAX_TIER)
 
@@ -130,6 +129,7 @@ class DualCircuitBreaker:
     """
 
     def __init__(self):
+        """Initialize the dual circuit breaker with separate google and vendor sub-breakers."""
         self.google = PerModelBreaker("google")
         self.vendor = PerModelBreaker("vendor")
 
@@ -137,6 +137,7 @@ class DualCircuitBreaker:
     # Default to checking BOTH — if either allows, return allowed.
     # This ensures old code without model awareness works correctly.
     def is_allowed(self) -> bool:
+        """Check if either the google or vendor breaker allows the request (backward-compat)."""
         return self.google.is_allowed() or self.vendor.is_allowed()
 
     def record_failure(self):
@@ -151,9 +152,11 @@ class DualCircuitBreaker:
 
     @property
     def tier(self) -> int:
+        """Return the maximum cooldown tier across both google and vendor sub-breakers."""
         return max(self.google.tier, self.vendor.tier)
 
     def status(self) -> dict:
+        """Return the aggregated status dictionary of both sub-breakers for the dashboard."""
         return {
             "google": self.google.status(),
             "vendor": self.vendor.status(),

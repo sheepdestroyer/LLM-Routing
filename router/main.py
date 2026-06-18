@@ -5,12 +5,18 @@ import time
 import socket
 import asyncio
 import logging
+import copy
+import tempfile
 import yaml
 import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from circuit_breaker import get_breaker
+from pydantic import BaseModel
+from typing import Dict, Optional, Union
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -126,6 +132,10 @@ stats = {
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
+# Module-level set to hold references to fire-and-forget background tasks,
+# preventing premature garbage collection before the task completes (Ruff RUF006).
+_background_tasks: set = set()
+
 def load_persisted_stats():
     """Loads persisted statistics from disk on startup to prevent resets on pod redeployment."""
     global stats
@@ -151,13 +161,60 @@ def load_persisted_stats():
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
-def save_persisted_stats():
-    """Persists current statistics in-memory structure to disk securely."""
+def _atomic_write_json_sync(path: str, data) -> None:
+    """Synchronously write JSON data to path using atomic temp-file + os.replace."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
     try:
-        os.makedirs(os.path.dirname(STATS_JSON_PATH), exist_ok=True)
-        with open(STATS_JSON_PATH, "w") as f:
-            json.dump(stats, f, indent=2)
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except Exception:
+            os.close(fd)
+            raise
+        
+        with f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise
+
+
+async def _atomic_write_json_async(path: str, data) -> None:
+    """Asynchronously write JSON data to path via thread pool executor.
+
+    Deep-copies the data to prevent concurrent modification from the main thread
+    while the executor thread is serializing it.
+    """
+    loop = asyncio.get_running_loop()
+    data_copy = copy.deepcopy(data)
+    await loop.run_in_executor(None, _atomic_write_json_sync, path, data_copy)
+
+
+_last_stats_save = 0.0
+
+async def save_persisted_stats(force=False):
+    """Persists current statistics in-memory structure to disk securely (non-blocking).
+
+    Offloads the synchronous file write to a thread pool executor so the
+    event loop is not blocked. The 2-second throttle is checked before
+    dispatching.
+    """
+    global _last_stats_save
+    now = time.monotonic()
+
+    # Throttle disk writes to max once per 2 seconds, unless forced
+    if not force and (now - _last_stats_save < 2.0):
+        return
+
+    _last_stats_save = now  # Set immediately to prevent concurrent writes during await
+    try:
+        await _atomic_write_json_async(STATS_JSON_PATH, stats)
     except Exception as e:
+        _last_stats_save = 0.0  # Reset on failure to allow immediate retry
         logger.error(f"Failed to persist stats to disk: {e}")
 
 # Load initial stats from persistent storage
@@ -234,6 +291,7 @@ async def sync_adaptive_router_roster(master_key: str):
     if max_score < 1.0:
         max_score = 55.0  # safety floor
     def norm(s: float) -> float:
+        """Helper to scale raw model index score against max score in roster to 0-100 range."""
         return (s / max_score) * 100.0
     for score, mid in free_models:  # include all models — top 2 are also assigned to their correct tier
         n = norm(score)
@@ -325,16 +383,34 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(1)
     else:
         logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
-        yield
-        return
-    # Sync free-model roster into LiteLLM (separate try so sync failure doesn't loop)
+
+    # Sync free-model roster into LiteLLM (non-fatal if it fails)
+    if litellm_master_key:
+        try:
+            await sync_adaptive_router_roster(litellm_master_key)
+        except Exception as e:
+            logger.error(f"Roster sync failed: {e}")
+
+    # Start background task before yield so it runs during app lifetime
+    task = asyncio.create_task(push_aggregate_scores())
+
     try:
-        await sync_adaptive_router_roster(litellm_master_key)
-    except Exception as e:
-        logger.error(f"Roster sync failed: {e}")
-    yield
-    # Start aggregate score-push background task (runs for server lifetime)
-    asyncio.create_task(push_aggregate_scores())
+        yield
+    finally:
+        # Cancel background score task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Flush any buffered stats/timeline on clean shutdown (always runs)
+        await save_persisted_stats(force=True)
+        try:
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+            await _atomic_write_json_async(timeline_path, stats["timeline"])
+        except Exception as e:
+            logger.warning(f"Failed to persist timeline on shutdown: {e}")
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
@@ -375,7 +451,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
         if time.time() - cached_time < CACHE_TTL_SECONDS:
             logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
             stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-            save_persisted_stats()
+            await save_persisted_stats()
             return cached_decision, 0.0, True, cached_decision  # was_cache_hit=True
             
     start_time = time.time()
@@ -388,7 +464,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
             if time.time() - cached_time < CACHE_TTL_SECONDS:
                 logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
                 stats["cache_hits"] = stats.get("cache_hits", 0) + 1
-                save_persisted_stats()
+                await save_persisted_stats()
                 return cached_decision, 0.0, True, cached_decision
                 
         try:
@@ -478,6 +554,7 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 def get_live_gemini_oauth_token() -> str | None:
+    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
         creds_path = "/config/gemini_auth/oauth_creds.json"
         if os.path.exists(creds_path):
@@ -597,7 +674,12 @@ def detect_active_tool(body: dict) -> str:
     return "none"
 
 def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float, route: str = "litellm_fallback"):
-    """Accumulates token counts in memory for active tools and tracks request timelines."""
+    """Accumulates token counts in memory for active tools and tracks request timelines.
+
+    File writes are offloaded to a thread pool executor to avoid blocking the
+    event loop. The 2-second throttle is checked synchronously before
+    dispatching.
+    """
     if tool_name == "none":
         tool_name = "other"
     
@@ -625,13 +707,55 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     stats["timeline"].append(event)
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
-    save_persisted_stats()
+
+    # Fire-and-forget stats write via save_persisted_stats (non-blocking).
+    # Store the task reference in _background_tasks to prevent GC before completion (RUF006).
+    now = time.monotonic()
     try:
-        timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-        with open(timeline_path, "w") as f:
-            json.dump(stats["timeline"], f)
-    except Exception:
-        pass  # disk persistence failure is non-fatal
+        loop = asyncio.get_running_loop()
+        _task = loop.create_task(save_persisted_stats())
+        _background_tasks.add(_task)
+        _task.add_done_callback(_background_tasks.discard)
+    except RuntimeError:
+        # No running event loop (e.g. during early startup) — fall back to sync write
+        try:
+            global _last_stats_save
+            if now - _last_stats_save >= 2.0:
+                _atomic_write_json_sync(STATS_JSON_PATH, stats)
+                _last_stats_save = now
+        except Exception as e:
+            logger.error(f"Failed to persist stats to disk: {e}")
+
+    # Throttle timeline file writes independently of the stats file (max once per 2 s)
+    timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+    if now - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
+        try:
+            loop = asyncio.get_running_loop()
+            fut = loop.run_in_executor(
+                None, 
+                _atomic_write_json_sync, 
+                timeline_path, 
+                copy.deepcopy(list(stats["timeline"]))
+            )
+            record_tool_usage._last_save = now
+            
+            def done_callback(f):
+                """Log any uncaught exceptions returned from the background timeline executor thread."""
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.warning(f"Failed to persist timeline in background: {e}")
+            
+            fut.add_done_callback(done_callback)
+        except RuntimeError:
+            # No running event loop — fall back to sync write
+            try:
+                _atomic_write_json_sync(timeline_path, stats["timeline"])
+                record_tool_usage._last_save = now
+            except Exception as e:
+                logger.warning(f"Failed to persist timeline: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to persist timeline: {e}")
 
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
@@ -717,6 +841,7 @@ _AA_SCORES_CACHE: dict[str, float] = {}
 _AA_SCORES_LOADED = False
 
 def _load_aa_scores():
+    """Load the Artificial Analysis agentic scores cache from local config."""
     global _AA_SCORES_CACHE, _AA_SCORES_LOADED
     if _AA_SCORES_LOADED:
         return
@@ -945,6 +1070,7 @@ async def proxy_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    """Handle incoming OpenAI-compatible chat completions requests and route them dynamically based on triage logic."""
     global stats
     start_time = time.time()
     
@@ -1037,7 +1163,7 @@ async def chat_completions(request: Request):
         stats["reasoning_requests"] = stats.get("reasoning_requests", 0) + 1
     elif target_model == "agent-advanced-core":
         stats["advanced_requests"] = stats.get("advanced_requests", 0) + 1
-    save_persisted_stats()
+    await save_persisted_stats()
 
     # Update the parent Langfuse observation with classification results
     if parent_obs:
@@ -1119,74 +1245,152 @@ async def chat_completions(request: Request):
                         except Exception:
                             pass
 
+                is_stream_requested = body.get("stream", False)
                 agy_response = await try_agy_proxy(
                     prompt=last_prompt,
                     messages=messages,
                     session_id=session_id,
                     total_timeout=300.0,
+                    stream=is_stream_requested,
                     target_tier=target_model
                 )
                 if agy_response:
-                    latency_ms = (time.time() - start_time) * 1000.0
                     model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
-                    usage = agy_response.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    record_tool_usage(
-                        active_tool, prompt_tokens, completion_tokens,
-                        model_name, latency_ms, route="google_oauth_direct"
-                    )
-                    logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
-
-                    # Finalize agy span
-                    if agy_span_obj:
-                        try:
-                            agy_span_obj.end(
-                                output={"model": model_name, "tokens": completion_tokens},
-                                metadata={"latency_ms": latency_ms, "tier": target_model},
-                            )
-                        except Exception:
-                            pass
-
-                    if body.get("stream", False):
-                        content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        async def agy_stream_generator():
+                    
+                    if "stream" in agy_response:
+                        # Real native stream generator
+                        async def native_agy_stream_generator(stream_gen, model_name):
+                            """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
                             import uuid
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-                            chunk_size = 40
-                            for i in range(0, len(content), chunk_size):
-                                chunk_text = content[i:i+chunk_size]
-                                chunk_data = {
+                            token_count = 0
+                            try:
+                                async for token in stream_gen:
+                                    if not token:
+                                        continue
+                                    token_count += 1
+                                    chunk_data = {
+                                        "id": chunk_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_time,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": token},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
+
+                                # End of stream chunk
+                                finish_data = {
                                     "id": chunk_id,
                                     "object": "chat.completion.chunk",
                                     "created": created_time,
                                     "model": model_name,
                                     "choices": [{
                                         "index": 0,
-                                        "delta": {"content": chunk_text},
-                                        "finish_reason": None
+                                        "delta": {},
+                                        "finish_reason": "stop"
                                     }]
                                 }
-                                yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
-                                await asyncio.sleep(0.005)
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
+                                yield b"data: [DONE]\n\n"
 
-                            finish_data = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model_name,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {},
-                                    "finish_reason": "stop"
-                                }]
-                            }
-                            yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
-                            yield b"data: [DONE]\n\n"
-                        return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
+                                # Success telemetry
+                                latency_ms = (time.time() - start_time) * 1000.0
+                                # Approximate prompt tokens based on messages characters
+                                prompt_chars = sum(len(m.get("content", "")) for m in messages)
+                                approx_prompt_tokens = max(1, prompt_chars // 4)
+                                
+                                record_tool_usage(
+                                    active_tool, approx_prompt_tokens, token_count,
+                                    model_name, latency_ms, route="google_oauth_direct"
+                                )
+                                logger.info(f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms")
+                                if agy_span_obj:
+                                    try:
+                                        agy_span_obj.end(
+                                            output={"model": model_name, "tokens": token_count},
+                                            metadata={"latency_ms": latency_ms, "tier": target_model},
+                                        )
+                                    except Exception:
+                                        pass
+                            except Exception as stream_err:
+                                logger.error(f"Error during native agy stream generation: {stream_err}")
+                                if agy_span_obj:
+                                    try:
+                                        agy_span_obj.end(
+                                            output={"error": str(stream_err)[:200]},
+                                            metadata={"status": "failed"},
+                                        )
+                                    except Exception:
+                                        pass
+                                raise
+                        return StreamingResponse(native_agy_stream_generator(agy_response["stream"], model_name), media_type="text/event-stream")
                     else:
-                        return agy_response
+                        latency_ms = (time.time() - start_time) * 1000.0
+                        usage = agy_response.get("usage", {})
+                        prompt_tokens = usage.get("prompt_tokens", 0)
+                        completion_tokens = usage.get("completion_tokens", 0)
+                        record_tool_usage(
+                            active_tool, prompt_tokens, completion_tokens,
+                            model_name, latency_ms, route="google_oauth_direct"
+                        )
+                        logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
+
+                        # Finalize agy span
+                        if agy_span_obj:
+                            try:
+                                agy_span_obj.end(
+                                    output={"model": model_name, "tokens": completion_tokens},
+                                    metadata={"latency_ms": latency_ms, "tier": target_model},
+                                )
+                            except Exception:
+                                pass
+
+                        if is_stream_requested:
+                            # Robust fallback: simulate stream if we requested stream but got buffered response
+                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            async def agy_stream_generator():
+                                """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
+                                import uuid
+                                created_time = int(time.time())
+                                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+                                chunk_size = 40
+                                for i in range(0, len(content), chunk_size):
+                                    chunk_text = content[i:i+chunk_size]
+                                    chunk_data = {
+                                        "id": chunk_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_time,
+                                        "model": model_name,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": chunk_text},
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
+                                    await asyncio.sleep(0.005)
+
+                                finish_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model_name,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
+                                yield b"data: [DONE]\n\n"
+                            return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
+                        else:
+                            return agy_response
         except ImportError:
             if agy_span_obj:
                 try:
@@ -1308,6 +1512,7 @@ async def chat_completions(request: Request):
             r = await client.send(req, stream=True)
             if r.status_code == 200:
                 async def stream_generator():
+                    """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                     completion_chars = 0
                     request_tokens = len(json.dumps(body_to_send)) // 4
                     try:
@@ -1445,6 +1650,7 @@ async def metrics():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
+    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
     # 1. Run live health checks
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
@@ -1700,6 +1906,7 @@ async def get_dashboard():
     
     # Source badge helper: generates a colored inline source tag
     def src_badge(label, color):
+        """Generate inline HTML span styled as a colored status/category badge."""
         return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
 
     # 10. Pre-compute llama.cpp HTML cards
@@ -2160,6 +2367,9 @@ async def get_dashboard():
                 <div class="logo-text">Antigravity Gateway</div>
             </div>
             <div class="dashboard-title">System Control Center</div>
+            <div style="margin-top:8px;font-size:12px;opacity:0.6;">
+                <a href="/visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
+            </div>
         </header>
 
         {oauth_banner_html}
@@ -2414,6 +2624,95 @@ async def get_dashboard():
     </html>
     """
     return html_content
+
+# --- Static files (visualizer, data files) ---
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+
+@app.get("/visualizer", response_class=HTMLResponse)
+async def get_visualizer():
+    """Serve the dataset visualizer for human review."""
+    vis_path = STATIC_DIR / "visualizer.html"
+    if vis_path.exists():
+        return HTMLResponse(vis_path.read_text())
+    return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
+
+class AnnotationItem(BaseModel):
+    """Pydantic model representing a single human dataset review annotation."""
+    tier: Union[int, str, None] = None
+    note: str = ""
+    ts: Optional[str] = None
+
+VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+
+@app.post("/dashboard/save-annotations")
+async def save_annotations(payload: Dict[str, AnnotationItem]):
+    """Save human review annotations to disk."""
+    if len(payload) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
+        )
+    for k, item in payload.items():
+        # Allow numeric strings (dataset indexes) or stable hash keys starting with 'h' (hexadecimal)
+        is_valid_key = k.isdigit() or (
+            k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
+        )
+        if not is_valid_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
+            )
+        
+        t = item.tier
+        if t is not None:
+            if isinstance(t, int):
+                if t < 0 or t > 4:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier index {t} for index {k}: must be between 0 and 4."
+                    )
+            elif isinstance(t, str):
+                if t not in VALID_TIERS and t != "?":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier string '{t}' for index {k}."
+                    )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid tier type for index {k}: must be int, str, or null."
+                )
+        
+        if len(item.note) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."
+            )
+
+    try:
+        ann_path = DATA_DIR / "annotations.json"
+        existing = {}
+        if ann_path.exists():
+            try:
+                import json
+                with open(ann_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception as read_err:
+                logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
+        
+        # Merge new annotations into existing
+        for k, item in payload.items():
+            existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+            
+        await _atomic_write_json_async(str(ann_path), existing)
+        return JSONResponse({"status": "ok", "saved": len(payload)})
+    except Exception as e:
+        logger.error(f"Failed to save annotations: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save annotations")
 
 if __name__ == "__main__":
     import uvicorn
