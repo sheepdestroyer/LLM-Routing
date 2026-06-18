@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Verify circuit breaker integration into agy_proxy.py"""
 import sys
-sys.path.insert(0, '/home/gpav/Vrac/LAB/AI/LLM-Routing/router')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'router'))
 
 from circuit_breaker import get_breaker
 from agy_proxy import try_agy_proxy

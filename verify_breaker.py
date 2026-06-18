@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Verification test for the agy circuit breaker."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from router.circuit_breaker import get_breaker
 
 b = get_breaker()

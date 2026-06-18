@@ -15,7 +15,8 @@ Simulates consecutive quota failures and verifies:
 
 import sys
 import time
-sys.path.insert(0, '/home/gpav/Vrac/LAB/AI/LLM-Routing/router')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'router'))
 
 from circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
 
