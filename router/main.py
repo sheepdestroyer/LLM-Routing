@@ -159,28 +159,24 @@ def _atomic_write_json_sync(path: str, data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
-    f = None
     try:
-        f = os.fdopen(fd, "w")
-        json.dump(data, f, indent=2)
-        f.close()
-        f = None
-        os.replace(tmp_path, path)
-    except Exception:
-        if f is not None:
-            try:
-                f.close()
-            except Exception:
-                pass
-        else:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
         try:
-            os.unlink(tmp_path)
+            f = os.fdopen(fd, "w")
         except Exception:
-            pass
+            os.close(fd)
+            raise
+        
+        try:
+            with f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+    except Exception:
         raise
 
 
@@ -706,21 +702,18 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
 
-    # Fire-and-forget stats write via thread pool (non-blocking)
-    global _last_stats_save
+    # Fire-and-forget stats write via save_persisted_stats (non-blocking)
     now = time.monotonic()
-    if now - _last_stats_save >= 2.0:
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(save_persisted_stats())
+    except RuntimeError:
+        # No running event loop (e.g. during early startup) — fall back to sync write
         try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _atomic_write_json_sync, STATS_JSON_PATH, copy.deepcopy(dict(stats)))
-            _last_stats_save = now
-        except RuntimeError:
-            # No running event loop (e.g. during early startup) — fall back to sync write
-            try:
+            global _last_stats_save
+            if now - _last_stats_save >= 2.0:
                 _atomic_write_json_sync(STATS_JSON_PATH, stats)
                 _last_stats_save = now
-            except Exception as e:
-                logger.error(f"Failed to persist stats to disk: {e}")
         except Exception as e:
             logger.error(f"Failed to persist stats to disk: {e}")
 
@@ -729,8 +722,21 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     if now - getattr(record_tool_usage, "_last_save", 0.0) >= 2.0:
         try:
             loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _atomic_write_json_sync, timeline_path, copy.deepcopy(list(stats["timeline"])))
+            fut = loop.run_in_executor(
+                None, 
+                _atomic_write_json_sync, 
+                timeline_path, 
+                copy.deepcopy(list(stats["timeline"]))
+            )
             record_tool_usage._last_save = now
+            
+            def done_callback(f):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.warning(f"Failed to persist timeline in background: {e}")
+            
+            fut.add_done_callback(done_callback)
         except RuntimeError:
             # No running event loop — fall back to sync write
             try:
