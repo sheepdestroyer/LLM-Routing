@@ -71,6 +71,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <div class="stat">Agree: <span class="val" id="stat-agree">0</span></div>
     <div class="stat">Conflict: <span class="val" id="stat-conflict">0</span></div>
     <div class="stat">Reviewed: <span class="val" id="stat-reviewed">0</span></div>
+    <div class="stat" id="stat-agreement" style="display:none">Agreement: <span class="val">-</span></div>
   </div>
 </div>
 <div class="controls">
@@ -112,9 +113,15 @@ let selectedIdx = -1;
 async function init() {
   try {
     const resp = await fetch('data/classified_dataset.json');
-    dataset = (await resp.json()).prompts;
+    const raw = await resp.json();
+    dataset = raw.prompts || [];
+    // Extract global stats from combined dataset
+    if (raw.agreement !== undefined) {
+      document.getElementById('stat-agreement').textContent = raw.agreement + '%';
+      document.getElementById('stat-agreement').style.display = '';
+    }
   } catch(e) {
-    console.warn('Dataset not found, trying local path...');
+    console.warn('Dataset not found');
     dataset = [];
   }
   
@@ -139,8 +146,9 @@ async function init() {
 }
 
 function getBenchmarkPrediction(idx) {
-  if (benchmark.details && benchmark.details[idx]) {
-    return benchmark.details[idx].predicted;
+  // Read clf_tier directly from combined dataset (reclassify_all.py output)
+  if (dataset[idx] && dataset[idx].clf_tier) {
+    return dataset[idx].clf_tier;
   }
   return null;
 }
@@ -150,9 +158,12 @@ function getAnnotation(idx) {
 }
 
 function isConflict(idx) {
-  const pred = getBenchmarkPrediction(idx);
-  if (!pred || pred.startsWith('ERROR')) return null; // unknown
-  return pred !== dataset[idx].tier;
+  const p = dataset[idx];
+  if (!p) return null;
+  const llm = p.llm_tier || p.tier;  // support both old and new format
+  const pred = p.clf_tier || getBenchmarkPrediction(idx);
+  if (!pred || pred.startsWith('ERROR')) return null;
+  return pred !== llm;
 }
 
 function setFilter(filter) {
@@ -199,7 +210,8 @@ function render() {
   const listEl = document.getElementById('list');
   listEl.innerHTML = filtered.map(i => {
     const p = dataset[i];
-    const pred = getBenchmarkPrediction(i);
+    const llm = p.llm_tier || p.tier;
+    const pred = p.clf_tier;
     const ann = getAnnotation(i);
     const conflict = isConflict(i);
     
@@ -210,7 +222,7 @@ function render() {
     if (ann) tags += '<span class="tag human">REVIEWED</span>';
     
     return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})">
-      <div class="id">#${i} · LLM: ${p.tier.replace('agent-','')}${pred ? ' · CLS: ' + pred.replace('agent-','') : ''}</div>
+      <div class="id">#${i} · LLM: ${llm.replace('agent-','')}${pred ? ' · CLS: ' + pred.replace('agent-','') : ''}</div>
       <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
       <div class="tags">${tags}</div>
     </div>`;
@@ -228,9 +240,10 @@ function selectPrompt(idx) {
 
 function renderDetail(idx) {
   const p = dataset[idx];
-  const pred = getBenchmarkPrediction(idx);
+  const llm = p.llm_tier || p.tier;
+  const pred = p.clf_tier;
   const ann = getAnnotation(idx);
-  const conflict = isConflict(idx);
+  const conflict = pred && !pred.startsWith('ERROR') ? (pred !== llm) : null;
   
   let predCardClass = 'eval-card';
   let llmCardClass = 'eval-card';
@@ -247,7 +260,7 @@ function renderDetail(idx) {
   let tierBtns = TIERS.map(tier => {
     let cls = 'tier-btn';
     if (ann && ann.tier === tier) cls += ' selected-human';
-    if (p.tier === tier && !ann) cls += ' llm-label';
+    if (llm === tier && !ann) cls += ' llm-label';
     if (pred === tier) cls += ' classifier-label';
     return `<button class="${cls}" onclick="annotate(${idx}, '${tier}')">${tier.replace('agent-','')}</button>`;
   }).join('');
@@ -261,7 +274,7 @@ function renderDetail(idx) {
     <div class="evals">
       <div class="${llmCardClass}">
         <h3>🤖 LLM Evaluation (kanban worker)</h3>
-        <div class="tier" style="color:${TIER_COLORS[p.tier]}">${p.tier}</div>
+        <div class="tier" style="color:${TIER_COLORS[llm] || '#888'}">${llm}</div>
         <div style="font-size:0.7em;color:#888;margin-top:4px">original dataset label</div>
       </div>
       <div class="${predCardClass}">
