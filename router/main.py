@@ -1199,11 +1199,11 @@ async def chat_completions(request: Request):
 
     should_try_agy = (
         client_model == "llm-routing-agy"  # direct — always try
-        or (client_model in AUTO_MODELS and target_model in ("agent-advanced-core", "agent-reasoning-core"))
+        or (client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
     should_try_ollama = (
         client_model == "llm-routing-ollama"  # direct — always try
-        or (client_model in AUTO_MODELS and target_model in ("agent-advanced-core", "agent-reasoning-core"))
+        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
 
     # --- AGY PROXY ---
