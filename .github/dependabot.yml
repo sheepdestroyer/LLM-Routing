@@ -11,7 +11,6 @@ updates:
       separator: "/"
     commit-message:
       prefix: "chore(deps)"
-      prefix-major: "chore(deps)!"
       include: "scope"
     labels:
       - "dependencies"
@@ -20,11 +19,6 @@ updates:
       - "sheepdestroyer"
     allow:
       - dependency-type: "direct"
-    ignore:
-      # Ignore major version updates for critical services
-      # Uncomment and adjust as needed
-      # - dependency-name: "postgres"
-      #   update-types: ["version-update:semver-major"]
 
   # GitHub Actions dependency updates (optional - add if using GH Actions)
   - package-ecosystem: "github-actions"
