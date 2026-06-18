@@ -154,8 +154,22 @@ function getBenchmarkPrediction(idx) {
   return null;
 }
 
+function promptKey(idx) {
+  // Stable key derived from prompt text (djb2 hash), with index fallback for legacy annotations.
+  const p = dataset[idx];
+  if (!p || !p.prompt) return String(idx);
+  let hash = 5381;
+  for (let i = 0; i < Math.min(p.prompt.length, 500); i++) {
+    hash = ((hash << 5) + hash) + p.prompt.charCodeAt(i);
+    hash |= 0;  // convert to 32-bit int
+  }
+  return 'h' + (hash >>> 0).toString(16);
+}
+
 function getAnnotation(idx) {
-  return annotations[idx] || null;
+  const key = promptKey(idx);
+  // Stable key lookup first; fall back to legacy index key for backward compatibility
+  return annotations[key] || annotations[idx] || null;
 }
 
 function isConflict(idx) {
@@ -215,17 +229,17 @@ function render() {
     const pred = p.clf_tier;
     const ann = getAnnotation(i);
     const conflict = isConflict(i);
-    
+
     let tags = '';
     if (conflict === true) tags += '<span class="tag conflict">CONFLICT</span>';
     else if (conflict === false) tags += '<span class="tag agree">AGREE</span>';
     else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
     if (ann) tags += '<span class="tag human">REVIEWED</span>';
-    
+
     const displayLlm = typeof llm === 'string' ? escapeHtml(llm.replace('agent-','')) : '?';
     const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
-    
-    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})">
+
+    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})" tabindex="0" role="button" aria-label="Prompt ${i}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPrompt(${i})}">
       <div class="id">#${i} · LLM: ${displayLlm}${pred ? ' · CLS: ' + displayPred : ''}</div>
       <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
       <div class="tags">${tags}</div>
@@ -304,23 +318,31 @@ function renderDetail(idx) {
 }
 
 function annotate(idx, tier) {
-  annotations[idx] = { tier, note: annotations[idx]?.note || '', ts: new Date().toISOString() };
+  const key = promptKey(idx);
+  annotations[key] = { tier, note: getAnnotation(idx)?.note || '', ts: new Date().toISOString() };
+  // Migrate legacy index-keyed annotation if it exists
+  if (annotations[idx]) delete annotations[idx];
   saveAnnotations();
   render();
 }
 
 function saveNote(idx) {
   const note = document.getElementById('note-input').value;
-  if (!annotations[idx]) {
-    annotations[idx] = { tier: dataset[idx].tier || dataset[idx].llm_tier || '?', note: '', ts: new Date().toISOString() };
+  const key = promptKey(idx);
+  if (!annotations[key]) {
+    annotations[key] = { tier: dataset[idx].tier || dataset[idx].llm_tier || '?', note: '', ts: new Date().toISOString() };
+    // Migrate legacy index-keyed annotation
+    if (annotations[idx]) delete annotations[idx];
   }
-  annotations[idx].note = note;
+  annotations[key].note = note;
   saveAnnotations();
   render();
 }
 
 function clearAnnotation(idx) {
-  delete annotations[idx];
+  const key = promptKey(idx);
+  delete annotations[key];
+  delete annotations[idx];  // also clear legacy index key if present
   saveAnnotations();
   render();
 }

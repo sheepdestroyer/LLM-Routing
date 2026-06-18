@@ -35,10 +35,10 @@ def test_initial_state():
     """Breaker starts at Tier 0 (open)."""
     reset_breakers()
     b = get_breaker()
-    assert b.is_allowed() == True
+    assert b.is_allowed()
     assert b.tier == 0
-    assert b.google.is_allowed() == True
-    assert b.vendor.is_allowed() == True
+    assert b.google.is_allowed()
+    assert b.vendor.is_allowed()
     print("✓ Initial state: Tier 0, allowed")
 
 
@@ -50,10 +50,10 @@ def test_first_failure_trips_to_tier1():
     b.google.record_failure()
     assert b.google.tier == 1
     assert b.google.cooldown_until > time.time()
-    assert b.google.is_allowed() == False
-    
+    assert not b.google.is_allowed()
+
     # Master breaker is still allowed because vendor is allowed (backward compatible fallback)
-    assert b.is_allowed() == True
+    assert b.is_allowed()
     print("✓ 1st failure → Tier 1 (5 min cooldown) on google breaker")
 
 
@@ -66,9 +66,9 @@ def test_probe_granted_after_cooldown():
     b.google.cooldown_until = time.time() - 10  # expired 10s ago
     b.google.probe_granted = False
     
-    assert b.google.is_allowed() == True, "Probe should be granted"
+    assert b.google.is_allowed(), "Probe should be granted"
     assert b.google.probe_granted == True, "Probe flag should be set"
-    assert b.google.is_allowed() == False, "Second call should be denied"
+    assert not b.google.is_allowed(), "Second call should be denied"
     print("✓ Probe granted after cooldown expiry, consumed on next check")
 
 
@@ -83,7 +83,7 @@ def test_probe_failure_advances_tier():
     b.google.record_failure()  # probe fails
     
     assert b.google.tier == 2, f"Expected tier 2, got {b.google.tier}"
-    assert b.google.probe_granted == False
+    assert not b.google.probe_granted
     print("✓ Failed probe at Tier 1 → advanced to Tier 2 (30 min)")
 
 
@@ -100,7 +100,7 @@ def test_tier3_stays_at_tier3():
     
     assert b.google.tier == MAX_TIER, "Should stay at Tier 3"
     assert b.google.cooldown_until > old_until, "Cooldown should be renewed"
-    assert b.google.probe_granted == False
+    assert not b.google.probe_granted
     print("✓ Tier 3 failure → stays at Tier 3 (renews 5-hour cooldown)")
 
 
@@ -115,7 +115,7 @@ def test_success_resets():
     b.google.record_success()
     
     assert b.google.tier == 0
-    assert b.google.is_allowed() == True
+    assert b.google.is_allowed()
     print("✓ Success resets breaker to Tier 0 from any tier")
 
 
@@ -127,12 +127,12 @@ def test_backward_compatibility():
     b.record_failure()
     assert b.google.tier == 1
     assert b.vendor.tier == 1
-    assert b.is_allowed() == False  # both blocked
-    
+    assert not b.is_allowed()  # both blocked
+
     b.record_success()
     assert b.google.tier == 0
     assert b.vendor.tier == 0
-    assert b.is_allowed() == True
+    assert b.is_allowed()
     print("✓ Master record_failure and record_success maintain compatibility")
 
 

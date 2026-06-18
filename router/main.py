@@ -132,6 +132,10 @@ stats = {
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
+# Module-level set to hold references to fire-and-forget background tasks,
+# preventing premature garbage collection before the task completes (Ruff RUF006).
+_background_tasks: set = set()
+
 def load_persisted_stats():
     """Loads persisted statistics from disk on startup to prevent resets on pod redeployment."""
     global stats
@@ -390,22 +394,23 @@ async def lifespan(app: FastAPI):
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
 
-    yield
-
-    # Cancel background score task
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
+        yield
+    finally:
+        # Cancel background score task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
-    # Flush any buffered stats/timeline on clean shutdown
-    await save_persisted_stats(force=True)
-    try:
-        timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-        await _atomic_write_json_async(timeline_path, stats["timeline"])
-    except Exception as e:
-        logger.warning(f"Failed to persist timeline on shutdown: {e}")
+        # Flush any buffered stats/timeline on clean shutdown (always runs)
+        await save_persisted_stats(force=True)
+        try:
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
+            await _atomic_write_json_async(timeline_path, stats["timeline"])
+        except Exception as e:
+            logger.warning(f"Failed to persist timeline on shutdown: {e}")
 
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
@@ -703,11 +708,14 @@ def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int
     if len(stats["timeline"]) > 15:
         stats["timeline"].pop(0)
 
-    # Fire-and-forget stats write via save_persisted_stats (non-blocking)
+    # Fire-and-forget stats write via save_persisted_stats (non-blocking).
+    # Store the task reference in _background_tasks to prevent GC before completion (RUF006).
     now = time.monotonic()
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(save_persisted_stats())
+        _task = loop.create_task(save_persisted_stats())
+        _background_tasks.add(_task)
+        _task.add_done_callback(_background_tasks.discard)
     except RuntimeError:
         # No running event loop (e.g. during early startup) — fall back to sync write
         try:

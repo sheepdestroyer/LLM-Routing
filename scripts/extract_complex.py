@@ -38,7 +38,11 @@ def fetch_observations(page=1, limit=50):
         return json.loads(resp.read())
 
 def extract_user_prompt(obs):
-    """Extract and parse the raw user prompt from the observation input payload."""
+    """Extract and parse the FIRST real user prompt from the observation input payload.
+
+    Uses forward iteration (not reversed) to return the first user message,
+    matching the semantics of extract_prompts.py. Skips pseudo-user system notes.
+    """
     inp = obs.get('input')
     if not inp: return None
     if isinstance(inp, str):
@@ -47,11 +51,16 @@ def extract_user_prompt(obs):
     if not isinstance(inp, dict): return None
     messages = inp.get('messages', [])
     if not messages: return None
-    for msg in reversed(messages):
+    for msg in messages:  # forward iteration: first user message
         if isinstance(msg, dict) and msg.get('role') == 'user':
             content = msg.get('content', '')
-            if isinstance(content, str) and len(content.strip()) > 3:
-                return content.strip()
+            if not isinstance(content, str) or len(content.strip()) <= 3:
+                continue
+            stripped = content.strip()
+            # Skip Hermes system notes injected as user messages
+            if stripped.startswith('[System:') or stripped.startswith('[Note:'):
+                continue
+            return stripped
     return None
 
 # Keywords suggesting complex/advanced work

@@ -28,7 +28,10 @@ def classify(prompt):
     req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization':'Bearer local-token'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data['choices'][0]['message'].get('content','').strip()
+    choices = data.get('choices', [])
+    if not choices:
+        return f"ERROR: empty response"
+    return choices[0].get('message', {}).get('content', '').strip()
 
 # Load existing dataset (kanban/llm evals)
 data_dir = Path(__file__).resolve().parent.parent / 'data'

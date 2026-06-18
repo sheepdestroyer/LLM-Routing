@@ -39,7 +39,10 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"].get("content", "").strip()
+    choices = data.get("choices", [])
+    if not choices:
+        return "ERROR"
+    return choices[0].get("message", {}).get("content", "").strip()
 
 total = len(dataset.get("prompts", []))
 print(f"Benchmark: gemma4-26a4b-routing vs {total} labeled prompts\n")
@@ -52,24 +55,30 @@ confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
 for i, item in enumerate(dataset.get("prompts", [])):
     prompt = item["prompt"]
-    expected = item["tier"]
-    
+    # Support both old schema ("tier") and new schema ("llm_tier" / "clf_tier")
+    expected = item.get("tier") or item.get("llm_tier") or item.get("clf_tier", "")
+
     try:
         predicted = classify(prompt)
     except Exception as e:
         predicted = f"ERROR: {str(e)[:50]}"
-    
+
     results.append({
         "prompt": prompt[:100],
         "expected": expected,
         "predicted": predicted,
     })
-    
+
+    # Only score against known tiers — skip ERROR/unknown labels gracefully
+    if expected not in per_tier:
+        confusion[expected][predicted] += 1
+        continue
+
     per_tier[expected]["total"] += 1
     if predicted == expected:
         correct += 1
         per_tier[expected]["correct"] += 1
-    
+
     confusion[expected][predicted] += 1
     
     # Progress

@@ -22,7 +22,8 @@ def get_model_port():
         data = json.loads(resp.read())
     for m in data.get('data', []):
         if 'gemma4-26a4b' in m.get('id', ''):
-            args = m.get('status', {}).get('args', [])
+            status_obj = m.get('status') or {}
+            args = status_obj.get('args', []) if isinstance(status_obj, dict) else []
             for i, v in enumerate(args):
                 if v == '--port' and i + 1 < len(args):
                     return args[i + 1]
@@ -67,7 +68,11 @@ with open(data_dir / "classified_dataset.json") as f:
 with open(data_dir / "raw_prompts_hermes.json") as f:
     all_prompts = json.load(f)
 
-error_indices = [i for i, p in enumerate(dataset.get('prompts', [])) if p.get('tier') == 'ERROR']
+# Schema-aware: support both old schema ("tier") and new reclassify_all.py schema ("clf_tier")
+error_indices = [
+    i for i, p in enumerate(dataset.get('prompts', []))
+    if p.get('tier') == 'ERROR' or p.get('clf_tier') == 'ERROR'
+]
 print(f"Retrying {len(error_indices)} failed prompts (max {MAX_CHARS} chars)...")
 
 fixed = 0
@@ -82,7 +87,8 @@ for batch_start in range(0, len(error_indices), 5):
             tier = classify(prompt)
             if idx < len(prompts_list):
                 prompts_list[idx]['tier'] = tier
-            fixed += 1
+            if tier != 'ERROR':  # only count as fixed if classification succeeded
+                fixed += 1
         except Exception as e:
             errors += 1
             print(f"  [{idx}] still failing: {str(e)[:80]}")
