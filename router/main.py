@@ -215,6 +215,7 @@ async def save_persisted_stats(force=False):
     try:
         await _atomic_write_json_async(STATS_JSON_PATH, stats)
     except Exception as e:
+        _last_stats_save = 0.0  # Reset on failure to allow immediate retry
         logger.error(f"Failed to persist stats to disk: {e}")
 
 # Load initial stats from persistent storage
@@ -391,9 +392,16 @@ async def lifespan(app: FastAPI):
             logger.error(f"Roster sync failed: {e}")
 
     # Start background task before yield so it runs during app lifetime
-    asyncio.create_task(push_aggregate_scores())
+    task = asyncio.create_task(push_aggregate_scores())
 
     yield
+
+    # Cancel background score task
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
     # Flush any buffered stats/timeline on clean shutdown
     await save_persisted_stats(force=True)
@@ -2539,11 +2547,11 @@ async def save_annotations(request: Request):
     try:
         body = await request.json()
         ann_path = DATA_DIR / "annotations.json"
-        ann_path.write_text(json.dumps(body, indent=2, ensure_ascii=False))
+        await _atomic_write_json_async(str(ann_path), body)
         return JSONResponse({"status": "ok", "saved": len(body)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to save annotations")
 
 if __name__ == "__main__":
     import uvicorn

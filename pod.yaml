@@ -470,4 +470,5 @@ spec:
     name: env-file
   - hostPath:
       path: /home/gpav/Vrac/LAB/AI/LLM-Routing/data
+      type: DirectoryOrCreate
     name: dataset-data

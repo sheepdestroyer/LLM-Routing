@@ -1,5 +1,5 @@
 """Gap-fill extraction: pull longer/older prompts targeting complex+ tiers."""
-import os, base64, json, urllib.request, time
+import os, base64, json, urllib.request, time, re
 from pathlib import Path
 
 env = {}
@@ -62,8 +62,10 @@ def is_trivial(prompt):
                "how are you", "good morning", "what model are you", "who are you",
                "tell me a joke", "what is 2+2", "what is the capital"]
     for pat in trivial:
-        if pat in lower and len(lower) < 50:
-            return True
+        if len(lower) < 50:
+            escaped = re.escape(pat)
+            if re.search(r'\b' + escaped + r'\b', lower):
+                return True
     return False
 
 print("Extracting gap-fill prompts (longer, older, targeting complex+)...")
@@ -128,7 +130,10 @@ with open(out_path, 'w') as f:
 
 print(f"\nSaved {len(prompts)} gap-fill prompts to {out_path}")
 lengths = [len(p['prompt']) for p in prompts]
-print(f"Length range: {min(lengths)}-{max(lengths)} chars, avg: {sum(lengths)/len(lengths):.0f}")
-print(f"Sample:")
-for p in prompts[:5]:
-    print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])} chars) {p['prompt'][:100]}...")
+if lengths:
+    print(f"Length range: {min(lengths)}-{max(lengths)} chars, avg: {sum(lengths)/len(lengths):.0f}")
+    print(f"Sample:")
+    for p in prompts[:5]:
+        print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])} chars) {p['prompt'][:100]}...")
+else:
+    print("No prompts collected.")

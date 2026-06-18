@@ -8,9 +8,10 @@ from agy_proxy import try_agy_proxy
 import asyncio, time
 
 b = get_breaker()
-b.tier = 3
-b.cooldown_until = time.time() + 18000
-b.probe_granted = False
+for sub in (b.google, b.vendor):
+    sub.tier = 3
+    sub.cooldown_until = time.time() + 18000
+    sub.probe_granted = False
 
 result = asyncio.run(try_agy_proxy('test prompt'))
 assert result is None, f'Breaker should return None when blocked, got: {result}'

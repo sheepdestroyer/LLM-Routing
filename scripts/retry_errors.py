@@ -53,7 +53,7 @@ def classify(prompt):
     for tier in TIERS:
         if tier in content:
             return tier
-    return content
+    return "ERROR"
 
 TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
 
@@ -72,7 +72,7 @@ errors = 0
 for batch_start in range(0, len(error_indices), 5):
     batch = error_indices[batch_start:batch_start + 5]
     for idx in batch:
-        prompt = all_prompts[idx]['prompt']
+        prompt = dataset['prompts'][idx]['prompt']
         try:
             tier = classify(prompt)
             dataset['prompts'][idx]['tier'] = tier

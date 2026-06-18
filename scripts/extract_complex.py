@@ -16,13 +16,16 @@ sk = env['LANGFUSE_SECRET_KEY']
 auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
 base_url = "http://localhost:3001"
 
-# Load already-classified
 existing = set()
 dataset_path = Path(__file__).resolve().parent.parent / "data" / "classified_dataset.json"
-with open(dataset_path) as f:
-    existing_data = json.load(f)
-for p in existing_data.get('prompts', []):
-    existing.add(p['prompt'].strip().lower())
+if dataset_path.exists():
+    try:
+        with open(dataset_path) as f:
+            existing_data = json.load(f)
+        for p in existing_data.get('prompts', []):
+            existing.add(p['prompt'].strip().lower())
+    except Exception as e:
+        print(f"Warning: Failed to load existing dataset: {e}")
 
 print(f"Already classified: {len(existing)} prompts")
 
@@ -116,6 +119,9 @@ with open(out_path, 'w') as f:
 
 print(f"\nSaved {len(prompts)} complex prompts to {out_path}")
 lengths = [len(p['prompt']) for p in prompts]
-print(f"Length range: {min(lengths)}-{max(lengths)} chars, avg: {sum(lengths)/len(lengths):.0f}")
-for p in prompts[:5]:
-    print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])} chars) {p['prompt'][:120]}...")
+if lengths:
+    print(f"Length range: {min(lengths)}-{max(lengths)} chars, avg: {sum(lengths)/len(lengths):.0f}")
+    for p in prompts[:5]:
+        print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])} chars) {p['prompt'][:120]}...")
+else:
+    print("No prompts collected.")

@@ -41,7 +41,8 @@ def classify(prompt):
         data = json.loads(resp.read())
     return data["choices"][0]["message"].get("content", "").strip()
 
-print(f"Benchmark: gemma4-26a4b-routing vs {dataset['total']} labeled prompts\n")
+total = len(dataset.get("prompts", []))
+print(f"Benchmark: gemma4-26a4b-routing vs {total} labeled prompts\n")
 
 # Run classification
 results = []
@@ -49,7 +50,7 @@ correct = 0
 per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
-for i, item in enumerate(dataset["prompts"]):
+for i, item in enumerate(dataset.get("prompts", [])):
     prompt = item["prompt"]
     expected = item["tier"]
     
@@ -74,13 +75,12 @@ for i, item in enumerate(dataset["prompts"]):
     # Progress
     if (i + 1) % 20 == 0:
         acc = correct / (i + 1) * 100
-        print(f"  {i+1}/{dataset['total']} — accuracy {acc:.1f}%")
+        print(f"  {i+1}/{total} — accuracy {acc:.1f}%")
     
     time.sleep(0.05)  # minimal rate-limit (model handles concurrency via llama-server slots)
 
 # Report
-total = dataset["total"]
-overall = correct / total * 100
+overall = (correct / total * 100) if total > 0 else 0.0
 
 print(f"\n{'='*60}")
 print(f"Overall accuracy: {correct}/{total} ({overall:.1f}%)")

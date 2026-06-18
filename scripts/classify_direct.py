@@ -11,6 +11,11 @@ agent-reasoning-core: deep analysis, architecture decisions, debugging complex s
 agent-advanced-core: system-level architecture, cross-cutting concerns, novel design
 
 Task: """
+LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
+TIERS = {
+    "agent-simple-core", "agent-medium-core", "agent-complex-core",
+    "agent-reasoning-core", "agent-advanced-core"
+}
 
 def classify(prompt):
     payload = {
@@ -20,7 +25,7 @@ def classify(prompt):
         "max_tokens": 15,
     }
     req = urllib.request.Request(
-        "http://127.0.0.1:8080/v1/chat/completions",
+        LLAMA_SERVER_URL,
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "Authorization": "Bearer local-token"}
     )
@@ -44,8 +49,15 @@ for i, p in enumerate(prompts):
         prompt = prompt[:3500]
     
     try:
-        tier = classify(prompt)
-        results.append({"id": i, "tier": tier, "prompt_snippet": prompt[:60]})
+        raw_tier = classify(prompt)
+        if raw_tier in TIERS:
+            tier = raw_tier
+            extra = {}
+        else:
+            tier = "ERROR"
+            extra = {"raw_output": raw_tier}
+            errors += 1
+        results.append({"id": i, "tier": tier, "prompt_snippet": prompt[:60], **extra})
     except Exception as e:
         tier = f"ERROR"
         errors += 1

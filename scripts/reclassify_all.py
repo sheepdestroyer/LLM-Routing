@@ -1,12 +1,12 @@
 """Re-run gemma4 classifier (with grammar) on all dataset prompts via router."""
-import json, urllib.request, time, sys
+import json, urllib.request, time, sys, os, tempfile
 from pathlib import Path
 from collections import Counter
 
 TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
 
-ROUTER_URL = "http://127.0.0.1:8080/v1/chat/completions"
-print(f"Using router on {ROUTER_URL}")
+LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
+print(f"Using llama-server on {LLAMA_SERVER_URL}")
 
 PROMPT_TEMPLATE = """Analyze the request complexity. Respond with exactly one of:
 - simple boilerplate: agent-simple-core
@@ -18,15 +18,13 @@ PROMPT_TEMPLATE = """Analyze the request complexity. Respond with exactly one of
 Request: """
 
 def classify(prompt):
-    if len(prompt) > 600:
-        prompt = prompt[:600]
     payload = {
         'model': 'gemma4-26a4b-routing',
         'messages': [{'role': 'user', 'content': PROMPT_TEMPLATE + prompt}],
         'max_tokens': 15, 'temperature': 0,
         'grammar': 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
     }
-    req = urllib.request.Request(ROUTER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization':'Bearer local-token'})
+    req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization':'Bearer local-token'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     return data['choices'][0]['message'].get('content','').strip()
@@ -77,25 +75,33 @@ clf_counts = Counter(r['clf_tier'] for r in results)
 llm_counts = Counter(r['llm_tier'] for r in results)
 agree = sum(1 for r in results if r['llm_tier'] == r['clf_tier'])
 
+total_results = len(results)
 print(f"\n{'='*60}")
-print(f"Agreement: {agree}/{len(results)} ({agree/len(results)*100:.1f}%)")
-print(f"\nTier distribution:")
+if total_results > 0:
+    print(f"Agreement: {agree}/{total_results} ({agree/total_results*100:.1f}%)")
+else:
+    print("Agreement: 0/0 (0.0%)")
+print("\nTier distribution:")
 print(f"{'Tier':30s} {'LLM':>6s} {'CLF':>6s} {'Δ':>6s}")
 for t in TIERS:
     lc = llm_counts.get(t, 0)
     cc = clf_counts.get(t, 0)
     print(f"  {t:30s} {lc:>6d} {cc:>6d} {cc-lc:>+6d}")
 
-# Save combined dataset
+# Save combined dataset atomically
 combined = {
-    'total': len(results),
-    'agreement': round(agree / len(results) * 100, 1),
+    'total': total_results,
+    'agreement': round(agree / total_results * 100, 1) if total_results > 0 else 0.0,
     'llm_counts': dict(llm_counts),
     'clf_counts': dict(clf_counts),
     'prompts': results,
 }
 
-with open(data_dir / 'classified_dataset.json', 'w') as f:
-    json.dump(combined, f, indent=2, ensure_ascii=False)
+dest_path = data_dir / 'classified_dataset.json'
+with tempfile.NamedTemporaryFile('w', dir=str(data_dir), delete=False, encoding='utf-8') as tmp_f:
+    json.dump(combined, tmp_f, indent=2, ensure_ascii=False)
+    tmp_name = tmp_f.name
 
-print(f"\nSaved to classified_dataset.json (now with llm_tier + clf_tier)")
+os.replace(tmp_name, str(dest_path))
+
+print("\nSaved to classified_dataset.json (now with llm_tier + clf_tier)")

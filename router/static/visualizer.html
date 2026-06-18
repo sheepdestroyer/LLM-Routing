@@ -137,9 +137,10 @@ async function init() {
   // Load annotations
   try {
     const resp = await fetch('data/annotations.json');
-    annotations = await resp.json();
+    const serverAnn = await resp.json();
+    annotations = { ...serverAnn, ...annotations };
   } catch(e) {
-    annotations = {};
+    // Keep local annotations as is
   }
   
   render();
@@ -221,8 +222,11 @@ function render() {
     else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
     if (ann) tags += '<span class="tag human">REVIEWED</span>';
     
+    const displayLlm = escapeHtml(llm.replace('agent-',''));
+    const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
+    
     return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})">
-      <div class="id">#${i} · LLM: ${llm.replace('agent-','')}${pred ? ' · CLS: ' + pred.replace('agent-','') : ''}</div>
+      <div class="id">#${i} · LLM: ${displayLlm}${pred ? ' · CLS: ' + displayPred : ''}</div>
       <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
       <div class="tags">${tags}</div>
     </div>`;
@@ -274,12 +278,12 @@ function renderDetail(idx) {
     <div class="evals">
       <div class="${llmCardClass}">
         <h3>🤖 LLM Evaluation (kanban worker)</h3>
-        <div class="tier" style="color:${TIER_COLORS[llm] || '#888'}">${llm}</div>
+        <div class="tier" style="color:${TIER_COLORS[llm] || '#888'}">${escapeHtml(llm)}</div>
         <div style="font-size:0.7em;color:#888;margin-top:4px">original dataset label</div>
       </div>
       <div class="${predCardClass}">
         <h3>🧠 Classifier Prediction (gemma4-26a4b)</h3>
-        <div class="tier" style="color:${pred ? TIER_COLORS[pred] || '#888' : '#888'}">${pred || 'pending...'}</div>
+        <div class="tier" style="color:${pred ? TIER_COLORS[pred] || '#888' : '#888'}">${pred ? escapeHtml(pred) : 'pending...'}</div>
         <div style="font-size:0.7em;color:#888;margin-top:4px">${conflict === true ? '⚠ Differs from LLM label' : conflict === false ? '✓ Matches LLM label' : 'no data yet'}</div>
       </div>
     </div>
@@ -293,10 +297,10 @@ function renderDetail(idx) {
         <span><span class="dot hum"></span> Human selection</span>
       </div>
       <div class="annotation-bar">
-        <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? ann.note || '' : ''}">
+        <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${ann.tier}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
     </div>
   `;
 }
