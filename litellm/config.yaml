@@ -52,9 +52,9 @@ litellm_settings:
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - ollama-deepseek-v4-pro:
-    - agent-advanced-core
+    - openrouter-auto
   - ollama-deepseek-v4-flash:
-    - agent-reasoning-core
+    - openrouter-auto
 model_list:
 - litellm_params:
     model: openrouter/openrouter/auto
@@ -63,7 +63,7 @@ model_list:
 - litellm_params:
     model: openai/llm-routing-ollama
     api_base: http://127.0.0.1:5000/v1
-    api_key: sk-lit...33bf
+    api_key: os.environ/LITELLM_MASTER_KEY
     request_timeout: 120
   model_name: llm-routing-ollama
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).

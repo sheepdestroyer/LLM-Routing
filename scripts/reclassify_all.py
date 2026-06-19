@@ -38,14 +38,6 @@ data_dir = Path(__file__).resolve().parent.parent / 'data'
 with open(data_dir / 'classified_dataset.json') as f:
     dataset = json.load(f)
 
-# Load raw prompts for full text
-with open(data_dir / 'raw_prompts_hermes.json') as f:
-    all_prompts = json.load(f)
-
-# Build prompt lookup
-prompt_map = {}
-for p in all_prompts:
-    prompt_map[p['prompt']] = p
 
 print(f"Classifying {len(dataset['prompts'])} prompts with gemma4-26a4b (grammar-enforced)...")
 

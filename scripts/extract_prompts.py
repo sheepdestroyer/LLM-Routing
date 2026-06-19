@@ -143,7 +143,7 @@ print(f"\nSaved {len(prompts)} prompts to {out_path}")
 lengths = [len(p['prompt']) for p in prompts]
 if lengths:
     print(f"Length: min={min(lengths)}, max={max(lengths)}, median={sorted(lengths)[len(lengths)//2]}, avg={sum(lengths)/len(lengths):.0f}")
-    print(f"Short (<100 chars): {sum(1 for l in lengths if l < 100)}")
-    print(f"\nSample (first 10):")
+    print(f"Short (<100 chars): {sum(1 for length in lengths if length < 100)}")
+    print("\nSample (first 10):")
     for p in prompts[:10]:
         print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])}c) {p['prompt'][:120]}...")
