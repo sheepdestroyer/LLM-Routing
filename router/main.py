@@ -369,6 +369,7 @@ async def sync_adaptive_router_roster(master_key: str):
         logger.warning(f"Failed to fetch OpenRouter models: {e}")
         return
     free_models = []
+    model_contexts = {}
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
@@ -398,6 +399,7 @@ async def sync_adaptive_router_roster(master_key: str):
             except Exception:
                 score = 25.0  # conservative fallback for unparseable models
             free_models.append((score, mid))
+            model_contexts[mid] = m.get("context_length") or 262144
     free_models.sort(reverse=True)
     if not free_models:
         logger.warning("No free models found — skipping roster sync")
@@ -474,9 +476,19 @@ async def sync_adaptive_router_roster(master_key: str):
         failed = 0
         for tier_name, model_ids in tier_assignments.items():
             for mid in model_ids:
+                ctx_len = model_contexts.get(mid, 262144)
                 payload = {
                     "model_name": tier_name,
-                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20}
+                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
+                    "model_info": {
+                        "supports_vision": True,
+                        "supports_reasoning": True,
+                        "supports_function_calling": True,
+                        "mode": "chat",
+                        "max_tokens": ctx_len,
+                        "max_input_tokens": ctx_len,
+                        "is_public_model_group": True
+                    }
                 }
                 try:
                     r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
@@ -489,6 +501,84 @@ async def sync_adaptive_router_roster(master_key: str):
                     failed += 1
                     logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
         logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
+
+async def _register_ollama_models_in_db(master_key: str):
+    """Register static ollama models via /model/new so they become DB models.
+
+    LiteLLM's /model_group/info endpoint aggregates model info using its internal
+    model cost map for known providers.  For ollama_chat models not in the map,
+    capabilities (vision, reasoning, function_calling) and token limits come back
+    as null/false.  Registering them as DB models ensures our model_info wins.
+    """
+    admin_url = "http://127.0.0.1:4000"
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+
+    ollama_models = [
+        {
+            "model_name": "ollama-deepseek-v4-pro",
+            "litellm_params": {
+                "model": "ollama_chat/deepseek-v4-pro",
+                "api_base": "https://api.ollama.com",
+                "api_key": os.getenv("OLLAMA_API_KEY", ""),
+                "request_timeout": 120,
+            },
+            "model_info": {
+                "supports_vision": True,
+                "supports_reasoning": True,
+                "supports_function_calling": True,
+                "mode": "chat",
+                "max_tokens": 524288,
+                "max_input_tokens": 524288,
+                "input_cost_per_token": 0.00000174,
+                "output_cost_per_token": 0.00000348,
+                "is_public_model_group": True,
+            },
+        },
+        {
+            "model_name": "ollama-deepseek-v4-flash",
+            "litellm_params": {
+                "model": "ollama_chat/deepseek-v4-flash",
+                "api_base": "https://api.ollama.com",
+                "api_key": os.getenv("OLLAMA_API_KEY", ""),
+                "request_timeout": 120,
+            },
+            "model_info": {
+                "supports_vision": True,
+                "supports_reasoning": True,
+                "supports_function_calling": True,
+                "mode": "chat",
+                "max_tokens": 524288,
+                "max_input_tokens": 524288,
+                "input_cost_per_token": 0.00000014,
+                "output_cost_per_token": 0.00000028,
+                "is_public_model_group": True,
+            },
+        },
+    ]
+
+    # Purge stale ollama-deepseek DB entries before re-registering
+    try:
+        db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
+        import asyncpg
+        conn = await asyncpg.connect(db_url)
+        await conn.execute(
+            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
+            'ollama-deepseek-%'
+        )
+        await conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for payload in ollama_models:
+            try:
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
+                if r.status_code in (200, 201):
+                    logger.info(f"✅ Registered {payload['model_name']} in DB")
+                else:
+                    logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Failed to register {payload['model_name']}: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -520,6 +610,15 @@ async def lifespan(app: FastAPI):
             await sync_adaptive_router_roster(litellm_master_key)
         except Exception as e:
             logger.error(f"Roster sync failed: {e}")
+
+        # Register static ollama models via /model/new so they become DB models.
+        # The ollama_chat provider's internal model lookup overrides static config
+        # model_info at the group aggregation level (/model_group/info), causing
+        # features and token limits to show as null/false. DB models get priority.
+        try:
+            await _register_ollama_models_in_db(litellm_master_key)
+        except Exception as e:
+            logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
 
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
