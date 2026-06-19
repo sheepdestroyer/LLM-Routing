@@ -6,7 +6,7 @@ import sys
 import os
 from datetime import datetime
 
-TARGET_PATH = "/home/gpav/.gemini/oauth_creds.json"
+TARGET_PATH = os.path.expanduser("~/.gemini/oauth_creds.json")
 
 def main():
     try:

@@ -11,12 +11,12 @@ def test_antigravity_connection():
 
     print("--- Testing antigravity-cli connection with current OAuth ---")
     
-    # We simulate a request to Gemini 3.5 Flash via antigravity-cli
-    # Using the agentapi binary located at /home/gpav/.gemini/antigravity-cli/bin/agentapi
+    # Using the agentapi binary located at ~/.gemini/antigravity-cli/bin/agentapi
     try:
+        agentapi_path = os.path.expanduser("~/.gemini/antigravity-cli/bin/agentapi")
         # Testing non-interactive print mode
         result = subprocess.run(
-            ["/home/gpav/.gemini/antigravity-cli/bin/agentapi", "--print", "Hello, who are you?"],
+            [agentapi_path, "--print", "Hello, who are you?"],
             capture_output=True,
             text=True,
             timeout=20
