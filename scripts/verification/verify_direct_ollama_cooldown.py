@@ -4,6 +4,7 @@ import json
 import time
 import os
 import uuid
+import sys
 
 # Resolve the absolute path to .env file in the workspace
 workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,7 +27,7 @@ def get_triage_request_count():
             lines = response.read().decode("utf-8").splitlines()
             for line in lines:
                 if line.startswith("triage_requests_total"):
-                    return int(line.split()[1])
+                    return int(float(line.split()[1]))
     except Exception as e:
         print(f"Error fetching metrics: {e}")
     return 0
@@ -102,8 +103,10 @@ def main():
             print("✅ SUCCESS: llm-routing-ollama was successfully cooled down and skipped on the second request!")
         else:
             print(f"❌ FAILURE: llm-routing-ollama was NOT cooled down (count increased by {diff})!")
+            sys.exit(1)
     else:
         print("❌ FAILURE: First request did not even reach the triage router.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

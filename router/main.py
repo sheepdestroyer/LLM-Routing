@@ -20,12 +20,18 @@ from pydantic import BaseModel
 from typing import Dict, Optional, Union
 
 _redis_client = None
+_redis_last_init_attempt = 0.0
+_REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
     Returns None if connection fails or is disabled (non-fatal fallback)."""
-    global _redis_client
+    global _redis_client, _redis_last_init_attempt
     if _redis_client is None:
+        now = time.monotonic()
+        if now - _redis_last_init_attempt < _REDIS_RETRY_INTERVAL_SECONDS:
+            return None
+        _redis_last_init_attempt = now
         try:
             host = os.getenv("VALKEY_HOST", "127.0.0.1")
             port = int(os.getenv("VALKEY_PORT", "6379"))
@@ -33,8 +39,8 @@ def get_redis():
             logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
             logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
-            _redis_client = False
-    return _redis_client if _redis_client is not False else None
+            _redis_client = None
+    return _redis_client
 
 
 _http_client = None
@@ -1207,7 +1213,10 @@ async def chat_completions(request: Request):
     last_user_message = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            last_user_message = msg.get("content") or ""
+            content = msg.get("content") or ""
+            if isinstance(content, list):
+                content = "".join(block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+            last_user_message = content
             break
 
     # Known tier names that can be routed directly (bypass classifier)
@@ -1332,7 +1341,10 @@ async def chat_completions(request: Request):
             last_prompt = ""
             for msg in reversed(messages):
                 if msg.get("role") == "user":
-                    last_prompt = msg.get("content") or ""
+                    content = msg.get("content") or ""
+                    if isinstance(content, list):
+                        content = "".join(block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+                    last_prompt = content
                     break
 
             session_id = None
@@ -1341,7 +1353,9 @@ async def chat_completions(request: Request):
                 fingerprint_parts = []
                 for msg in messages[:4]:
                     c = msg.get("content") or ""
-                    if c:
+                    if isinstance(c, list):
+                        c = "".join(block.get("text", "") for block in c if isinstance(block, dict) and block.get("type") == "text")
+                    if isinstance(c, str) and c:
                         fingerprint_parts.append(c[:200])
                 fingerprint = "|".join(fingerprint_parts)
                 session_id = hashlib.md5(fingerprint.encode()).hexdigest()
@@ -1417,9 +1431,7 @@ async def chat_completions(request: Request):
 
                                 # Success telemetry
                                 latency_ms = (time.time() - start_time) * 1000.0
-                                # Approximate prompt tokens based on messages characters
-                                prompt_chars = sum(len(m.get("content") or "") for m in messages)
-                                approx_prompt_tokens = max(1, prompt_chars // 4)
+                                approx_prompt_tokens = estimate_prompt_tokens(body)
                                 
                                 record_tool_usage(
                                     active_tool, approx_prompt_tokens, token_count,
@@ -1635,10 +1647,30 @@ async def chat_completions(request: Request):
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                         completion_chars = 0
                         request_tokens = estimate_prompt_tokens(body_to_send)
+                        sse_buffer = ""
                         try:
                             async for chunk in r.aiter_bytes():
-                                completion_chars += len(chunk)
                                 yield chunk
+                                try:
+                                    sse_buffer += chunk.decode("utf-8", errors="ignore")
+                                    while "\n" in sse_buffer:
+                                        line, sse_buffer = sse_buffer.split("\n", 1)
+                                        line = line.strip()
+                                        if line.startswith("data:"):
+                                            data_str = line[5:].strip()
+                                            if data_str == "[DONE]":
+                                                continue
+                                            try:
+                                                data_json = json.loads(data_str)
+                                                choices = data_json.get("choices", [])
+                                                if choices:
+                                                    delta = choices[0].get("delta", {})
+                                                    content = delta.get("content") or ""
+                                                    completion_chars += len(content)
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
                             proxy_latency = (time.time() - proxy_start) * 1000.0
                             stats["total_proxy_time_ms"] += proxy_latency
                             stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
@@ -1663,7 +1695,7 @@ async def chat_completions(request: Request):
                     error_body = await r.aread() if r else b""
                     logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
                     await r.aclose()
-                    raise HTTPException(status_code=r.status_code, detail=f"LiteLLM failed: {error_body[:300].decode('utf-8', errors='ignore')}")
+                    raise HTTPException(status_code=r.status_code, detail="LiteLLM upstream request failed")
             else:
                 logger.info(f"Proxying to LiteLLM as model={model_name}")
                 response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
@@ -1688,7 +1720,7 @@ async def chat_completions(request: Request):
                     return resp_json
                 else:
                     logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
-                    raise HTTPException(status_code=response.status_code, detail=f"LiteLLM failed: {response.text[:300]}")
+                    raise HTTPException(status_code=response.status_code, detail="LiteLLM upstream request failed")
         except HTTPException:
             raise
         except Exception as exc:

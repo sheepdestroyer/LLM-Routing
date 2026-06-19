@@ -199,7 +199,7 @@ The gateway supports multiple routing modes controlled by the `model` field:
 | `llm-routing-auto-free` | **Full classifier pipeline** → routes to best free tier. Recommended default. |
 | `llm-routing-auto-agy` | **Classifier + agy (gated)**: runs classifier, tries agy only if classified as advanced/reasoning. |
 | `llm-routing-auto-ollama` | **Classifier + Ollama (gated)**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex → `ollama-deepseek-v4-flash`, below (medium/simple) → bypasses Ollama to LiteLLM free tiers. |
-| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama (gated)**: runs classifier, chains agy then Ollama only if advanced/reasoning. |
+| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama (gated)**: runs classifier, chains agy then Ollama only if advanced/reasoning/complex. |
 | `llm-routing-agy` | **Direct agy**: skips classifier, agy proxy (Gemini/Claude) → LiteLLM fallback. |
 | `llm-routing-ollama` | **Gated Ollama**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex & below → `ollama-deepseek-v4-flash`. |
 | `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses classifier, goes straight to LiteLLM with that tier name. |
@@ -256,7 +256,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 256K |
-| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced only) | LiteLLM with classified tier | 256K |
+| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 256K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 256K |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM agent-advanced-core / agent-reasoning-core | 256K |
 | `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 256K |
@@ -771,7 +771,7 @@ The cooldown mechanism works as follows:
 |-------|----------|
 | `llm-routing-ollama` | **Gated direct**: runs classifier, routes reasoning & advanced → `ollama-deepseek-v4-pro`, complex & below → `ollama-deepseek-v4-flash` |
 | `llm-routing-auto-ollama` | **Gated auto**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex → `ollama-deepseek-v4-flash`, below → bypasses Ollama to LiteLLM free tiers |
-| `llm-routing-auto-agy-ollama` | **Gated chained**: runs classifier, tries agy first (advanced/reasoning only), then chains to Ollama if agy is exhausted |
+| `llm-routing-auto-agy-ollama` | **Gated chained**: runs classifier, tries agy first (advanced/reasoning only) then chains to Ollama if agy is exhausted; for complex tasks, it goes straight to Ollama (flash) |
 
 For auto-routing modes, the Triage Router handles failures by silently falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns `429` immediately during cooldown, allowing LiteLLM to skip this model group and cascade to `openrouter-auto`. The cooldown status is visible via the `/metrics` endpoint (`ollama_cooldown_active` and `ollama_cooldown_remaining_seconds` gauges).
 
