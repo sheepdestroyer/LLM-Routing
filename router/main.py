@@ -1090,7 +1090,7 @@ async def chat_completions(request: Request):
     last_user_message = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            last_user_message = msg.get("content", "")
+            last_user_message = msg.get("content") or ""
             break
 
     # Known tier names that can be routed directly (bypass classifier)
@@ -1214,7 +1214,7 @@ async def chat_completions(request: Request):
             last_prompt = ""
             for msg in reversed(messages):
                 if msg.get("role") == "user":
-                    last_prompt = msg.get("content", "")
+                    last_prompt = msg.get("content") or ""
                     break
 
             session_id = None
@@ -1222,7 +1222,7 @@ async def chat_completions(request: Request):
                 import hashlib
                 fingerprint_parts = []
                 for msg in messages[:4]:
-                    c = msg.get("content", "") or ""
+                    c = msg.get("content") or ""
                     if c:
                         fingerprint_parts.append(c[:200])
                 fingerprint = "|".join(fingerprint_parts)
@@ -1301,7 +1301,7 @@ async def chat_completions(request: Request):
                                 # Success telemetry
                                 latency_ms = (time.time() - start_time) * 1000.0
                                 # Approximate prompt tokens based on messages characters
-                                prompt_chars = sum(len(m.get("content", "")) for m in messages)
+                                prompt_chars = sum(len(m.get("content") or "") for m in messages)
                                 approx_prompt_tokens = max(1, prompt_chars // 4)
                                 
                                 record_tool_usage(
@@ -1352,7 +1352,7 @@ async def chat_completions(request: Request):
 
                         if is_stream_requested:
                             # Robust fallback: simulate stream if we requested stream but got buffered response
-                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content") or ""
                             async def agy_stream_generator():
                                 """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
                                 import uuid
@@ -2657,6 +2657,7 @@ class AnnotationItem(BaseModel):
     ts: Optional[str] = None
 
 VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+annotations_lock = asyncio.Lock()
 
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
@@ -2706,19 +2707,20 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
     try:
         ann_path = DATA_DIR / "annotations.json"
         existing = {}
-        if ann_path.exists():
-            try:
-                import json
-                with open(ann_path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except Exception as read_err:
-                logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
-        
-        # Merge new annotations into existing
-        for k, item in payload.items():
-            existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+        async with annotations_lock:
+            if ann_path.exists():
+                try:
+                    import json
+                    with open(ann_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception as read_err:
+                    logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
             
-        await _atomic_write_json_async(str(ann_path), existing)
+            # Merge new annotations into existing
+            for k, item in payload.items():
+                existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+                
+            await _atomic_write_json_async(str(ann_path), existing)
         return JSONResponse({"status": "ok", "saved": len(payload)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
