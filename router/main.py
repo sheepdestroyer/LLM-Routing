@@ -1435,156 +1435,164 @@ async def chat_completions(request: Request):
                 target_model = "ollama-deepseek-v4-flash"
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
-    # Resolve backend connection parameters
-    backend_conf = backends.get(target_model)
-    if not backend_conf:
-        logger.error(f"Backend '{target_model}' not found in configuration backends.")
-        raise HTTPException(status_code=500, detail=f"Backend {target_model} misconfigured")
+    original_target_model = target_model
 
-    backend_api_base = backend_conf["api_base"]
-    backend_api_key = backend_conf["api_key"]
-    if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
-        backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
+    async def execute_proxy(model_name: str):
+        # Resolve backend connection parameters
+        backend_conf = backends.get(model_name)
+        if not backend_conf:
+            logger.error(f"Backend '{model_name}' not found in configuration backends.")
+            raise HTTPException(status_code=500, detail=f"Backend {model_name} misconfigured")
 
-    # Delegate to LiteLLM which handles internal fallback chain
-    # Router sends model=agent-complex-core (or agent-simple-core)
-    # LiteLLM maps this to Nemotron → Kimi → GPT-OSS → local Qwen
-    logger.info(f"Proxying to LiteLLM as model={target_model}")
+        backend_api_base = backend_conf["api_base"]
+        backend_api_key = backend_conf["api_key"]
+        if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
+            backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
 
-    # --- Langfuse child span: LiteLLM proxy ---
-    litellm_span_obj = None
-    if langfuse_trace_id:
-        lf_litellm = get_langfuse()
-        if lf_litellm:
-            try:
-                litellm_span_obj = lf_litellm.start_observation(
-                    trace_context={"trace_id": langfuse_trace_id},
-                    name="litellm-proxy",
-                    input=target_model,
-                    metadata={"model": target_model},
-                    level="DEFAULT",
-                )
-            except Exception:
-                pass
+        logger.info(f"Proxying to LiteLLM as model={model_name}")
 
-    # Set up outgoing proxy request
-    client = httpx.AsyncClient(timeout=3600.0)
-    headers = {"Authorization": f"Bearer {backend_api_key}"}
-    if langfuse_trace_id:
-        headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
+        # --- Langfuse child span: LiteLLM proxy ---
+        litellm_span_obj = None
+        if langfuse_trace_id:
+            lf_litellm = get_langfuse()
+            if lf_litellm:
+                try:
+                    litellm_span_obj = lf_litellm.start_observation(
+                        trace_context={"trace_id": langfuse_trace_id},
+                        name="litellm-proxy",
+                        input=model_name,
+                        metadata={"model": model_name},
+                        level="DEFAULT",
+                    )
+                except Exception:
+                    pass
 
-    # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
-    proxy_start = time.time()
-    model_name = target_model  # LiteLLM handles fallback internally
-    
-    # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
-    # Hermes agents set max_tokens=65536 unconditionally, but some free models have
-    # context limits as low as 32K. Without clamping, input+output exceeds the limit
-    # and the request fails with a 400 BadRequest (context_length exceeded).
-    # We estimate input tokens and clamp max_tokens to leave a 2K safety margin.
-    try:
-        body_to_send = body.copy()
-        body_to_send["model"] = model_name
-        requested_max_tokens = body_to_send.get("max_tokens", 4096)
-        if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
-            # Tier-aware minimum context length (from actual roster data):
-            # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-            # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-            # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-            _tier_min_ctx = {
-                "agent-simple-core": 32768,
-                "ollama-deepseek-v4-pro": 1000000,
-                "ollama-deepseek-v4-flash": 1000000,
-            }
-            _min_ctx = _tier_min_ctx.get(model_name, 262144)
-            # Rough input token estimate: 1 token ≈ 4 chars of JSON
-            _est_input = len(json.dumps(body_to_send)) // 4
-            _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
-            if requested_max_tokens > _safe_max:
-                logger.warning(
-                    f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
-                    f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
-                )
-                body_to_send["max_tokens"] = _safe_max
-    except Exception as e:
-        logger.warning(f"Pre-screening failed (non-fatal): {e}")
-        body_to_send = body.copy()
-        body_to_send["model"] = model_name
-    
-    try:
-        if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
-            body_to_send["metadata"] = {}
-        body_to_send["metadata"]["trace_name"] = "agent-completion"
+        # Set up outgoing proxy request
+        client = httpx.AsyncClient(timeout=3600.0)
+        headers = {"Authorization": f"Bearer {backend_api_key}"}
+        if langfuse_trace_id:
+            headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
+
+        # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
+        proxy_start = time.time()
         
-        if body.get("stream", False):
-            logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
-            req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
-            r = await client.send(req, stream=True)
-            if r.status_code == 200:
-                async def stream_generator():
-                    """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
-                    completion_chars = 0
-                    request_tokens = len(json.dumps(body_to_send)) // 4
-                    try:
-                        async for chunk in r.aiter_bytes():
-                            completion_chars += len(chunk)
-                            yield chunk
-                        proxy_latency = (time.time() - proxy_start) * 1000.0
-                        stats["total_proxy_time_ms"] += proxy_latency
-                        stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                        record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
-                        # Finalize LiteLLM span (streaming path)
-                        if litellm_span_obj:
-                            try:
-                                litellm_span_obj.end(
-                                    output={"model": model_name, "stream": True},
-                                    metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
-                                )
-                            except Exception:
-                                pass
-                    except Exception as ex:
-                        logger.error(f"Stream error: {ex}")
-                    finally:
-                        await r.aclose()
-                        await client.aclose()
-                return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
+        try:
+            body_to_send = body.copy()
+            body_to_send["model"] = model_name
+            requested_max_tokens = body_to_send.get("max_tokens", 4096)
+            if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
+                # Tier-aware minimum context length (from actual roster data):
+                # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
+                # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
+                # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
+                _tier_min_ctx = {
+                    "agent-simple-core": 32768,
+                    "ollama-deepseek-v4-pro": 1000000,
+                    "ollama-deepseek-v4-flash": 1000000,
+                }
+                _min_ctx = _tier_min_ctx.get(model_name, 262144)
+                # Rough input token estimate: 1 token ≈ 4 chars of JSON
+                _est_input = len(json.dumps(body_to_send)) // 4
+                _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
+                if requested_max_tokens > _safe_max:
+                    logger.warning(
+                        f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
+                        f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
+                    )
+                    body_to_send["max_tokens"] = _safe_max
+        except Exception as e:
+            logger.warning(f"Pre-screening failed (non-fatal): {e}")
+            body_to_send = body.copy()
+            body_to_send["model"] = model_name
+        
+        try:
+            if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
+                body_to_send["metadata"] = {}
+            body_to_send["metadata"]["trace_name"] = "agent-completion"
+            
+            if body.get("stream", False):
+                logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
+                req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+                r = await client.send(req, stream=True)
+                if r.status_code == 200:
+                    async def stream_generator():
+                        """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
+                        completion_chars = 0
+                        request_tokens = len(json.dumps(body_to_send)) // 4
+                        try:
+                            async for chunk in r.aiter_bytes():
+                                completion_chars += len(chunk)
+                                yield chunk
+                            proxy_latency = (time.time() - proxy_start) * 1000.0
+                            stats["total_proxy_time_ms"] += proxy_latency
+                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
+                            # Finalize LiteLLM span (streaming path)
+                            if litellm_span_obj:
+                                try:
+                                    litellm_span_obj.end(
+                                        output={"model": model_name, "stream": True},
+                                        metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
+                                    )
+                                except Exception:
+                                    pass
+                        except Exception as ex:
+                            logger.error(f"Stream error: {ex}")
+                        finally:
+                            await r.aclose()
+                            await client.aclose()
+                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                else:
+                    error_body = await r.aread() if r else b""
+                    logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
+                    await r.aclose(); await client.aclose()
+                    raise HTTPException(status_code=r.status_code, detail=f"LiteLLM failed: {error_body[:300].decode('utf-8', errors='ignore')}")
             else:
-                error_body = await r.aread() if r else b""
-                logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
-                await r.aclose(); await client.aclose()
-                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {r.status_code}")
-        else:
-            logger.info(f"Proxying to LiteLLM as model={model_name}")
-            response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
-            await client.aclose()
-            if response.status_code == 200:
-                proxy_latency = (time.time() - proxy_start) * 1000.0
-                stats["total_proxy_time_ms"] += proxy_latency
-                stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                resp_json = response.json()
-                usage = resp_json.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
-                completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
-                record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
-                # Finalize LiteLLM span (non-streaming path)
-                if litellm_span_obj:
-                    try:
-                        litellm_span_obj.end(
-                            output={"model": model_name, "tokens": completion_tokens},
-                            metadata={"latency_ms": proxy_latency},
-                        )
-                    except Exception:
-                        pass
-                return resp_json
+                logger.info(f"Proxying to LiteLLM as model={model_name}")
+                response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+                await client.aclose()
+                if response.status_code == 200:
+                    proxy_latency = (time.time() - proxy_start) * 1000.0
+                    stats["total_proxy_time_ms"] += proxy_latency
+                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                    resp_json = response.json()
+                    usage = resp_json.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
+                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
+                    # Finalize LiteLLM span (non-streaming path)
+                    if litellm_span_obj:
+                        try:
+                            litellm_span_obj.end(
+                                output={"model": model_name, "tokens": completion_tokens},
+                                metadata={"latency_ms": proxy_latency},
+                            )
+                        except Exception:
+                            pass
+                    return resp_json
+                else:
+                    logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
+                    raise HTTPException(status_code=response.status_code, detail=f"LiteLLM failed: {response.text[:300]}")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"httpx call failed: {exc}")
+            raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}")
+
+    if should_try_ollama:
+        try:
+            return await execute_proxy(target_model)
+        except Exception as e:
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                logger.warning(f"Ollama proxy failed ({e}), falling back to free tier {original_target_model}")
+                return await execute_proxy(original_target_model)
             else:
-                logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
-                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {response.status_code}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Exception during LiteLLM proxy: {e}")
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="LiteLLM upstream failed")
+                # Direct/fallback llm-routing-ollama request: return 429 to trigger immediate cooldown in LiteLLM
+                logger.error(f"Ollama proxy failed ({e}) for direct/fallback request, returning 429 to cool down")
+                raise HTTPException(status_code=429, detail="Ollama backend rate limited/unavailable")
+    else:
+        return await execute_proxy(target_model)
 
 @app.get("/metrics")
 async def metrics():
