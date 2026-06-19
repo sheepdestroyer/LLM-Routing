@@ -9,7 +9,7 @@ set -e
 #                                      (for router/Containerfile changes)
 
 # Set working directory
-WORKDIR="/home/gpav/Vrac/LAB/AI/LLM-Routing"
+WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORKDIR"
 
 # Ensure local volume directories exist on the host for Podman mounts
@@ -301,13 +301,13 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        podman play kube "$WORKDIR/pod.yaml"
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        podman play kube "$WORKDIR/pod.yaml"
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     else
@@ -333,7 +333,7 @@ else
     podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    podman play kube "$WORKDIR/pod.yaml"
+    cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
     setup_minio_buckets
     verify_stack_health
 fi
