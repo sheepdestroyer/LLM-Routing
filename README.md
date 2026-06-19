@@ -151,6 +151,7 @@ sequenceDiagram
         else Ollama fails (rate-limited / unavailable)
             Provider-->>Proxy: Error / HTTP 429
             Proxy-->>Router: Error Response
+            Note over Router: Activate 5-min router-side Ollama cooldown
             alt Model = auto-ollama / auto-agy-ollama (triage-gated)
                 Note over Router: Catch error → Fall back to free tier
                 Router->>Proxy: POST /v1/chat/completions (model=original_target_model)
@@ -159,10 +160,9 @@ sequenceDiagram
                 Proxy-->>Router: Response
                 Router-->>Client: Return response
             else Model = llm-routing-ollama (direct / fallback chain)
-                Note over Router: Return 429 to trigger LiteLLM cooldown
-                Router-->>Proxy: HTTP 429 (Ollama rate limited)
-                Proxy->>Proxy: Cool down llm-routing-ollama (300s)
-                Note over Proxy: Cascade to next fallback (openrouter-auto)
+                Note over Router: Return 429 (cooldown active)
+                Router-->>Proxy: HTTP 429 (Ollama cooled down)
+                Note over Proxy: Skip llm-routing-ollama → cascade to openrouter-auto
                 Proxy->>Provider: Call OpenRouter (openrouter-auto)
                 Provider-->>Proxy: Response
                 Proxy-->>Router: Response
@@ -330,7 +330,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - **`agent-complex-core`**: reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
   - **`agent-reasoning-core`**: advanced-core → `llm-routing-ollama` → `openrouter-auto`
   - **`agent-advanced-core`**: `llm-routing-ollama` → `openrouter-auto`
-  - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro`, `complex & below` → `ollama-deepseek-v4-flash`. Note: Ollama models have no internal fallbacks; failures propagate to put the `llm-routing-ollama` proxy on cooldown, which LiteLLM then skips in the tier fallback chains.
+  - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro`, `complex & below` → `ollama-deepseek-v4-flash`. Note: Ollama cooldowns are managed by the triage router internally (5-minute window on failure); during cooldown the router returns 429 immediately so LiteLLM skips to `openrouter-auto`.
   All tiers ultimately land on OpenRouter auto/free model pools or the local Speculative MoE when enabled.
 *Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
 
@@ -509,6 +509,8 @@ This endpoint outputs plain-text metrics (`Content-Type: text/plain; version=0.0
 | `circuit_breaker_tier` | gauge | Current circuit breaker cooldown tier (0=open, 1-3=cooldown) |
 | `circuit_breaker_agy_allowed` | gauge | Whether agy proxy requests are currently allowed (0/1) |
 | `circuit_breaker_cooldown_remaining_seconds` | gauge | Seconds until cooldown expires |
+| `ollama_cooldown_active` | gauge | Whether Ollama is in router-side cooldown (1=active, 0=open) |
+| `ollama_cooldown_remaining_seconds` | gauge | Seconds remaining in Ollama cooldown |
 | `circuit_breaker_total_trips` | counter | Total number of circuit breaker trips |
 | `circuit_breaker_probe_granted` | gauge | Whether a probe request has been granted (0/1) |
 
@@ -749,17 +751,17 @@ Additional Ollama.com models can be added to `litellm/config.yaml` using the sam
 
 ### Fallback and Cooldown Behavior
 
-To prevent cascading fallback loops where a rate-limited Ollama backend repeatedly receives requests from different tiers, **no fallbacks are configured for the Ollama model deployments** (`ollama-deepseek-v4-pro` and `ollama-deepseek-v4-flash`) inside the LiteLLM configuration.
+To prevent cascading fallback loops where a rate-limited Ollama backend repeatedly receives requests from different tiers, the **Triage Router manages Ollama cooldowns internally** rather than relying on LiteLLM's deployment cooldown mechanism (which is unreliable for single-deployment model groups in Community Edition).
 
-Instead, failures at the Ollama layer propagate back through the system as follows:
+The cooldown mechanism works as follows:
 
-1. **Failure Propagation**: When calls to `ollama-deepseek-v4-pro` or `ollama-deepseek-v4-flash` fail (due to rate limiting or connection issues), the failure is returned to the Triage Router.
-2. **Direct / Fallback Requests (`llm-routing-ollama`)**:
-   - The Triage Router catches the exception and returns an HTTP `429` (Rate Limited) error back to LiteLLM.
-   - Upon receiving the `429` response, LiteLLM immediately puts the `llm-routing-ollama` model group on **cooldown** (for 300 seconds).
-   - Subsequent calls in the tier fallback cascades (e.g., `agent-advanced-core` -> `llm-routing-ollama` -> `openrouter-auto`) will **skip** the cooled-down `llm-routing-ollama` deployment and fall back directly to `openrouter-auto`.
-3. **Auto-Routing Requests (`llm-routing-auto-ollama` or `llm-routing-auto-agy-ollama`)**:
-   - The Triage Router catches the Ollama exception and automatically falls back to the original classified free tier model (e.g., `agent-advanced-core`), querying the LiteLLM Gateway for a free model.
+1. **Failure Detection**: When calls to `ollama-deepseek-v4-pro` or `ollama-deepseek-v4-flash` fail (due to rate limiting, 429/502/503 errors, or connection issues), the failure is caught by the Triage Router.
+2. **Router-Side Cooldown Activation**: The Triage Router activates an internal **5-minute cooldown** (configurable via `OLLAMA_COOLDOWN_SECONDS` env var). During this window, all subsequent Ollama requests are **immediately rejected** without making any LiteLLM calls.
+3. **Direct / Fallback Requests (`llm-routing-ollama`)**:
+   - During cooldown, the Triage Router returns an HTTP `429` immediately.
+   - LiteLLM receives this 429, skips `llm-routing-ollama` in the fallback chain, and cascades directly to `openrouter-auto`.
+4. **Auto-Routing Requests (`llm-routing-auto-ollama` or `llm-routing-auto-agy-ollama`)**:
+   - During cooldown, the Triage Router silently falls back to the original classified free tier model (e.g., `agent-advanced-core`), querying LiteLLM for a free model.
 
 ### Routing Modes
 
@@ -769,7 +771,7 @@ Instead, failures at the Ollama layer propagate back through the system as follo
 | `llm-routing-auto-ollama` | **Gated auto**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex → `ollama-deepseek-v4-flash`, below → bypasses Ollama to LiteLLM free tiers |
 | `llm-routing-auto-agy-ollama` | **Gated chained**: runs classifier, tries agy first (advanced/reasoning only), then chains to Ollama if agy is exhausted |
 
-For auto-routing modes, the Triage Router handles failures by falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns a `429` to trigger a cooldown in LiteLLM, allowing LiteLLM to cascade to subsequent fallback models (like `openrouter-auto`).
+For auto-routing modes, the Triage Router handles failures by silently falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns `429` immediately during cooldown, allowing LiteLLM to skip this model group and cascade to `openrouter-auto`. The cooldown status is visible via the `/metrics` endpoint (`ollama_cooldown_active` and `ollama_cooldown_remaining_seconds` gauges).
 
 ## 10. Performance Benchmarks\n\nThrough our local benchmarks, the following performance characteristics have been achieved:
 

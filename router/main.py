@@ -130,6 +130,17 @@ stats = {
     "timeline": []
 }
 
+# ---------------------------------------------------------------------------
+# OLLAMA COOLDOWN — router-side cooldown for the Ollama backend.
+# LiteLLM Community Edition's deployment cooldown is unreliable for single-
+# deployment model groups (it bypasses cooldown when there's only 1 deployment)
+# and doesn't reliably cooldown fallback-target model groups. Instead, the
+# triage router tracks Ollama failures itself and returns 429 immediately
+# during the cooldown window, skipping the LiteLLM call entirely.
+# ---------------------------------------------------------------------------
+_ollama_cooldown_until: float = 0.0      # monotonic timestamp when cooldown expires
+OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
+
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
 # Module-level set to hold references to fire-and-forget background tasks,
@@ -1412,6 +1423,8 @@ async def chat_completions(request: Request):
                     pass
             logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
 
+    original_target_model = target_model
+
     # --- OLLAMA (via LiteLLM) ---
     # LiteLLM's ollama_chat provider handles the native Ollama API call.
     # We just proxy to LiteLLM with the appropriate model name.
@@ -1434,8 +1447,6 @@ async def chat_completions(request: Request):
             else:
                 target_model = "ollama-deepseek-v4-flash"
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
-
-    original_target_model = target_model
 
     async def execute_proxy(model_name: str):
         # Resolve backend connection parameters
@@ -1506,6 +1517,7 @@ async def chat_completions(request: Request):
             body_to_send = body.copy()
             body_to_send["model"] = model_name
         
+        should_close_client = True
         try:
             if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
                 body_to_send["metadata"] = {}
@@ -1516,6 +1528,7 @@ async def chat_completions(request: Request):
                 req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
                 r = await client.send(req, stream=True)
                 if r.status_code == 200:
+                    should_close_client = False
                     async def stream_generator():
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                         completion_chars = 0
@@ -1546,12 +1559,11 @@ async def chat_completions(request: Request):
                 else:
                     error_body = await r.aread() if r else b""
                     logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
-                    await r.aclose(); await client.aclose()
+                    await r.aclose()
                     raise HTTPException(status_code=r.status_code, detail=f"LiteLLM failed: {error_body[:300].decode('utf-8', errors='ignore')}")
             else:
                 logger.info(f"Proxying to LiteLLM as model={model_name}")
                 response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
-                await client.aclose()
                 if response.status_code == 200:
                     proxy_latency = (time.time() - proxy_start) * 1000.0
                     stats["total_proxy_time_ms"] += proxy_latency
@@ -1578,19 +1590,71 @@ async def chat_completions(request: Request):
             raise
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
-            raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}")
+            raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}") from exc
+        finally:
+            if should_close_client:
+                await client.aclose()
 
     if should_try_ollama:
-        try:
-            return await execute_proxy(target_model)
-        except Exception as e:
+        # --- Router-side Ollama cooldown check ---
+        # Skip Ollama entirely if we're in a cooldown window from a prior failure.
+        # This is the primary rate-limit protection: LiteLLM's deployment-level
+        # cooldown is unreliable for single-deployment model groups in CE.
+        global _ollama_cooldown_until
+        now_mono = time.monotonic()
+        if now_mono < _ollama_cooldown_until:
+            remaining = int(_ollama_cooldown_until - now_mono)
+            logger.warning(
+                f"⏳ Ollama cooldown active ({remaining}s remaining), "
+                f"skipping {target_model}"
+            )
             if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
-                logger.warning(f"Ollama proxy failed ({e}), falling back to free tier {original_target_model}")
+                # Auto mode: silently fall through to the free tier
+                logger.info(f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)")
                 return await execute_proxy(original_target_model)
             else:
-                # Direct/fallback llm-routing-ollama request: return 429 to trigger immediate cooldown in LiteLLM
-                logger.error(f"Ollama proxy failed ({e}) for direct/fallback request, returning 429 to cool down")
-                raise HTTPException(status_code=429, detail="Ollama backend rate limited/unavailable")
+                # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
+                # skips this model group and moves to openrouter-auto
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Ollama backend cooled down ({remaining}s remaining)"
+                )
+
+        try:
+            result = await execute_proxy(target_model)
+            return result
+        except HTTPException as e:
+            if e.status_code in (429, 503, 502):
+                # Ollama failure — activate router-side cooldown
+                _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+                logger.error(
+                    f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+                )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                logger.warning(f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}")
+                return await execute_proxy(original_target_model)
+            else:
+                # Direct/fallback llm-routing-ollama request: return 429 to
+                # signal LiteLLM to skip this model group in the fallback chain
+                logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
+                raise HTTPException(
+                    status_code=429,
+                    detail="Ollama backend rate limited/unavailable"
+                ) from e
+        except Exception as e:
+            # Unexpected error — also cooldown to prevent hammering
+            _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+            logger.error(
+                f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+            )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                logger.warning(f"Ollama proxy error ({e}), falling back to free tier {original_target_model}")
+                return await execute_proxy(original_target_model)
+            else:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Ollama backend rate limited/unavailable"
+                ) from e
     else:
         return await execute_proxy(target_model)
 
@@ -1663,6 +1727,16 @@ async def metrics():
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
     lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
+
+    # Ollama router-side cooldown metrics
+    _now_mono = time.monotonic()
+    _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
+    lines.append("# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)")
+    lines.append("# TYPE ollama_cooldown_active gauge")
+    lines.append(f"ollama_cooldown_active {int(_ollama_remaining > 0)}")
+    lines.append("# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown")
+    lines.append("# TYPE ollama_cooldown_remaining_seconds gauge")
+    lines.append(f"ollama_cooldown_remaining_seconds {_ollama_remaining:.0f}")
     
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
