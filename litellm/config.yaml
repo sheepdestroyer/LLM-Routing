@@ -62,14 +62,6 @@ model_list:
     api_base: http://127.0.0.1:5000/v1
     api_key: os.environ/LITELLM_MASTER_KEY
     request_timeout: 120
-    order: 1
-  model_name: llm-routing-ollama
-- litellm_params:
-    model: openai/llm-routing-ollama-dummy
-    api_base: http://127.0.0.1:9999
-    api_key: os.environ/LITELLM_MASTER_KEY
-    request_timeout: 1
-    order: 2
   model_name: llm-routing-ollama
 
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
@@ -90,7 +82,10 @@ model_list:
 # ================================================================================
 # OLLAMA PAID TIER — ollama.com via LiteLLM's native ollama_chat provider.
 # LiteLLM calls https://api.ollama.com/api/chat with Bearer auth (OLLAMA_API_KEY).
-# No fallbacks configured: failures propagate to cool down llm-routing-ollama.
+# No LiteLLM-level fallbacks: failures propagate back to the triage router
+# (router/main.py) which manages Ollama cooldowns internally. When Ollama fails,
+# the router activates a 5-minute cooldown and skips Ollama on subsequent
+# requests, returning 429 so LiteLLM falls through to openrouter-auto.
 # ================================================================================
 - model_name: ollama-deepseek-v4-pro
   litellm_params:
@@ -101,7 +96,7 @@ model_list:
 
 # ================================================================================
 # OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
-# No fallbacks configured: failures propagate to cool down llm-routing-ollama.
+# Same cooldown architecture as the pro tier above.
 # ================================================================================
 - model_name: ollama-deepseek-v4-flash
   litellm_params:
@@ -165,15 +160,9 @@ router_settings:
   num_retries: 1
   routing_strategy: latency-based-routing
   enable_health_check_routing: false
-  # Per-error-type cooldown thresholds (overrides allowed_fails for specific errors).
-  # Upstream rate limits ("temporarily rate-limited upstream") can last minutes —
-  # a 30s cooldown just wastes retries. 300s gives providers time to clear the limit.
-  # RateLimitError: cooldown on FIRST 429 (upstream rate limits persist for minutes —
-  # allowing even 1 retry wastes a request against a provider that's still throttling)
-  allowed_fails_policy:
-    RateLimitErrorAllowedFails: 0
-    TimeoutErrorAllowedFails: 1
-    BadRequestErrorAllowedFails: 1
+  # NOTE: allowed_fails_policy is an enterprise-only feature in LiteLLM.
+  # Ollama cooldowns are handled by the triage router itself (router/main.py),
+  # not by LiteLLM's deployment cooldown mechanism.
 vector_store_settings:
   collection_name: litellm_semantic_cache
   connection_string: postgresql://postgres:***@127.0.0.1:5432/postgres
