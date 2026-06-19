@@ -79,11 +79,15 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-# 3. Use LiteLLM master key from .env if present, otherwise generate a random one
 if [ -z "$LITELLM_MASTER_KEY" ]; then
     LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
+fi
+
+if [ -z "$LITELLM_MASTER_KEY" ]; then
+    echo "❌ Error: LITELLM_MASTER_KEY is not set and could not be generated."
+    exit 1
 fi
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env

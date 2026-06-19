@@ -94,18 +94,19 @@ async def _run_agy_print(prompt: str, model_override: str = "",
     logger.info(f"agy proxy forwarding to host: [{model_tag}]{conv_tag} {prompt[:60]}...")
     
     try:
-        async with httpx.AsyncClient(timeout=timeout + 5.0) as client:
-            r = await client.post(url, json=payload)
-            if r.status_code == 200:
-                result = r.json()
-                return (
-                    result.get("returncode", 0),
-                    result.get("stdout", ""),
-                    result.get("stderr", ""),
-                    result.get("conversation_id", None)
-                )
-            else:
-                return -1, "", f"Daemon returned HTTP status {r.status_code}", None
+        from main import get_http_client
+        client = get_http_client()
+        r = await client.post(url, json=payload, timeout=timeout + 5.0)
+        if r.status_code == 200:
+            result = r.json()
+            return (
+                result.get("returncode", 0),
+                result.get("stdout", ""),
+                result.get("stderr", ""),
+                result.get("conversation_id", None)
+            )
+        else:
+            return -1, "", f"Daemon returned HTTP status {r.status_code}", None
     except Exception as e:
         logger.error(f"Failed to communicate with Host agy Daemon: {e}")
         return -1, "", f"Daemon connection error: {e}", None
@@ -201,6 +202,13 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         ]
     else:
         agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
+    # Sync states from Valkey first
+    try:
+        from main import sync_cooldowns_from_valkey
+        await sync_cooldowns_from_valkey()
+    except Exception:
+        pass
+
     # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
     # rate-limit windows (separate 5-hour quota refresh cycles).
     google_breaker = get_google_breaker()
@@ -278,13 +286,16 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.5-flash)"
             logger.info(f"agy proxy connecting stream to daemon: [{model_tag}]...")
             
-            client = httpx.AsyncClient(timeout=tier_timeout + 5.0)
+            from main import get_http_client
+            client = get_http_client()
+            should_close_client = False
             req = client.build_request("POST", url, json=payload)
             try:
-                r = await client.send(req, stream=True)
+                r = await client.send(req, stream=True, timeout=tier_timeout + 5.0)
             except Exception as e:
                 logger.error(f"Failed to connect stream to daemon: {e}")
-                await client.aclose()
+                if should_close_client:
+                    await client.aclose()
                 continue
                 
             # Read first line to see if it's successful or quota error
@@ -297,7 +308,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 
             if not first_line:
                 await r.aclose()
-                await client.aclose()
+                if should_close_client:
+                    await client.aclose()
                 logger.warning(f"agy proxy: tier {tier['model_name']} returned empty stream. Trying next tier...")
                 continue
                 
@@ -305,7 +317,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 first_data = json.loads(first_line)
             except Exception:
                 await r.aclose()
-                await client.aclose()
+                if should_close_client:
+                    await client.aclose()
                 logger.error(f"agy proxy: invalid JSON from daemon: {first_line}")
                 continue
                 
@@ -316,13 +329,24 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
                     if _is_quota_exhausted(rc, "", stderr_content):
                         tier_breaker.record_failure()
+                        try:
+                            from main import save_cooldowns_to_valkey
+                            await save_cooldowns_to_valkey()
+                        except Exception:
+                            pass
                     await r.aclose()
-                    await client.aclose()
+                    if should_close_client:
+                        await client.aclose()
                     logger.warning(f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier...")
                     continue
                     
             # Success! Stream has started.
             tier_breaker.record_success()
+            try:
+                from main import save_cooldowns_to_valkey
+                await save_cooldowns_to_valkey()
+            except Exception:
+                pass
             async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id):
                 """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
                 # Yield the initial token if it was a token
@@ -353,7 +377,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                                 }
                 finally:
                     await stream_resp.aclose()
-                    await httpx_client.aclose()
+                    if should_close_client:
+                        await httpx_client.aclose()
                     
             return {
                 "stream": token_generator(r, client, first_line, last_conv_id),
@@ -376,6 +401,11 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             # Check for quota exhaustion
             if _is_quota_exhausted(returncode, stdout, stderr):
                 tier_breaker.record_failure()
+                try:
+                    from main import save_cooldowns_to_valkey
+                    await save_cooldowns_to_valkey()
+                except Exception:
+                    pass
                 logger.warning(
                     f"agy proxy: tier {tier['model_name']} quota exhausted. "
                     f"Falling to tier {actual_tier_idx + 2}..."
@@ -409,6 +439,11 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     f"({len(stdout)} chars, {elapsed_total:.1f}s)"
                 )
                 tier_breaker.record_success()
+                try:
+                    from main import save_cooldowns_to_valkey
+                    await save_cooldowns_to_valkey()
+                except Exception:
+                    pass
                 return _wrap_response(stdout, tier["model_name"], proxy_prompt)
             else:
                 logger.warning(

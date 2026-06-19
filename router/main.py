@@ -9,6 +9,7 @@ import copy
 import tempfile
 import yaml
 import httpx
+import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -17,6 +18,96 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
+
+_redis_client = None
+
+def get_redis():
+    """Lazily initialize and return the async Redis/Valkey client.
+    Returns None if connection fails or is disabled (non-fatal fallback)."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            host = os.getenv("VALKEY_HOST", "127.0.0.1")
+            port = int(os.getenv("VALKEY_PORT", "6379"))
+            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+            logger.info(f"Valkey client initialized at {host}:{port}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
+            _redis_client = False
+    return _redis_client if _redis_client is not False else None
+
+
+_http_client = None
+
+def get_http_client():
+    """Return the shared global httpx.AsyncClient singleton."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=3600.0)
+    return _http_client
+
+
+def estimate_prompt_tokens(body: dict) -> int:
+    """Estimate prompt tokens by counting characters in message contents (1 token ~= 4 chars)
+    to avoid inflating metrics with large tool/schema declarations.
+    """
+    tokens = 0
+    for msg in body.get("messages", []):
+        content = msg.get("content") or ""
+        if isinstance(content, str):
+            tokens += len(content) // 4
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    tokens += len(block.get("text", "")) // 4
+    # Include a flat estimate for system prompt / metadata overhead
+    tokens += 50
+    return max(1, tokens)
+
+
+async def sync_cooldowns_from_valkey() -> None:
+    """Sync Ollama cooldown and circuit breaker states from Valkey to local memory."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        val = await redis.get("cooldown:ollama")
+        if val is not None:
+            global _ollama_cooldown_until
+            epoch_until = float(val)
+            remaining = epoch_until - time.time()
+            if remaining > 0:
+                _ollama_cooldown_until = time.monotonic() + remaining
+            else:
+                _ollama_cooldown_until = 0.0
+            
+        breaker = get_breaker()
+        await breaker.sync_from_valkey(redis)
+    except Exception as e:
+        logger.warning(f"Failed to sync cooldowns from Valkey: {e}")
+
+
+async def save_cooldowns_to_valkey() -> None:
+    """Save local Ollama cooldown and circuit breaker states to Valkey."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        global _ollama_cooldown_until
+        now_mono = time.monotonic()
+        if _ollama_cooldown_until > now_mono:
+            remaining = _ollama_cooldown_until - now_mono
+            epoch_until = time.time() + remaining
+            ttl = int(max(1.0, remaining))
+            await redis.set("cooldown:ollama", str(epoch_until), ex=ttl)
+        else:
+            await redis.delete("cooldown:ollama")
+            
+        breaker = get_breaker()
+        await breaker.save_to_valkey(redis)
+    except Exception as e:
+        logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -378,6 +469,10 @@ async def sync_adaptive_router_roster(master_key: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: wait for LiteLLM readiness, then sync free-model roster."""
+    # Initialize shared HTTPX client and sync cooldowns from Redis/Valkey
+    get_http_client()
+    await sync_cooldowns_from_valkey()
+
     litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     max_wait = 180
@@ -414,6 +509,16 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+
+        # Close shared HTTPX client
+        global _http_client
+        if _http_client is not None:
+            await _http_client.aclose()
+
+        # Close Redis client
+        global _redis_client
+        if _redis_client is not None and _redis_client is not False:
+            await _redis_client.aclose()
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
@@ -1087,6 +1192,7 @@ async def chat_completions(request: Request):
     
     try:
         body = await request.json()
+        await sync_cooldowns_from_valkey()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
@@ -1478,10 +1584,9 @@ async def chat_completions(request: Request):
                 except Exception:
                     pass
 
-        client = None
-        should_close_client = True
+        client = get_http_client()
+        should_close_client = False
         try:
-            client = httpx.AsyncClient(timeout=3600.0)
             headers = {"Authorization": f"Bearer {backend_api_key}"}
             if langfuse_trace_id:
                 headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
@@ -1505,8 +1610,7 @@ async def chat_completions(request: Request):
                         "ollama-deepseek-v4-flash": 1000000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
-                    # Rough input token estimate: 1 token ≈ 4 chars of JSON
-                    _est_input = len(json.dumps(body_to_send)) // 4
+                    _est_input = estimate_prompt_tokens(body_to_send)
                     _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
                     if requested_max_tokens > _safe_max:
                         logger.warning(
@@ -1527,11 +1631,10 @@ async def chat_completions(request: Request):
                 req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
                 r = await client.send(req, stream=True)
                 if r.status_code == 200:
-                    should_close_client = False
                     async def stream_generator():
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                         completion_chars = 0
-                        request_tokens = len(json.dumps(body_to_send)) // 4
+                        request_tokens = estimate_prompt_tokens(body_to_send)
                         try:
                             async for chunk in r.aiter_bytes():
                                 completion_chars += len(chunk)
@@ -1553,7 +1656,8 @@ async def chat_completions(request: Request):
                             logger.error(f"Stream error: {ex}")
                         finally:
                             await r.aclose()
-                            await client.aclose()
+                            if should_close_client:
+                                await client.aclose()
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
                     error_body = await r.aread() if r else b""
@@ -1569,7 +1673,7 @@ async def chat_completions(request: Request):
                     stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                     resp_json = response.json()
                     usage = resp_json.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
+                    prompt_tokens = usage.get("prompt_tokens", estimate_prompt_tokens(body_to_send))
                     completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
                     record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
                     # Finalize LiteLLM span (non-streaming path)
@@ -1595,10 +1699,10 @@ async def chat_completions(request: Request):
                 await client.aclose()
 
     if should_try_ollama:
+        # Sync state from Valkey first
+        await sync_cooldowns_from_valkey()
+
         # --- Router-side Ollama cooldown check ---
-        # Skip Ollama entirely if we're in a cooldown window from a prior failure.
-        # This is the primary rate-limit protection: LiteLLM's deployment-level
-        # cooldown is unreliable for single-deployment model groups in CE.
         global _ollama_cooldown_until
         now_mono = time.monotonic()
         if now_mono < _ollama_cooldown_until:
@@ -1623,26 +1727,34 @@ async def chat_completions(request: Request):
             result = await execute_proxy(target_model)
             return result
         except HTTPException as e:
-            if e.status_code in (429, 503, 502):
+            is_transient = e.status_code in (429, 500, 502, 503, 504)
+            if is_transient:
                 # Ollama failure — activate router-side cooldown
                 _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+                await save_cooldowns_to_valkey()
                 logger.error(
                     f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
                 )
             if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
-                logger.warning(f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}")
-                return await execute_proxy(original_target_model)
+                if is_transient:
+                    logger.warning(f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}")
+                    return await execute_proxy(original_target_model)
+                else:
+                    raise e
             else:
-                # Direct/fallback llm-routing-ollama request: return 429 to
-                # signal LiteLLM to skip this model group in the fallback chain
-                logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
-                raise HTTPException(
-                    status_code=429,
-                    detail="Ollama backend rate limited/unavailable"
-                ) from e
+                # Direct/fallback llm-routing-ollama request
+                if is_transient:
+                    logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Ollama backend rate limited/unavailable"
+                    ) from e
+                else:
+                    raise e
         except Exception as e:
-            # Unexpected error — also cooldown to prevent hammering
+            # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
             _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+            await save_cooldowns_to_valkey()
             logger.error(
                 f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
             )
@@ -1660,6 +1772,7 @@ async def chat_completions(request: Request):
 @app.get("/metrics")
 async def metrics():
     """Expose triage and circuit breaker metrics in Prometheus format."""
+    await sync_cooldowns_from_valkey()
     breaker = get_breaker()
     breaker_status = breaker.status()
     
@@ -1742,6 +1855,7 @@ async def metrics():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    await sync_cooldowns_from_valkey()
     # 1. Run live health checks
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
@@ -1749,7 +1863,7 @@ async def get_dashboard():
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
 
     # 1c. Check Gemini OAuth token status
-    oauth_status = get_gemini_oauth_status()
+    oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2728,8 +2842,10 @@ async def get_visualizer():
     """Serve the dataset visualizer for human review."""
     vis_path = STATIC_DIR / "visualizer.html"
     if vis_path.exists():
-        return HTMLResponse(vis_path.read_text())
+        content = await asyncio.to_thread(vis_path.read_text, encoding="utf-8")
+        return HTMLResponse(content)
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
+
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
@@ -2743,6 +2859,10 @@ VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "
 # across different workers can still race. Eventual consistency is maintained via
 # the atomic file-replace mechanism, which is acceptable for this dashboard feature.
 annotations_lock = asyncio.Lock()
+
+def _read_annotations_sync(path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
@@ -2795,9 +2915,7 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
         async with annotations_lock:
             if ann_path.exists():
                 try:
-                    import json
-                    with open(ann_path, "r", encoding="utf-8") as f:
-                        existing = json.load(f)
+                    existing = await asyncio.to_thread(_read_annotations_sync, str(ann_path))
                 except Exception as read_err:
                     logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
             
@@ -2806,6 +2924,7 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
                 existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
                 
             await _atomic_write_json_async(str(ann_path), existing)
+
         return JSONResponse({"status": "ok", "saved": len(payload)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")

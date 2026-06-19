@@ -2,8 +2,23 @@
 import urllib.request
 import json
 import sys
+import os
 
 URL = "http://localhost:5000/v1/chat/completions"
+
+# Resolve the absolute path to .env file in the workspace
+workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+env_path = os.path.join(workspace_dir, ".env")
+
+# Read LITELLM_MASTER_KEY from .env
+litellm_key = "gateway-pass"
+if os.path.exists(env_path):
+    with open(env_path, "r") as f:
+        for line in f:
+            if line.startswith("LITELLM_MASTER_KEY="):
+                # extract value inside quotes
+                litellm_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
 
 def send_request(model: str, prompt: str, expected_model: str):
     payload = {
@@ -18,7 +33,7 @@ def send_request(model: str, prompt: str, expected_model: str):
     req = urllib.request.Request(
         URL,
         data=data,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer gateway-pass"}
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {litellm_key}"}
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
