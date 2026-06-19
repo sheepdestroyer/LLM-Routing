@@ -1208,6 +1208,7 @@ async def chat_completions(request: Request):
 
     # --- AGY PROXY ---
     if should_try_agy:
+        agy_span_obj = None
         try:
             from agy_proxy import try_agy_proxy
 
@@ -1230,7 +1231,6 @@ async def chat_completions(request: Request):
 
             if last_prompt:
                 # --- Langfuse child span: agy proxy ---
-                agy_span_obj = None
                 if langfuse_trace_id:
                     lf_agy = get_langfuse()
                     if lf_agy:
