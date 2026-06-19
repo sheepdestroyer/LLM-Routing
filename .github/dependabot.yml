@@ -5,7 +5,7 @@ updates:
     directory: "/router"
     schedule:
       interval: "daily"
-      time: "18:22"
+      time: "11:22"
     open-pull-requests-limit: 5
     pull-request-branch-name:
       separator: "/"
