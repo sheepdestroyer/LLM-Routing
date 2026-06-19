@@ -291,9 +291,12 @@ safe_pod_teardown() {
 if podman pod exists agent-router-pod 2>/dev/null; then
     echo "💾 Taking pre-deploy database backup..."
     bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
-else
-    echo "⚠️  Pod not running — skipping pre-deploy backup"
 fi
+
+# Escape special characters for sed replacements (specifically backslash, pipe, and ampersand)
+ESCAPED_WORKDIR=$(echo "$WORKDIR" | sed -e 's/\\/\\\\/g' -e 's/|/\\|/g' -e 's/\&/\\\&/g')
+ESCAPED_HOME=$(echo "$HOME" | sed -e 's/\\/\\\\/g' -e 's/|/\\|/g' -e 's/\&/\\\&/g')
+ESCAPED_LITELLM_MASTER_KEY=$(echo "$LITELLM_MASTER_KEY" | sed -e 's/\\/\\\\/g' -e 's/|/\\|/g' -e 's/\&/\\\&/g')
 
 if podman pod exists agent-router-pod 2>/dev/null; then
     if $FULL_REBUILD; then
@@ -301,13 +304,13 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$ESCAPED_WORKDIR|g" | sed "s|/home/gpav/|$ESCAPED_HOME/|g" | sed "s|sk-lit\.\.\.33bf|$ESCAPED_LITELLM_MASTER_KEY|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$ESCAPED_WORKDIR|g" | sed "s|/home/gpav/|$ESCAPED_HOME/|g" | sed "s|sk-lit\.\.\.33bf|$ESCAPED_LITELLM_MASTER_KEY|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     else
@@ -333,7 +336,7 @@ else
     podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
+    cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$ESCAPED_WORKDIR|g" | sed "s|/home/gpav/|$ESCAPED_HOME/|g" | sed "s|sk-lit\.\.\.33bf|$ESCAPED_LITELLM_MASTER_KEY|g" | podman play kube -
     setup_minio_buckets
     verify_stack_health
 fi
