@@ -59,6 +59,8 @@ def estimate_prompt_tokens(body: dict) -> int:
     """
     tokens = 0
     for msg in body.get("messages", []):
+        if not isinstance(msg, dict):
+            continue
         content = msg.get("content") or ""
         if isinstance(content, str):
             tokens += len(content) // 4
@@ -91,6 +93,9 @@ async def sync_cooldowns_from_valkey() -> None:
         await breaker.sync_from_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to sync cooldowns from Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
 
 
 async def save_cooldowns_to_valkey() -> None:
@@ -113,6 +118,19 @@ async def save_cooldowns_to_valkey() -> None:
         await breaker.save_to_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
+
+
+class ValkeyCooldownPersistence:
+    """Persistence provider mapping Valkey/Redis client synchronization to the global handlers."""
+    async def sync(self) -> None:
+        await sync_cooldowns_from_valkey()
+
+    async def save(self) -> None:
+        await save_cooldowns_to_valkey()
+
 
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
@@ -755,6 +773,8 @@ def detect_active_tool(body: dict) -> str:
     
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role")
         if role in ("tool", "function"):
             name = msg.get("name")
@@ -763,10 +783,12 @@ def detect_active_tool(body: dict) -> str:
                 tool_call_id = msg.get("tool_call_id")
                 if tool_call_id:
                     for prev_msg in reversed(messages[:idx]):
+                        if not isinstance(prev_msg, dict):
+                            continue
                         if prev_msg.get("role") == "assistant":
                             tcalls = prev_msg.get("tool_calls") or []
                             for tc in tcalls:
-                                if tc.get("id") == tool_call_id:
+                                if isinstance(tc, dict) and tc.get("id") == tool_call_id:
                                     name = tc.get("function", {}).get("name")
                                     break
                         if name:
@@ -778,11 +800,14 @@ def detect_active_tool(body: dict) -> str:
             tool_calls = msg.get("tool_calls")
             if tool_calls and isinstance(tool_calls, list):
                 for tc in tool_calls:
-                    name = tc.get("function", {}).get("name") or "other"
-                    return map_tool_to_category(name)
+                    if isinstance(tc, dict):
+                        name = tc.get("function", {}).get("name") or "other"
+                        return map_tool_to_category(name)
                     
     # Fallback to keyphrase scanning in the user message
     for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == "user":
             content = str(msg.get("content", "")).lower()
             if "tree" in content or "files" in content:
@@ -1212,6 +1237,8 @@ async def chat_completions(request: Request):
     # Extract last user message for complexity triage
     last_user_message = ""
     for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == "user":
             content = msg.get("content") or ""
             if isinstance(content, list):
@@ -1340,6 +1367,8 @@ async def chat_completions(request: Request):
 
             last_prompt = ""
             for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
                 if msg.get("role") == "user":
                     content = msg.get("content") or ""
                     if isinstance(content, list):
@@ -1352,6 +1381,8 @@ async def chat_completions(request: Request):
                 import hashlib
                 fingerprint_parts = []
                 for msg in messages[:4]:
+                    if not isinstance(msg, dict):
+                        continue
                     c = msg.get("content") or ""
                     if isinstance(c, list):
                         c = "".join(block.get("text", "") for block in c if isinstance(block, dict) and block.get("type") == "text")
@@ -1383,7 +1414,9 @@ async def chat_completions(request: Request):
                     session_id=session_id,
                     total_timeout=300.0,
                     stream=is_stream_requested,
-                    target_tier=target_model
+                    target_tier=target_model,
+                    client=get_http_client(),
+                    cooldown_persistence=ValkeyCooldownPersistence()
                 )
                 if agy_response:
                     model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
@@ -1597,7 +1630,6 @@ async def chat_completions(request: Request):
                     pass
 
         client = get_http_client()
-        should_close_client = False
         try:
             headers = {"Authorization": f"Bearer {backend_api_key}"}
             if langfuse_trace_id:
@@ -1645,14 +1677,16 @@ async def chat_completions(request: Request):
                 if r.status_code == 200:
                     async def stream_generator():
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
+                        import codecs
                         completion_chars = 0
                         request_tokens = estimate_prompt_tokens(body_to_send)
                         sse_buffer = ""
+                        decoder = codecs.getincrementaldecoder("utf-8")()
                         try:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
                                 try:
-                                    sse_buffer += chunk.decode("utf-8", errors="ignore")
+                                    sse_buffer += decoder.decode(chunk)
                                     while "\n" in sse_buffer:
                                         line, sse_buffer = sse_buffer.split("\n", 1)
                                         line = line.strip()
@@ -1688,8 +1722,6 @@ async def chat_completions(request: Request):
                             logger.error(f"Stream error: {ex}")
                         finally:
                             await r.aclose()
-                            if should_close_client:
-                                await client.aclose()
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
                     error_body = await r.aread() if r else b""
@@ -1726,9 +1758,6 @@ async def chat_completions(request: Request):
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
             raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}") from exc
-        finally:
-            if should_close_client and client is not None:
-                await client.aclose()
 
     if should_try_ollama:
         # Sync state from Valkey first
