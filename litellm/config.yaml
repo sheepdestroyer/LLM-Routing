@@ -20,6 +20,16 @@ litellm_settings:
   - langfuse
   detailed_debug: false
   drop_params: true
+  public_model_groups:
+  - openrouter-auto
+  - llm-routing-ollama
+  - ollama-deepseek-v4-pro
+  - ollama-deepseek-v4-flash
+  - agent-advanced-core
+  - agent-reasoning-core
+  - agent-complex-core
+  - agent-medium-core
+  - agent-simple-core
   fallbacks:
   - agent-simple-core:
     - agent-medium-core
@@ -57,12 +67,28 @@ model_list:
     model: openrouter/openrouter/auto
     request_timeout: 120
   model_name: openrouter-auto
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 2000000
+    max_input_tokens: 2000000
+    is_public_model_group: true
 - litellm_params:
     model: openai/llm-routing-ollama
     api_base: http://127.0.0.1:5000/v1
     api_key: os.environ/LITELLM_MASTER_KEY
     request_timeout: 120
   model_name: llm-routing-ollama
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
 
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
 # Uncomment to re-enable once a lighter model replaces it.
@@ -93,6 +119,16 @@ model_list:
     api_base: https://api.ollama.com
     api_key: os.environ/OLLAMA_API_KEY
     request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    input_cost_per_token: 0.00000174
+    output_cost_per_token: 0.00000348
+    is_public_model_group: true
 
 # ================================================================================
 # OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
@@ -104,6 +140,16 @@ model_list:
     api_base: https://api.ollama.com
     api_key: os.environ/OLLAMA_API_KEY
     request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    input_cost_per_token: 0.00000014
+    output_cost_per_token: 0.00000028
+    is_public_model_group: true
 
 # ================================================================================
 # AGENT TIER DEPLOYMENTS — safety-net entries (one per tier)
@@ -133,22 +179,62 @@ model_list:
   litellm_params:
     model: openrouter/google/gemma-4-31b-it:free
     request_timeout: 20
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-reasoning-core
   litellm_params:
     model: openrouter/google/gemma-4-26b-a4b-it:free
     request_timeout: 20
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-complex-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
     request_timeout: 20
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 1000000
+    max_input_tokens: 1000000
+    is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
     model: openrouter/google/gemma-4-26b-a4b-it:free
     request_timeout: 20
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-simple-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
     request_timeout: 20
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 256000
+    max_input_tokens: 256000
+    is_public_model_group: true
 
 redis_settings:
   redis_host: 127.0.0.1
