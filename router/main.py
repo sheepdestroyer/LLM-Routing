@@ -350,7 +350,7 @@ async def sync_adaptive_router_roster(master_key: str):
             for mid in model_ids:
                 payload = {
                     "model_name": tier_name,
-                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 120}
+                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20}
                 }
                 try:
                     r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
@@ -1098,7 +1098,7 @@ async def chat_completions(request: Request):
         "agent-simple-core", "agent-medium-core",
         "agent-complex-core", "agent-reasoning-core",
         "agent-advanced-core",
-        "llm-routing-agy", "llm-routing-ollama",
+        "llm-routing-agy",
     }
 
     AUTO_MODELS = {
@@ -1126,13 +1126,13 @@ async def chat_completions(request: Request):
             langfuse_trace_id = None
             parent_obs = None
 
-    if client_model in AUTO_MODELS:
+    if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
         target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
             last_user_message, bypass_cache=bypass_cache, langfuse_trace_id=langfuse_trace_id
         )
-        logger.info(f"Triage decision (auto): Routing to -> '{target_model}'")
+        logger.info(f"Triage decision (auto/gated): Routing to -> '{target_model}'")
     elif client_model in DIRECT_TIERS:
         # Direct routing: client knows what tier they want, skip classifier
         target_model = client_model
@@ -1202,8 +1202,8 @@ async def chat_completions(request: Request):
         or (client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
     should_try_ollama = (
-        client_model == "llm-routing-ollama"  # direct — always try
-        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
+        client_model == "llm-routing-ollama"  # always try (will map to flash for complex/below)
+        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core"))
     )
 
     # --- AGY PROXY ---
@@ -1415,14 +1415,24 @@ async def chat_completions(request: Request):
     # --- OLLAMA (via LiteLLM) ---
     # LiteLLM's ollama_chat provider handles the native Ollama API call.
     # We just proxy to LiteLLM with the appropriate model name.
-    # Reasoning tier → deepseek-v4-flash (lighter, faster)
-    # Advanced tier → deepseek-v4-pro (full power)
     # LiteLLM's fallback chain handles failures.
     if should_try_ollama:
-        if target_model == "agent-reasoning-core":
-            target_model = "ollama-deepseek-v4-flash"
+        if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            elif target_model == "agent-complex-core":
+                target_model = "ollama-deepseek-v4-flash"
+        elif client_model == "llm-routing-ollama":
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            else:
+                target_model = "ollama-deepseek-v4-flash"
         else:
-            target_model = "ollama-deepseek-v4-pro"
+            # Fallback (e.g. if LiteLLM fallback loops back with model: llm-routing-ollama)
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            else:
+                target_model = "ollama-deepseek-v4-flash"
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
     # Resolve backend connection parameters

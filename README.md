@@ -180,11 +180,11 @@ The gateway supports multiple routing modes controlled by the `model` field:
 | Model | Behavior |
 |-------|----------|
 | `llm-routing-auto-free` | **Full classifier pipeline** → routes to best free tier. Recommended default. |
-| `llm-routing-auto-agy` | **Classifier + agy (gated)**: runs classifier, tries agy only if classified as advanced. |
-| `llm-routing-auto-ollama` | **Classifier + Ollama (gated)**: runs classifier, tries Ollama only if advanced. |
-| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama (gated)**: runs classifier, chains agy then Ollama only if advanced. |
+| `llm-routing-auto-agy` | **Classifier + agy (gated)**: runs classifier, tries agy only if classified as advanced/reasoning. |
+| `llm-routing-auto-ollama` | **Classifier + Ollama (gated)**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex → `ollama-deepseek-v4-flash`, below (medium/simple) → bypasses Ollama to LiteLLM free tiers. |
+| `llm-routing-auto-agy-ollama` | **Classifier → agy → ollama (gated)**: runs classifier, chains agy then Ollama only if advanced/reasoning. |
 | `llm-routing-agy` | **Direct agy**: skips classifier, agy proxy (Gemini/Claude) → LiteLLM fallback. |
-| `llm-routing-ollama` | **Direct Ollama**: skips classifier, Ollama deepseek-v4-pro → LiteLLM fallback. |
+| `llm-routing-ollama` | **Gated Ollama**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex & below → `ollama-deepseek-v4-flash`. |
 | `agent-simple-core` / `agent-medium-core` / `agent-complex-core` / `agent-reasoning-core` / `agent-advanced-core` | **Direct routing**: bypasses classifier, goes straight to LiteLLM with that tier name. |
 | Anything else | Returns HTTP 400 with the list of available models |
 
@@ -238,10 +238,10 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 |:---|---:|:---|:---|
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 256K |
-| `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning → deepseek-v4-flash, advanced → deepseek-v4-pro) | LiteLLM agent-advanced-core | 256K |
+| `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced only) | LiteLLM with classified tier | 256K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 256K |
-| `llm-routing-ollama` | ❌ | Ollama deepseek-v4-pro — unconditional | LiteLLM agent-advanced-core | 256K |
+| `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM agent-advanced-core / agent-reasoning-core | 256K |
 | `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain |
@@ -259,14 +259,62 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable models. All chains end at `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
-  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `openrouter-auto`
-  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `openrouter-auto`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → `openrouter-auto`
-  - **`agent-reasoning-core`**: advanced-core → `openrouter-auto`
-  - **`agent-advanced-core`**: `openrouter-auto`
-  - **`ollama-deepseek-v4-pro`**: advanced-core → `openrouter-auto`
-  All tiers ultimately land on the local Ryzen APU MoE (`qwen-35b-q4ks` via llama-server on :8080) as the final safety net.
+  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
+
+  ```mermaid
+  graph TD
+      %% Define styles
+      classDef simple fill:#4F46E5,stroke:#312E81,stroke-width:2px,color:#fff;
+      classDef medium fill:#7C3AED,stroke:#4C1D95,stroke-width:2px,color:#fff;
+      classDef complex fill:#DB2777,stroke:#831843,stroke-width:2px,color:#fff;
+      classDef reasoning fill:#EA580C,stroke:#7C2D12,stroke-width:2px,color:#fff;
+      classDef advanced fill:#E11D48,stroke:#881337,stroke-width:2px,color:#fff;
+      classDef premium fill:#059669,stroke:#064E3B,stroke-width:2px,color:#fff;
+      classDef auto fill:#4B5563,stroke:#1F2937,stroke-width:2px,color:#fff;
+
+      subgraph Simple["agent-simple-core Fallback Tree"]
+          S[agent-simple-core]:::simple --> SM[agent-medium-core]:::medium
+          SM --> SC[agent-complex-core]:::complex
+          SC --> SR[agent-reasoning-core]:::reasoning
+          SR --> SA[agent-advanced-core]:::advanced
+          SA --> SO1[llm-routing-ollama]:::premium
+          SO1 --> SAU[openrouter-auto]:::auto
+      end
+
+      subgraph Medium["agent-medium-core Fallback Tree"]
+          M[agent-medium-core]:::medium --> MC[agent-complex-core]:::complex
+          MC --> MR[agent-reasoning-core]:::reasoning
+          MR --> MA[agent-advanced-core]:::advanced
+          MA --> MO1[llm-routing-ollama]:::premium
+          MO1 --> MAU[openrouter-auto]:::auto
+      end
+
+      subgraph Complex["agent-complex-core Fallback Tree"]
+          C[agent-complex-core]:::complex --> CR[agent-reasoning-core]:::reasoning
+          CR --> CA[agent-advanced-core]:::advanced
+          CA --> CO1[llm-routing-ollama]:::premium
+          CO1 --> CAU[openrouter-auto]:::auto
+      end
+
+      subgraph Reasoning["agent-reasoning-core Fallback Tree"]
+          R[agent-reasoning-core]:::reasoning --> RA[agent-advanced-core]:::advanced
+          RA --> RO1[llm-routing-ollama]:::premium
+          RO1 --> RAU[openrouter-auto]:::auto
+      end
+
+      subgraph Advanced["agent-advanced-core Fallback Tree"]
+          A[agent-advanced-core]:::advanced --> AO1[llm-routing-ollama]:::premium
+          AO1 --> AAU[openrouter-auto]:::auto
+      end
+  ```
+
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-reasoning-core`**: advanced-core → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-advanced-core`**: `llm-routing-ollama` → `openrouter-auto`
+  - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro` (which falls back to `agent-advanced-core`), `complex & below` → `ollama-deepseek-v4-flash` (which falls back to `agent-reasoning-core`).
+  All tiers ultimately land on OpenRouter auto/free model pools or the local Speculative MoE when enabled.
 *Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
 
 ### C. Valkey Caching (`redis_settings` in LiteLLM)
@@ -676,16 +724,16 @@ LiteLLM calls `https://api.ollama.com/api/chat` with Bearer authentication using
 
 | Model | Ollama tag | Purpose |
 |-------|-----------|---------|
-| `ollama-deepseek-v4-pro` | `deepseek-v4-pro` | Primary paid tier — 1.6T parameter model |
+| `ollama-deepseek-v4-pro` | `deepseek-v4-pro` | Primary paid tier — 1.6T parameter reasoning & advanced model |
+| `ollama-deepseek-v4-flash` | `deepseek-v4-flash` | Lightweight paid tier — fast complex & below model |
 
 Additional Ollama.com models can be added to `litellm/config.yaml` using the same
 `ollama_chat/` prefix pattern.
 
-### Fallback Chain
+### Fallback Chains
 
-```
-ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto
-```
+- `ollama-deepseek-v4-pro` → `agent-advanced-core` → `llm-routing-ollama` → `openrouter-auto`
+- `ollama-deepseek-v4-flash` → `agent-reasoning-core` → `llm-routing-ollama` → `openrouter-auto`
 
 If Ollama.com is rate-limited or unavailable, LiteLLM automatically falls back through
 the agent tier cascade to OpenRouter's free model pool.
@@ -694,9 +742,9 @@ the agent tier cascade to OpenRouter's free model pool.
 
 | Model | Behavior |
 |-------|----------|
-| `llm-routing-ollama` | Direct — skips classifier, goes straight to Ollama deepseek-v4-pro |
-| `llm-routing-auto-ollama` | Auto — classifier runs first, then Ollama deepseek-v4-pro is tried regardless of tier |
-| `llm-routing-auto-agy-ollama` | Chained — classifier runs, tries agy first, then chains to Ollama if agy exhausted |
+| `llm-routing-ollama` | **Gated direct**: runs classifier, routes reasoning & advanced → `ollama-deepseek-v4-pro`, complex & below → `ollama-deepseek-v4-flash` |
+| `llm-routing-auto-ollama` | **Gated auto**: runs classifier, reasoning & advanced → `ollama-deepseek-v4-pro`, complex → `ollama-deepseek-v4-flash`, below → bypasses Ollama to LiteLLM free tiers |
+| `llm-routing-auto-agy-ollama` | **Gated chained**: runs classifier, tries agy first (advanced/reasoning only), then chains to Ollama if agy is exhausted |
 
 All three modes ultimately fall back to LiteLLM's agent tier cascade if the premium backends fail.
 

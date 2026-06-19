@@ -1,5 +1,5 @@
 general_settings:
-  master_key: sk-lit...33bf
+  master_key: os.environ/LITELLM_MASTER_KEY
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
@@ -26,24 +26,29 @@ litellm_settings:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED: 35B model unloaded (23GB GTT saved)
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-reasoning-core:
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-advanced-core:
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - ollama-deepseek-v4-pro:
@@ -55,6 +60,12 @@ model_list:
     model: openrouter/openrouter/auto
     request_timeout: 120
   model_name: openrouter-auto
+- litellm_params:
+    model: openai/llm-routing-ollama
+    api_base: http://127.0.0.1:5000/v1
+    api_key: sk-lit...33bf
+    request_timeout: 120
+  model_name: llm-routing-ollama
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
 # Uncomment to re-enable once a lighter model replaces it.
 #- litellm_params:
@@ -119,24 +130,24 @@ model_list:
 
 - model_name: agent-advanced-core
   litellm_params:
-    model: openrouter/minimax/minimax-m2.5:free
-    request_timeout: 120
+    model: openrouter/google/gemma-4-31b-it:free
+    request_timeout: 20
 - model_name: agent-reasoning-core
   litellm_params:
-    model: openrouter/moonshotai/kimi-k2.6:free
-    request_timeout: 120
+    model: openrouter/google/gemma-4-26b-a4b-it:free
+    request_timeout: 20
 - model_name: agent-complex-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-    request_timeout: 120
+    request_timeout: 20
 - model_name: agent-medium-core
   litellm_params:
     model: openrouter/google/gemma-4-26b-a4b-it:free
-    request_timeout: 120
+    request_timeout: 20
 - model_name: agent-simple-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
-    request_timeout: 120
+    request_timeout: 20
 
 redis_settings:
   redis_host: 127.0.0.1
@@ -154,7 +165,7 @@ router_settings:
   # allowing even 1 retry wastes a request against a provider that's still throttling)
   allowed_fails_policy:
     RateLimitErrorAllowedFails: 0
-    TimeoutErrorAllowedFails: 3
+    TimeoutErrorAllowedFails: 1
     BadRequestErrorAllowedFails: 1
 vector_store_settings:
   collection_name: litellm_semantic_cache

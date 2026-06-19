@@ -43,6 +43,12 @@
       "context_length": 256000
     },
     {
+      "id": "cohere/north-mini-code:free",
+      "name": "Cohere: North Mini Code (free)",
+      "score": 25.0,
+      "context_length": 256000
+    },
+    {
       "id": "nex-agi/nex-n2-pro:free",
       "name": "Nex AGI: Nex-N2-Pro (free)",
       "score": 25.0,
@@ -139,6 +145,6 @@
       "context_length": 32768
     }
   ],
-  "updated_at": "2026-06-17T20:17:56.981195Z",
-  "count": 23
+  "updated_at": "2026-06-19T07:24:13.230589Z",
+  "count": 24
 }
