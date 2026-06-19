@@ -12,8 +12,17 @@ def test_antigravity_connection():
     print("--- Testing antigravity-cli connection with current OAuth ---")
     
     # Using the agentapi binary located at ~/.gemini/antigravity-cli/bin/agentapi
+    agentapi_path = os.path.expanduser("~/.gemini/antigravity-cli/bin/agentapi")
+    if not os.path.exists(agentapi_path):
+        try:
+            import pytest
+            pytest.skip(f"agentapi binary not found at {agentapi_path}; skipping health check")
+        except ImportError:
+            import sys
+            print(f"agentapi binary not found at {agentapi_path}; skipping health check")
+            sys.exit(0)
+
     try:
-        agentapi_path = os.path.expanduser("~/.gemini/antigravity-cli/bin/agentapi")
         # Testing non-interactive print mode
         result = subprocess.run(
             [agentapi_path, "--print", "Hello, who are you?"],
