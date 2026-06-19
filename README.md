@@ -251,19 +251,19 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 **Backend targets dispatched by the router** (all resolve through LiteLLM on port 4000):
 
-| Model | Classifier | Premium backend | Fallback |
-|:---|---:|:---|:---|
+| Model | Classifier | Premium backend | Fallback | Context Length |
+|:---|---:|:---|:---|:---|
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 256K |
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced only) | LiteLLM with classified tier | 256K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 256K |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM agent-advanced-core / agent-reasoning-core | 256K |
-| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto |
-| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain |
-| `agent-complex-core` | ❌ | — | LiteLLM fallback chain |
-| `agent-medium-core` | ❌ | — | LiteLLM fallback chain |
-| `agent-simple-core` | ❌ | — | LiteLLM fallback chain |
+| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 256K |
+| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 256K |
+| `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 256K |
+| `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 256K |
+| `agent-simple-core` | ❌ | — | LiteLLM fallback chain | 256K |
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
@@ -499,20 +499,22 @@ This endpoint outputs plain-text metrics (`Content-Type: text/plain; version=0.0
 | Metric | Type | Description |
 | :--- | :---: | :--- |
 | `triage_requests_total` | gauge | Total number of requests processed |
-| `simple_requests_total` | gauge | Number of simple/routine requests |
+| `simple_requests_total` | gauge | Number of simple requests |
+| `medium_requests_total` | gauge | Number of medium requests |
 | `complex_requests_total` | gauge | Number of complex requests |
+| `reasoning_requests_total` | gauge | Number of reasoning requests |
+| `advanced_requests_total` | gauge | Number of advanced requests |
 | `cache_hits_total` | gauge | Triage cache hit count |
 | `avg_triage_latency_ms` | gauge | Average triage classification latency |
 | `avg_proxy_latency_ms` | gauge | Average proxy/inference latency |
 | `prompt_tokens_total` | counter | Total prompt tokens processed |
 | `completion_tokens_total` | counter | Total completion tokens generated |
-| `circuit_breaker_tier` | gauge | Current circuit breaker cooldown tier (0=open, 1-3=cooldown) |
+| `circuit_breaker_google_tier` | gauge | Google breaker cooldown tier (0=open, 3=max) |
+| `circuit_breaker_vendor_tier` | gauge | Vendor breaker cooldown tier (0=open, 3=max) |
 | `circuit_breaker_agy_allowed` | gauge | Whether agy proxy requests are currently allowed (0/1) |
-| `circuit_breaker_cooldown_remaining_seconds` | gauge | Seconds until cooldown expires |
-| `ollama_cooldown_active` | gauge | Whether Ollama is in router-side cooldown (1=active, 0=open) |
+| `circuit_breaker_total_trips` | counter | Total trips across both breakers |
+| `ollama_cooldown_active` | gauge | Whether Ollama is in router-side cooldown (1=active, 0=inactive) |
 | `ollama_cooldown_remaining_seconds` | gauge | Seconds remaining in Ollama cooldown |
-| `circuit_breaker_total_trips` | counter | Total number of circuit breaker trips |
-| `circuit_breaker_probe_granted` | gauge | Whether a probe request has been granted (0/1) |
 
 Verify the endpoint:
 ```bash
