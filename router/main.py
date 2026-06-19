@@ -1478,47 +1478,46 @@ async def chat_completions(request: Request):
                 except Exception:
                     pass
 
-        # Set up outgoing proxy request
-        client = httpx.AsyncClient(timeout=3600.0)
-        headers = {"Authorization": f"Bearer {backend_api_key}"}
-        if langfuse_trace_id:
-            headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
-
-        # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
-        proxy_start = time.time()
-        
-        # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
-        try:
-            body_to_send = body.copy()
-            body_to_send["model"] = model_name
-            requested_max_tokens = body_to_send.get("max_tokens", 4096)
-            if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
-                # Tier-aware minimum context length (from actual roster data):
-                # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-                # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-                # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-                _tier_min_ctx = {
-                    "agent-simple-core": 32768,
-                    "ollama-deepseek-v4-pro": 1000000,
-                    "ollama-deepseek-v4-flash": 1000000,
-                }
-                _min_ctx = _tier_min_ctx.get(model_name, 262144)
-                # Rough input token estimate: 1 token ≈ 4 chars of JSON
-                _est_input = len(json.dumps(body_to_send)) // 4
-                _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
-                if requested_max_tokens > _safe_max:
-                    logger.warning(
-                        f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
-                        f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
-                    )
-                    body_to_send["max_tokens"] = _safe_max
-        except Exception as e:
-            logger.warning(f"Pre-screening failed (non-fatal): {e}")
-            body_to_send = body.copy()
-            body_to_send["model"] = model_name
-        
+        client = None
         should_close_client = True
         try:
+            client = httpx.AsyncClient(timeout=3600.0)
+            headers = {"Authorization": f"Bearer {backend_api_key}"}
+            if langfuse_trace_id:
+                headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
+
+            # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
+            proxy_start = time.time()
+            
+            # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
+            try:
+                body_to_send = body.copy()
+                body_to_send["model"] = model_name
+                requested_max_tokens = body_to_send.get("max_tokens", 4096)
+                if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
+                    # Tier-aware minimum context length (from actual roster data):
+                    # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
+                    # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
+                    # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
+                    _tier_min_ctx = {
+                        "agent-simple-core": 32768,
+                        "ollama-deepseek-v4-pro": 1000000,
+                        "ollama-deepseek-v4-flash": 1000000,
+                    }
+                    _min_ctx = _tier_min_ctx.get(model_name, 262144)
+                    # Rough input token estimate: 1 token ≈ 4 chars of JSON
+                    _est_input = len(json.dumps(body_to_send)) // 4
+                    _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
+                    if requested_max_tokens > _safe_max:
+                        logger.warning(
+                            f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
+                            f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
+                        )
+                        body_to_send["max_tokens"] = _safe_max
+            except Exception as e:
+                logger.warning(f"Pre-screening failed (non-fatal): {e}")
+                body_to_send = body.copy()
+                body_to_send["model"] = model_name
             if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
                 body_to_send["metadata"] = {}
             body_to_send["metadata"]["trace_name"] = "agent-completion"
@@ -1592,7 +1591,7 @@ async def chat_completions(request: Request):
             logger.error(f"httpx call failed: {exc}")
             raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}") from exc
         finally:
-            if should_close_client:
+            if should_close_client and client is not None:
                 await client.aclose()
 
     if should_try_ollama:
@@ -2739,6 +2738,10 @@ class AnnotationItem(BaseModel):
     ts: Optional[str] = None
 
 VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+# NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
+# a single Python process. In multi-worker uvicorn deployments, concurrent requests
+# across different workers can still race. Eventual consistency is maintained via
+# the atomic file-replace mechanism, which is acceptable for this dashboard feature.
 annotations_lock = asyncio.Lock()
 
 @app.post("/dashboard/save-annotations")
