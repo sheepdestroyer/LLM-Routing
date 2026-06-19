@@ -121,6 +121,42 @@ class PerModelBreaker:
             "probe_granted": self.probe_granted,
         }
 
+    async def sync_from_valkey(self, redis_client) -> None:
+        """Synchronize circuit breaker state from Valkey."""
+        if not redis_client:
+            return
+        try:
+            state = await redis_client.hgetall(f"circuit_breaker:{self.name}")
+            if state:
+                self.tier = int(state.get("tier", "0"))
+                self.cooldown_until = float(state.get("cooldown_until", "0.0"))
+                self.probe_granted = state.get("probe_granted", "False") == "True"
+                self.total_trips = int(state.get("total_trips", "0"))
+                self.last_trip_time = float(state.get("last_trip_time", "0.0"))
+        except Exception as e:
+            logger.warning(f"Valkey circuit_breaker [{self.name}] sync failed: {e}")
+
+    async def save_to_valkey(self, redis_client) -> None:
+        """Persist circuit breaker state to Valkey."""
+        if not redis_client:
+            return
+        try:
+            key = f"circuit_breaker:{self.name}"
+            state = {
+                "tier": str(self.tier),
+                "cooldown_until": str(self.cooldown_until),
+                "probe_granted": "True" if self.probe_granted else "False",
+                "total_trips": str(self.total_trips),
+                "last_trip_time": str(self.last_trip_time),
+            }
+            await redis_client.hset(key, mapping=state)
+            now = time.time()
+            ttl = int(max(3600.0, self.cooldown_until - now + 3600.0))
+            await redis_client.expire(key, ttl)
+        except Exception as e:
+            logger.warning(f"Valkey circuit_breaker [{self.name}] save failed: {e}")
+
+
 
 class DualCircuitBreaker:
     """
@@ -161,6 +197,17 @@ class DualCircuitBreaker:
             "google": self.google.status(),
             "vendor": self.vendor.status(),
         }
+
+    async def sync_from_valkey(self, redis_client) -> None:
+        """Synchronize both sub-breakers from Valkey."""
+        await self.google.sync_from_valkey(redis_client)
+        await self.vendor.sync_from_valkey(redis_client)
+
+    async def save_to_valkey(self, redis_client) -> None:
+        """Persist both sub-breakers to Valkey."""
+        await self.google.save_to_valkey(redis_client)
+        await self.vendor.save_to_valkey(redis_client)
+
 
 
 # Module-level singleton
