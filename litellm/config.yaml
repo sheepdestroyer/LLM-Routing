@@ -51,10 +51,7 @@ litellm_settings:
     - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
-  - ollama-deepseek-v4-pro:
-    - openrouter-auto
-  - ollama-deepseek-v4-flash:
-    - openrouter-auto
+
 model_list:
 - litellm_params:
     model: openrouter/openrouter/auto
@@ -65,7 +62,16 @@ model_list:
     api_base: http://127.0.0.1:5000/v1
     api_key: os.environ/LITELLM_MASTER_KEY
     request_timeout: 120
+    order: 1
   model_name: llm-routing-ollama
+- litellm_params:
+    model: openai/llm-routing-ollama-dummy
+    api_base: http://127.0.0.1:9999
+    api_key: os.environ/LITELLM_MASTER_KEY
+    request_timeout: 1
+    order: 2
+  model_name: llm-routing-ollama
+
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
 # Uncomment to re-enable once a lighter model replaces it.
 #- litellm_params:
@@ -84,7 +90,7 @@ model_list:
 # ================================================================================
 # OLLAMA PAID TIER — ollama.com via LiteLLM's native ollama_chat provider.
 # LiteLLM calls https://api.ollama.com/api/chat with Bearer auth (OLLAMA_API_KEY).
-# Fallback: ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto.
+# No fallbacks configured: failures propagate to cool down llm-routing-ollama.
 # ================================================================================
 - model_name: ollama-deepseek-v4-pro
   litellm_params:
@@ -95,7 +101,7 @@ model_list:
 
 # ================================================================================
 # OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
-# Fallback: ollama-deepseek-v4-flash → agent-reasoning-core → openrouter-auto.
+# No fallbacks configured: failures propagate to cool down llm-routing-ollama.
 # ================================================================================
 - model_name: ollama-deepseek-v4-flash
   litellm_params:
@@ -153,11 +159,12 @@ redis_settings:
   redis_host: 127.0.0.1
   redis_port: 6379
 router_settings:
-  allowed_fails: 2
+  allowed_fails: 0
   cooldown_time: 300
   enable_pre_call_checks: false
   num_retries: 1
   routing_strategy: latency-based-routing
+  enable_health_check_routing: false
   # Per-error-type cooldown thresholds (overrides allowed_fails for specific errors).
   # Upstream rate limits ("temporarily rate-limited upstream") can last minutes —
   # a 30s cooldown just wastes retries. 300s gives providers time to clear the limit.
