@@ -200,13 +200,19 @@ class DualCircuitBreaker:
 
     async def sync_from_valkey(self, redis_client) -> None:
         """Synchronize both sub-breakers from Valkey."""
-        await self.google.sync_from_valkey(redis_client)
-        await self.vendor.sync_from_valkey(redis_client)
+        import asyncio
+        await asyncio.gather(
+            self.google.sync_from_valkey(redis_client),
+            self.vendor.sync_from_valkey(redis_client)
+        )
 
     async def save_to_valkey(self, redis_client) -> None:
         """Persist both sub-breakers to Valkey."""
-        await self.google.save_to_valkey(redis_client)
-        await self.vendor.save_to_valkey(redis_client)
+        import asyncio
+        await asyncio.gather(
+            self.google.save_to_valkey(redis_client),
+            self.vendor.save_to_valkey(redis_client)
+        )
 
 
 

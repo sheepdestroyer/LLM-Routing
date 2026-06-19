@@ -202,12 +202,11 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         ]
     else:
         agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
-    # Sync states from Valkey first
     try:
         from main import sync_cooldowns_from_valkey
         await sync_cooldowns_from_valkey()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to sync state from Valkey: {e}")
 
     # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
     # rate-limit windows (separate 5-hour quota refresh cycles).
@@ -289,9 +288,9 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             from main import get_http_client
             client = get_http_client()
             should_close_client = False
-            req = client.build_request("POST", url, json=payload)
+            req = client.build_request("POST", url, json=payload, timeout=tier_timeout + 5.0)
             try:
-                r = await client.send(req, stream=True, timeout=tier_timeout + 5.0)
+                r = await client.send(req, stream=True)
             except Exception as e:
                 logger.error(f"Failed to connect stream to daemon: {e}")
                 if should_close_client:
@@ -332,8 +331,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                         try:
                             from main import save_cooldowns_to_valkey
                             await save_cooldowns_to_valkey()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Failed to save cooldowns to Valkey: {e}")
                     await r.aclose()
                     if should_close_client:
                         await client.aclose()
@@ -345,8 +344,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             try:
                 from main import save_cooldowns_to_valkey
                 await save_cooldowns_to_valkey()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to save cooldowns to Valkey: {e}")
             async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id):
                 """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
                 # Yield the initial token if it was a token
@@ -404,8 +403,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 try:
                     from main import save_cooldowns_to_valkey
                     await save_cooldowns_to_valkey()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to save cooldowns to Valkey: {e}")
                 logger.warning(
                     f"agy proxy: tier {tier['model_name']} quota exhausted. "
                     f"Falling to tier {actual_tier_idx + 2}..."
@@ -442,8 +441,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 try:
                     from main import save_cooldowns_to_valkey
                     await save_cooldowns_to_valkey()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to save cooldowns to Valkey: {e}")
                 return _wrap_response(stdout, tier["model_name"], proxy_prompt)
             else:
                 logger.warning(

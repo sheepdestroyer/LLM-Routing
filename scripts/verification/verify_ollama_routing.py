@@ -36,7 +36,7 @@ def send_request(model: str, prompt: str, expected_model: str):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {litellm_key}"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=30) as response:
             res_body = response.read().decode("utf-8")
             result = json.loads(res_body)
             model_returned = result.get("model", "unknown")
@@ -48,7 +48,8 @@ def send_request(model: str, prompt: str, expected_model: str):
                 sys.exit(1)
             print("✓ SUCCESS: Routed correctly!")
     except Exception as e:
-        print(f"Request: model={model}, prompt='{prompt[:40]}...' failed/timed out as expected (API downstream might be simulated/unreachable): {e}")
+        print(f"❌ ERROR: Request to model={model} failed or timed out: {e}", file=sys.stderr)
+        sys.exit(1)
 
 def main():
     print("--- 1. Testing llm-routing-auto-ollama ---")

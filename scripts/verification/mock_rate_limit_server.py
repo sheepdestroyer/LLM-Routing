@@ -2,9 +2,9 @@ import http.server
 import sys
 
 class MyHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         # Print to stdout/stderr so we can see it in logs
-        sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format%args))
+        sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), fmt%args))
 
     def do_POST(self):
         print(f"Mock server: received POST request to {self.path}", flush=True)
