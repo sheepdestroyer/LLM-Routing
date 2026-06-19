@@ -3,9 +3,10 @@ import urllib.request
 import json
 import time
 import os
+import uuid
 
 # Resolve the absolute path to .env file in the workspace
-workspace_dir = "/home/gpav/.gemini/antigravity/worktrees/LLM-Routing/finalize-pr-two-review"
+workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 env_path = os.path.join(workspace_dir, ".env")
 
 # Read LITELLM_MASTER_KEY from .env
@@ -33,10 +34,11 @@ def get_triage_request_count():
     return 0
 
 def send_litellm_request(model: str, prompt: str):
+    unique_prompt = f"{prompt} [id: {uuid.uuid4()}]"
     payload = {
         "model": model,
         "messages": [
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": unique_prompt}
         ],
         "temperature": 0.0,
         "max_tokens": 10

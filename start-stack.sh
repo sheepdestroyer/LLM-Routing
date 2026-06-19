@@ -43,7 +43,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
 fi
 
 # 2. Sync Gemini OAuth token (skip if <15 min old)
-OAUTH_CREDS="/home/gpav/.gemini/oauth_creds.json"
+OAUTH_CREDS="$HOME/.gemini/oauth_creds.json"
 NEED_SYNC=true
 if [ -f "$OAUTH_CREDS" ]; then
     CREDS_AGE=$(($(date +%s) - $(stat -c %Y "$OAUTH_CREDS" 2>/dev/null || echo 0)))
@@ -301,13 +301,13 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
+        cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
         setup_minio_buckets
         verify_stack_health
     else
@@ -333,7 +333,7 @@ else
     podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | podman play kube -
+    cat "$WORKDIR/pod.yaml" | sed "s|/home/gpav/Vrac/LAB/AI/LLM-Routing|$WORKDIR|g" | sed "s|/home/gpav/|$HOME/|g" | sed "s|sk-lit\.\.\.33bf|$LITELLM_MASTER_KEY|g" | podman play kube -
     setup_minio_buckets
     verify_stack_health
 fi

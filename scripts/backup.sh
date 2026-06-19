@@ -7,8 +7,9 @@ set -e
 # Scheduled via: systemctl --user enable llm-backup.timer
 # ============================================================
 
+WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/home/gpav/Vrac/LAB/AI/LLM-Routing/backups"
+BACKUP_DIR="${WORKDIR}/backups"
 RETENTION_DAYS=14
 LOG_FILE="/tmp/llm-backup-${TIMESTAMP}.log"
 
@@ -53,7 +54,7 @@ fi
 # ---- Config Files (lightweight copy) ----
 CONFIG_SNAPSHOT="${BACKUP_DIR}/configs_${TIMESTAMP}.tar.gz"
 tar czf "$CONFIG_SNAPSHOT" \
-    -C /home/gpav/Vrac/LAB/AI/LLM-Routing \
+    -C "$WORKDIR" \
     litellm/config.yaml \
     router/config.yaml \
     router/main.py \
