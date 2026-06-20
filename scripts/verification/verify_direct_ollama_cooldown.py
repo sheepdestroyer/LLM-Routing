@@ -29,7 +29,7 @@ def get_triage_request_count():
         for line in lines:
             if line.startswith("triage_requests_total"):
                 return int(float(line.split()[1]))
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
         print(f"Error fetching metrics: {e}")
     return 0
 
@@ -61,14 +61,18 @@ def send_litellm_request(model: str, prompt: str):
         err_msg = f"{e} - {e.response.text}"
         print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
         return False, err_msg
-    except Exception as e:
+    except httpx.HTTPError as e:
         err_msg = str(e)
+        print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
+        return False, err_msg
+    except (KeyError, IndexError, ValueError) as e:
+        err_msg = f"Parse error: {e}"
         print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
         return False, err_msg
 
 def main():
     print("--- Verifying Direct llm-routing-ollama Cooldown ---")
-    print(f"Using LiteLLM Master Key: {litellm_key[:10]}...")
+    print(f"Using LiteLLM Master Key: {'set' if litellm_key else 'missing'}")
     
     # 1. Get initial triage request count
     count_init = get_triage_request_count()

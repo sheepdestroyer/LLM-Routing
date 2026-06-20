@@ -301,10 +301,12 @@ render_pod_yaml() {
     export WORKDIR HOME LITELLM_MASTER_KEY
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys
+uid = os.getuid()
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     text = f.read()
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
+text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
 sys.stdout.write(text)
 PY

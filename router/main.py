@@ -256,7 +256,11 @@ stats = {
 # during the cooldown window, skipping the LiteLLM call entirely.
 # ---------------------------------------------------------------------------
 _ollama_cooldown_until: float = 0.0      # monotonic timestamp when cooldown expires
-OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
+try:
+    OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
+except (TypeError, ValueError):
+    logger.warning("Invalid OLLAMA_COOLDOWN_SECONDS value; defaulting to 300")
+    OLLAMA_COOLDOWN_SECONDS = 300
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
@@ -543,7 +547,7 @@ async def _register_ollama_models_in_db(master_key: str):
             try:
                 with open(path, "r") as f:
                     litellm_config = yaml.safe_load(f)
-                if litellm_config and isinstance(litellm_config.get("model_list"), list):
+                if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
@@ -936,7 +940,9 @@ def detect_active_tool(body: dict) -> str:
                             tcalls = prev_msg.get("tool_calls") or []
                             for tc in tcalls:
                                 if isinstance(tc, dict) and tc.get("id") == tool_call_id:
-                                    name = tc.get("function", {}).get("name")
+                                    fn = tc.get("function")
+                                    if isinstance(fn, dict):
+                                        name = fn.get("name")
                                     break
                         if name:
                             break
@@ -948,7 +954,8 @@ def detect_active_tool(body: dict) -> str:
             if tool_calls and isinstance(tool_calls, list):
                 for tc in tool_calls:
                     if isinstance(tc, dict):
-                        name = tc.get("function", {}).get("name") or "other"
+                        fn = tc.get("function")
+                        name = (fn.get("name") if isinstance(fn, dict) else None) or "other"
                         return map_tool_to_category(name)
                     
     # Fallback to keyphrase scanning in the user message
@@ -1800,8 +1807,8 @@ async def chat_completions(request: Request):
                     # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
                     _tier_min_ctx = {
                         "agent-simple-core": 32768,
-                        "ollama-deepseek-v4-pro": 1000000,
-                        "ollama-deepseek-v4-flash": 1000000,
+                        "ollama-deepseek-v4-pro": 524288,
+                        "ollama-deepseek-v4-flash": 524288,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

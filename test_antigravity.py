@@ -18,9 +18,8 @@ def test_antigravity_connection():
             import pytest
             pytest.skip(f"agentapi binary not found at {agentapi_path}; skipping health check")
         except ImportError:
-            import sys
             print(f"agentapi binary not found at {agentapi_path}; skipping health check")
-            sys.exit(0)
+            return
 
     try:
         # Testing non-interactive print mode
