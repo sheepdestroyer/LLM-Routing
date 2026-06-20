@@ -21,15 +21,15 @@ litellm_settings:
   detailed_debug: false
   drop_params: true
   public_model_groups:
-  - openrouter-auto
-  - llm-routing-ollama
-  - ollama-deepseek-v4-pro
-  - ollama-deepseek-v4-flash
-  - agent-advanced-core
-  - agent-reasoning-core
-  - agent-complex-core
-  - agent-medium-core
-  - agent-simple-core
+    - openrouter-auto
+    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
+    - ollama-deepseek-v4-flash
+    - agent-advanced-core
+    - agent-reasoning-core
+    - agent-complex-core
+    - agent-medium-core
+    - agent-simple-core
   fallbacks:
   - agent-simple-core:
     - agent-medium-core
