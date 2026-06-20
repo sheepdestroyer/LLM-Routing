@@ -1566,7 +1566,7 @@ async def chat_completions(request: Request):
                         break
                 fingerprint_parts = [str(user_key), first_user_content[:200]]
                 fingerprint = "|".join(fingerprint_parts)
-                session_id = hashlib.md5(fingerprint.encode()).hexdigest()
+                session_id = hashlib.sha256(fingerprint.encode()).hexdigest()
 
             if last_prompt:
                 # --- Langfuse child span: agy proxy ---
