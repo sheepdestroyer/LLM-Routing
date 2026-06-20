@@ -6,10 +6,10 @@ set -e
 #   ./start-stack.sh --replace    → Graceful stop + clean ports + redeploy pod
 #                                    (for pod.yaml changes: ports, probes, env vars)
 #   ./start-stack.sh --full-rebuild → Same as --replace + rebuild router image
-#                                      (for router/Containerfile changes)
+#                                      (for router/Dockerfile changes)
 
 # Set working directory
-WORKDIR="/home/gpav/Vrac/LAB/AI/LLM-Routing"
+WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORKDIR"
 
 # Ensure local volume directories exist on the host for Podman mounts
@@ -43,7 +43,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
 fi
 
 # 2. Sync Gemini OAuth token (skip if <15 min old)
-OAUTH_CREDS="/home/gpav/.gemini/oauth_creds.json"
+OAUTH_CREDS="$HOME/.gemini/oauth_creds.json"
 NEED_SYNC=true
 if [ -f "$OAUTH_CREDS" ]; then
     CREDS_AGE=$(($(date +%s) - $(stat -c %Y "$OAUTH_CREDS" 2>/dev/null || echo 0)))
@@ -79,11 +79,15 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-# 3. Use LiteLLM master key from .env if present, otherwise generate a random one
 if [ -z "$LITELLM_MASTER_KEY" ]; then
     LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
+fi
+
+if [ -z "$LITELLM_MASTER_KEY" ]; then
+    echo "❌ Error: LITELLM_MASTER_KEY is not set and could not be generated."
+    exit 1
 fi
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
@@ -291,23 +295,48 @@ safe_pod_teardown() {
 if podman pod exists agent-router-pod 2>/dev/null; then
     echo "💾 Taking pre-deploy database backup..."
     bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
-else
-    echo "⚠️  Pod not running — skipping pre-deploy backup"
 fi
+
+render_pod_yaml() {
+    export WORKDIR HOME LITELLM_MASTER_KEY
+    python3 - "$WORKDIR/pod.yaml" <<'PY'
+import os, sys
+uid = os.getuid()
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    text = f.read()
+placeholders = [
+    "/home/gpav/Vrac/LAB/AI/LLM-Routing",
+    "/home/gpav/",
+    "/run/user/1000",
+    "sk-lit...33bf",
+    "postgres:***"
+]
+for ph in placeholders:
+    if ph not in text:
+        sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml\n")
+        sys.exit(1)
+text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
+text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
+text = text.replace("/run/user/1000", f"/run/user/{uid}")
+text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
+text = text.replace("postgres:***", "postgres:postgres-local-pw-2026")
+sys.stdout.write(text)
+PY
+}
 
 if podman pod exists agent-router-pod 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
-        podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
+        podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        podman play kube "$WORKDIR/pod.yaml"
+        render_pod_yaml | podman play kube -
         setup_minio_buckets
         verify_stack_health
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        podman play kube "$WORKDIR/pod.yaml"
+        render_pod_yaml | podman play kube -
         setup_minio_buckets
         verify_stack_health
     else
@@ -330,10 +359,10 @@ else
     # First deploy — no pod exists, clean ports just in case
     cleanup_zombie_ports
     echo "🔨 Building custom local triage router image..."
-    podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
+    podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    podman play kube "$WORKDIR/pod.yaml"
+    render_pod_yaml | podman play kube -
     setup_minio_buckets
     verify_stack_health
 fi

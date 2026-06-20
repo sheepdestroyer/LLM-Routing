@@ -46,8 +46,10 @@ def extract_user_prompt(obs):
     if not inp:
         return None
     if isinstance(inp, str):
-        try: inp = json.loads(inp)
-        except: return None
+        try:
+            inp = json.loads(inp)
+        except json.JSONDecodeError:
+            return None
     if not isinstance(inp, dict):
         return None
     messages = inp.get('messages', [])

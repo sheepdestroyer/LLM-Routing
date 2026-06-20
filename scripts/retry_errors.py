@@ -1,5 +1,5 @@
 """Retry the 94 failed prompts with 800-char truncation (safe for 4096-ctx model)."""
-import json, urllib.request, time, subprocess
+import json, urllib.request, time, subprocess, tempfile, os
 from pathlib import Path
 from collections import Counter
 
@@ -65,8 +65,6 @@ TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-rea
 data_dir = Path(__file__).resolve().parent.parent / "data"
 with open(data_dir / "classified_dataset.json") as f:
     dataset = json.load(f)
-with open(data_dir / "raw_prompts_hermes.json") as f:
-    all_prompts = json.load(f)
 
 def is_error_val(val):
     if not val:
@@ -110,8 +108,20 @@ dataset['counts'] = {k: v for k, v in new_counts.items()}
 dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
                    if new_counts.get(t, 0) < 20]
 
-with open(data_dir / "classified_dataset.json", 'w') as f:
-    json.dump(dataset, f, indent=2, ensure_ascii=False)
+dest_path = data_dir / "classified_dataset.json"
+tmp_name = None
+try:
+    with tempfile.NamedTemporaryFile("w", dir=str(data_dir), delete=False, encoding="utf-8") as tmp_f:
+        tmp_name = tmp_f.name
+        json.dump(dataset, tmp_f, indent=2, ensure_ascii=False)
+    os.replace(tmp_name, str(dest_path))
+    tmp_name = None
+finally:
+    if tmp_name and os.path.exists(tmp_name):
+        try:
+            os.unlink(tmp_name)
+        except Exception:
+            pass
 
 print(f"\nDone. Fixed: {fixed}, Errors: {errors}")
 for tier in sorted(new_counts.keys()):

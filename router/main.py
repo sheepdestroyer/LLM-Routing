@@ -9,6 +9,7 @@ import copy
 import tempfile
 import yaml
 import httpx
+import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -17,6 +18,123 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
+
+_redis_client = None
+_redis_last_init_attempt = 0.0
+_REDIS_RETRY_INTERVAL_SECONDS = 5.0
+
+def get_redis():
+    """Lazily initialize and return the async Redis/Valkey client.
+    Returns None if connection fails or is disabled (non-fatal fallback)."""
+    global _redis_client, _redis_last_init_attempt
+    if _redis_client is None:
+        now = time.monotonic()
+        if now - _redis_last_init_attempt < _REDIS_RETRY_INTERVAL_SECONDS:
+            return None
+        _redis_last_init_attempt = now
+        try:
+            host = os.getenv("VALKEY_HOST", "127.0.0.1")
+            port = int(os.getenv("VALKEY_PORT", "6379"))
+            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+            logger.info(f"Valkey client initialized at {host}:{port}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
+            _redis_client = None
+    return _redis_client
+
+
+_http_client = None
+
+def get_http_client():
+    """Return the shared global httpx.AsyncClient singleton."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=3600.0)
+    return _http_client
+
+
+def estimate_prompt_tokens(body: dict) -> int:
+    """Estimate prompt tokens by counting characters in message contents (1 token ~= 4 chars)
+    to avoid inflating metrics with large tool/schema declarations.
+    """
+    tokens = 0
+    for msg in body.get("messages", []):
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content") or ""
+        if isinstance(content, str):
+            tokens += len(content) // 4
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    tokens += len(block.get("text") or "") // 4
+    # Include a flat estimate for system prompt / metadata overhead
+    tokens += 50
+    return max(1, tokens)
+
+
+async def sync_cooldowns_from_valkey() -> None:
+    """Sync Ollama cooldown and circuit breaker states from Valkey to local memory."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        val = await redis.get("cooldown:ollama")
+        global _ollama_cooldown_until
+        if val is not None:
+            epoch_until = float(val)
+            remaining = epoch_until - time.time()
+            if remaining > 0:
+                _ollama_cooldown_until = time.monotonic() + remaining
+            else:
+                _ollama_cooldown_until = 0.0
+        else:
+            if _ollama_cooldown_until <= time.monotonic():
+                _ollama_cooldown_until = 0.0
+            
+        breaker = get_breaker()
+        await breaker.sync_from_valkey(redis)
+    except Exception as e:
+        logger.warning(f"Failed to sync cooldowns from Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
+
+
+async def save_cooldowns_to_valkey() -> None:
+    """Save local Ollama cooldown and circuit breaker states to Valkey."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        global _ollama_cooldown_until
+        now_mono = time.monotonic()
+        if _ollama_cooldown_until > now_mono:
+            remaining = _ollama_cooldown_until - now_mono
+            epoch_until = time.time() + remaining
+            ttl = int(max(1.0, remaining))
+            await redis.set("cooldown:ollama", str(epoch_until), ex=ttl)
+        else:
+            await redis.delete("cooldown:ollama")
+            
+        breaker = get_breaker()
+        await breaker.save_to_valkey(redis)
+    except Exception as e:
+        logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
+
+
+class ValkeyCooldownPersistence:
+    """Persistence provider mapping Valkey/Redis client synchronization to the global handlers."""
+    async def sync(self) -> None:
+        await sync_cooldowns_from_valkey()
+
+    async def save(self) -> None:
+        await save_cooldowns_to_valkey()
+
+
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -73,10 +191,20 @@ async def push_aggregate_scores():
                 {"name": "circuit_breaker_vendor_tier", "value": float(router.vendor.tier)},
                 {"name": "google_oauth_direct_ratio_pct", "value": stats["routing_paths"]["google_oauth_direct"] / total * 100},
             ]
+            trace_id = lf.create_trace_id(seed=f"aggregate_scores_{int(time.time())}")
+            lf.start_observation(
+                trace_context={"trace_id": trace_id},
+                name="push-aggregate-scores",
+                level="DEFAULT",
+            )
             for s in scores:
-                lf.create_score(name=s["name"], value=s["value"])
+                lf.create_score(
+                    name=s["name"],
+                    value=s["value"],
+                    trace_id=trace_id
+                )
             lf.flush()
-            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse")
+            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})")
         except Exception as e:
             logger.warning(f"Langfuse score push failed (non-fatal): {e}")
 
@@ -129,6 +257,23 @@ stats = {
     },
     "timeline": []
 }
+
+# ---------------------------------------------------------------------------
+# OLLAMA COOLDOWN — router-side cooldown for the Ollama backend.
+# LiteLLM Community Edition's deployment cooldown is unreliable for single-
+# deployment model groups (it bypasses cooldown when there's only 1 deployment)
+# and doesn't reliably cooldown fallback-target model groups. Instead, the
+# triage router tracks Ollama failures itself and returns 429 immediately
+# during the cooldown window, skipping the LiteLLM call entirely.
+# ---------------------------------------------------------------------------
+_ollama_cooldown_until: float = 0.0      # monotonic timestamp when cooldown expires
+try:
+    OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
+    if OLLAMA_COOLDOWN_SECONDS <= 0:
+        raise ValueError("OLLAMA_COOLDOWN_SECONDS must be positive")
+except (TypeError, ValueError) as e:
+    logger.warning(f"Invalid OLLAMA_COOLDOWN_SECONDS value: {e}; defaulting to 300")
+    OLLAMA_COOLDOWN_SECONDS = 300
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
@@ -225,6 +370,18 @@ triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 classification_lock = asyncio.Lock()
 
+async def _purge_stale_deployments(db_url: str, pattern: str):
+    """Purge stale deployments matching the pattern from LiteLLM's DB."""
+    import asyncpg
+    conn = await asyncpg.connect(db_url)
+    try:
+        await conn.execute(
+            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
+            pattern
+        )
+    finally:
+        await conn.close()
+
 async def sync_adaptive_router_roster(master_key: str):
     """Fetch free OpenRouter models and register them as deployments in LiteLLM."""
     if not master_key:
@@ -243,6 +400,8 @@ async def sync_adaptive_router_roster(master_key: str):
         logger.warning(f"Failed to fetch OpenRouter models: {e}")
         return
     free_models = []
+    model_contexts = {}
+    model_supported_params = {}
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
@@ -272,6 +431,8 @@ async def sync_adaptive_router_roster(master_key: str):
             except Exception:
                 score = 25.0  # conservative fallback for unparseable models
             free_models.append((score, mid))
+            model_contexts[mid] = m.get("context_length") or 262144
+            model_supported_params[mid] = supported_params
     free_models.sort(reverse=True)
     if not free_models:
         logger.warning("No free models found — skipping roster sync")
@@ -332,15 +493,12 @@ async def sync_adaptive_router_roster(master_key: str):
         # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
         # starts clean — delete all, then register only the current roster.
         try:
-            db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
-            import asyncpg
-            conn = await asyncpg.connect(db_url)
-            await conn.execute(
-                'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
-                'agent-%'
-            )
-            await conn.close()
-            logger.info("🧹 Purged stale agent-* deployments before roster sync")
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url:
+                logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
+            else:
+                await _purge_stale_deployments(db_url, 'agent-%')
+                logger.info("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
             logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
@@ -348,9 +506,20 @@ async def sync_adaptive_router_roster(master_key: str):
         failed = 0
         for tier_name, model_ids in tier_assignments.items():
             for mid in model_ids:
+                ctx_len = model_contexts.get(mid, 262144)
+                sp = model_supported_params.get(mid, [])
                 payload = {
                     "model_name": tier_name,
-                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 120}
+                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
+                    "model_info": {
+                        "supports_vision": "vision" in sp,
+                        "supports_reasoning": True,  # OpenRouter API has no "reasoning" param; assume all modern LLMs support it
+                        "supports_function_calling": "tools" in sp,
+                        "mode": "chat",
+                        "max_tokens": ctx_len,
+                        "max_input_tokens": ctx_len,
+                        "is_public_model_group": True
+                    }
                 }
                 try:
                     r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
@@ -364,9 +533,131 @@ async def sync_adaptive_router_roster(master_key: str):
                     logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
         logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
 
+async def _register_ollama_models_in_db(master_key: str):
+    """Register static ollama models via /model/new so they become DB models.
+
+    LiteLLM's /model_group/info endpoint aggregates model info using its internal
+    model cost map for known providers.  For ollama_chat models not in the map,
+    capabilities (vision, reasoning, function_calling) and token limits come back
+    as null/false.  Registering them as DB models ensures our model_info wins.
+    """
+    if not master_key:
+        logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
+        return
+
+    admin_url = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+
+    ollama_models = []
+    litellm_config_path = os.getenv("LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml")
+
+    config_paths_to_try = [
+        litellm_config_path,
+        str(Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"),
+        "./litellm/config.yaml"
+    ]
+
+    loaded_from_config = False
+    for path in config_paths_to_try:
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    litellm_config = yaml.safe_load(f)
+                if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
+                    for item in litellm_config["model_list"]:
+                        if isinstance(item, dict):
+                            model_name = item.get("model_name", "")
+                            if isinstance(model_name, str) and model_name.startswith("ollama-deepseek-"):
+                                # Create a clean deep copy to avoid mutating configuration structures
+                                ollama_models.append(copy.deepcopy(item))
+                    if ollama_models:
+                        logger.info(f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}")
+                        loaded_from_config = True
+                        break
+            except Exception as e:
+                logger.warning(f"Failed to load/parse LiteLLM config at {path}: {e}")
+
+    if not loaded_from_config:
+        logger.warning("Could not load Ollama models from config.yaml, falling back to static definitions")
+        ollama_models = [
+            {
+                "model_name": "ollama-deepseek-v4-pro",
+                "litellm_params": {
+                    "model": "ollama_chat/deepseek-v4-pro",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 524288,
+                    "max_input_tokens": 524288,
+                    "input_cost_per_token": 0.00000174,
+                    "output_cost_per_token": 0.00000348,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-deepseek-v4-flash",
+                "litellm_params": {
+                    "model": "ollama_chat/deepseek-v4-flash",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 524288,
+                    "max_input_tokens": 524288,
+                    "input_cost_per_token": 0.00000014,
+                    "output_cost_per_token": 0.00000028,
+                    "is_public_model_group": True,
+                },
+            },
+        ]
+
+    # Purge stale ollama-deepseek DB entries before re-registering.
+    # Mirrors the agent-* purge pattern above — delete all, then register fresh.
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries")
+        else:
+            await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
+            logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
+    except Exception as e:
+        logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        registered = 0
+        failed = 0
+        for payload in ollama_models:
+            try:
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
+                if r.status_code in (200, 201):
+                    registered += 1
+                else:
+                    failed += 1
+                    logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
+            except Exception as e:
+                failed += 1
+                logger.warning(f"Failed to register {payload['model_name']}: {e}")
+        logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: wait for LiteLLM readiness, then sync free-model roster."""
+    # Initialize shared HTTPX client and sync cooldowns from Redis/Valkey
+    get_http_client()
+    await sync_cooldowns_from_valkey()
+
     litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     max_wait = 180
@@ -391,6 +682,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Roster sync failed: {e}")
 
+        # Register static ollama models via /model/new so they become DB models.
+        # The ollama_chat provider's internal model lookup overrides static config
+        # model_info at the group aggregation level (/model_group/info), causing
+        # features and token limits to show as null/false. DB models get priority.
+        try:
+            await _register_ollama_models_in_db(litellm_master_key)
+        except Exception as e:
+            logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
+
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
 
@@ -403,6 +703,18 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+
+        # Close shared HTTPX client
+        global _http_client
+        if _http_client is not None:
+            await _http_client.aclose()
+            _http_client = None
+
+        # Close Redis client
+        global _redis_client
+        if _redis_client is not None and _redis_client is not False:
+            await _redis_client.aclose()
+            _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
@@ -633,6 +945,8 @@ def detect_active_tool(body: dict) -> str:
     
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role")
         if role in ("tool", "function"):
             name = msg.get("name")
@@ -641,11 +955,16 @@ def detect_active_tool(body: dict) -> str:
                 tool_call_id = msg.get("tool_call_id")
                 if tool_call_id:
                     for prev_msg in reversed(messages[:idx]):
+                        if not isinstance(prev_msg, dict):
+                            continue
                         if prev_msg.get("role") == "assistant":
                             tcalls = prev_msg.get("tool_calls") or []
-                            for tc in tcalls:
-                                if tc.get("id") == tool_call_id:
-                                    name = tc.get("function", {}).get("name")
+                            if isinstance(tcalls, list):
+                                for tc in tcalls:
+                                    if isinstance(tc, dict) and tc.get("id") == tool_call_id:
+                                    fn = tc.get("function")
+                                    if isinstance(fn, dict):
+                                        name = fn.get("name")
                                     break
                         if name:
                             break
@@ -656,11 +975,15 @@ def detect_active_tool(body: dict) -> str:
             tool_calls = msg.get("tool_calls")
             if tool_calls and isinstance(tool_calls, list):
                 for tc in tool_calls:
-                    name = tc.get("function", {}).get("name") or "other"
-                    return map_tool_to_category(name)
+                    if isinstance(tc, dict):
+                        fn = tc.get("function")
+                        name = (fn.get("name") if isinstance(fn, dict) else None) or "other"
+                        return map_tool_to_category(name)
                     
     # Fallback to keyphrase scanning in the user message
     for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == "user":
             content = str(msg.get("content", "")).lower()
             if "tree" in content or "files" in content:
@@ -1051,15 +1374,17 @@ async def proxy_models():
             data = r.json()
             # Inject llm-routing-* models at the top of the list.
             # Auto models (classifier pipeline) first, then direct models.
-            # context_length: 262144 (256K) — the downstream models (gemini-3.5-flash,
-            # claude-opus-4.6, deepseek-v4-pro/flash) all support 256K+ context.
+            # Context lengths aligned with downstream model targets:
+            # - auto-free / auto-agy: 262144 (262K)
+            # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
+            # - llm-routing-agy: 1048576 (1M)
             routing_models = [
                 {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
                 {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
             ]
             for entry in reversed(routing_models):
                 data["data"].insert(0, entry)
@@ -1079,6 +1404,8 @@ async def chat_completions(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+    await sync_cooldowns_from_valkey()
+
     messages = body.get("messages", [])
     if not messages:
         raise HTTPException(status_code=400, detail="Empty messages list")
@@ -1089,8 +1416,13 @@ async def chat_completions(request: Request):
     # Extract last user message for complexity triage
     last_user_message = ""
     for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == "user":
-            last_user_message = msg.get("content", "")
+            content = msg.get("content") or ""
+            if isinstance(content, list):
+                content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
+            last_user_message = str(content)
             break
 
     # Known tier names that can be routed directly (bypass classifier)
@@ -1098,7 +1430,7 @@ async def chat_completions(request: Request):
         "agent-simple-core", "agent-medium-core",
         "agent-complex-core", "agent-reasoning-core",
         "agent-advanced-core",
-        "llm-routing-agy", "llm-routing-ollama",
+        "llm-routing-agy",
     }
 
     AUTO_MODELS = {
@@ -1126,13 +1458,13 @@ async def chat_completions(request: Request):
             langfuse_trace_id = None
             parent_obs = None
 
-    if client_model in AUTO_MODELS:
+    if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
         target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
             last_user_message, bypass_cache=bypass_cache, langfuse_trace_id=langfuse_trace_id
         )
-        logger.info(f"Triage decision (auto): Routing to -> '{target_model}'")
+        logger.info(f"Triage decision (auto/gated): Routing to -> '{target_model}'")
     elif client_model in DIRECT_TIERS:
         # Direct routing: client knows what tier they want, skip classifier
         target_model = client_model
@@ -1202,35 +1534,37 @@ async def chat_completions(request: Request):
         or (client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
     should_try_ollama = (
-        client_model == "llm-routing-ollama"  # direct — always try
-        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
+        client_model == "llm-routing-ollama"  # always try (will map to flash for complex/below)
+        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core"))
     )
 
     # --- AGY PROXY ---
     if should_try_agy:
+        agy_span_obj = None
         try:
             from agy_proxy import try_agy_proxy
 
             last_prompt = ""
             for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
                 if msg.get("role") == "user":
-                    last_prompt = msg.get("content", "")
+                    content = msg.get("content") or ""
+                    if isinstance(content, list):
+                        content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
+                    last_prompt = str(content)
                     break
 
-            session_id = None
-            if len(messages) >= 2:
-                import hashlib
-                fingerprint_parts = []
-                for msg in messages[:4]:
-                    c = msg.get("content", "") or ""
-                    if c:
-                        fingerprint_parts.append(c[:200])
-                fingerprint = "|".join(fingerprint_parts)
-                session_id = hashlib.md5(fingerprint.encode()).hexdigest()
+            session_id = (
+                body.get("session_id")
+                or body.get("session")
+                or request.headers.get("x-session-id")
+            )
+            if session_id:
+                session_id = str(session_id)
 
             if last_prompt:
                 # --- Langfuse child span: agy proxy ---
-                agy_span_obj = None
                 if langfuse_trace_id:
                     lf_agy = get_langfuse()
                     if lf_agy:
@@ -1252,7 +1586,9 @@ async def chat_completions(request: Request):
                     session_id=session_id,
                     total_timeout=300.0,
                     stream=is_stream_requested,
-                    target_tier=target_model
+                    target_tier=target_model,
+                    client=get_http_client(),
+                    cooldown_persistence=ValkeyCooldownPersistence()
                 )
                 if agy_response:
                     model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
@@ -1300,9 +1636,7 @@ async def chat_completions(request: Request):
 
                                 # Success telemetry
                                 latency_ms = (time.time() - start_time) * 1000.0
-                                # Approximate prompt tokens based on messages characters
-                                prompt_chars = sum(len(m.get("content", "")) for m in messages)
-                                approx_prompt_tokens = max(1, prompt_chars // 4)
+                                approx_prompt_tokens = estimate_prompt_tokens(body)
                                 
                                 record_tool_usage(
                                     active_tool, approx_prompt_tokens, token_count,
@@ -1331,9 +1665,9 @@ async def chat_completions(request: Request):
                         return StreamingResponse(native_agy_stream_generator(agy_response["stream"], model_name), media_type="text/event-stream")
                     else:
                         latency_ms = (time.time() - start_time) * 1000.0
-                        usage = agy_response.get("usage", {})
-                        prompt_tokens = usage.get("prompt_tokens", 0)
-                        completion_tokens = usage.get("completion_tokens", 0)
+                        usage = agy_response.get("usage") or {}
+                        prompt_tokens = usage.get("prompt_tokens") or 0
+                        completion_tokens = usage.get("completion_tokens") or 0
                         record_tool_usage(
                             active_tool, prompt_tokens, completion_tokens,
                             model_name, latency_ms, route="google_oauth_direct"
@@ -1352,7 +1686,7 @@ async def chat_completions(request: Request):
 
                         if is_stream_requested:
                             # Robust fallback: simulate stream if we requested stream but got buffered response
-                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            content = (agy_response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                             async def agy_stream_generator():
                                 """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
                                 import uuid
@@ -1412,173 +1746,290 @@ async def chat_completions(request: Request):
                     pass
             logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
 
+    original_target_model = target_model
+
     # --- OLLAMA (via LiteLLM) ---
     # LiteLLM's ollama_chat provider handles the native Ollama API call.
     # We just proxy to LiteLLM with the appropriate model name.
-    # Reasoning tier → deepseek-v4-flash (lighter, faster)
-    # Advanced tier → deepseek-v4-pro (full power)
     # LiteLLM's fallback chain handles failures.
     if should_try_ollama:
-        if target_model == "agent-reasoning-core":
-            target_model = "ollama-deepseek-v4-flash"
+        if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            elif target_model == "agent-complex-core":
+                target_model = "ollama-deepseek-v4-flash"
+        elif client_model == "llm-routing-ollama":
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            else:
+                target_model = "ollama-deepseek-v4-flash"
         else:
-            target_model = "ollama-deepseek-v4-pro"
+            # Fallback (e.g. if LiteLLM fallback loops back with model: llm-routing-ollama)
+            if target_model in ("agent-advanced-core", "agent-reasoning-core"):
+                target_model = "ollama-deepseek-v4-pro"
+            else:
+                target_model = "ollama-deepseek-v4-flash"
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
-    # Resolve backend connection parameters
-    backend_conf = backends.get(target_model)
-    if not backend_conf:
-        logger.error(f"Backend '{target_model}' not found in configuration backends.")
-        raise HTTPException(status_code=500, detail=f"Backend {target_model} misconfigured")
+    async def execute_proxy(model_name: str):
+        # Resolve backend connection parameters
+        backend_conf = backends.get(model_name)
+        if not backend_conf:
+            logger.error(f"Backend '{model_name}' not found in configuration backends.")
+            raise HTTPException(status_code=500, detail=f"Backend {model_name} misconfigured")
 
-    backend_api_base = backend_conf["api_base"]
-    backend_api_key = backend_conf["api_key"]
-    if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
-        backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
+        backend_api_base = backend_conf["api_base"]
+        backend_api_key = backend_conf["api_key"]
+        if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
+            backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
 
-    # Delegate to LiteLLM which handles internal fallback chain
-    # Router sends model=agent-complex-core (or agent-simple-core)
-    # LiteLLM maps this to Nemotron → Kimi → GPT-OSS → local Qwen
-    logger.info(f"Proxying to LiteLLM as model={target_model}")
+        logger.info(f"Proxying to LiteLLM as model={model_name}")
 
-    # --- Langfuse child span: LiteLLM proxy ---
-    litellm_span_obj = None
-    if langfuse_trace_id:
-        lf_litellm = get_langfuse()
-        if lf_litellm:
+        # --- Langfuse child span: LiteLLM proxy ---
+        litellm_span_obj = None
+        if langfuse_trace_id:
+            lf_litellm = get_langfuse()
+            if lf_litellm:
+                try:
+                    litellm_span_obj = lf_litellm.start_observation(
+                        trace_context={"trace_id": langfuse_trace_id},
+                        name="litellm-proxy",
+                        input=model_name,
+                        metadata={"model": model_name},
+                        level="DEFAULT",
+                    )
+                except Exception:
+                    pass
+
+        client = get_http_client()
+        try:
+            headers = {"Authorization": f"Bearer {backend_api_key}"}
+            if langfuse_trace_id:
+                headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
+
+            # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
+            proxy_start = time.time()
+            
+            # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
             try:
-                litellm_span_obj = lf_litellm.start_observation(
-                    trace_context={"trace_id": langfuse_trace_id},
-                    name="litellm-proxy",
-                    input=target_model,
-                    metadata={"model": target_model},
-                    level="DEFAULT",
-                )
-            except Exception:
-                pass
-
-    # Set up outgoing proxy request
-    client = httpx.AsyncClient(timeout=3600.0)
-    headers = {"Authorization": f"Bearer {backend_api_key}"}
-    if langfuse_trace_id:
-        headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
-
-    # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
-    proxy_start = time.time()
-    model_name = target_model  # LiteLLM handles fallback internally
-    
-    # --- Pre-screening: clamp max_tokens to fit within downstream model context limits ---
-    # Hermes agents set max_tokens=65536 unconditionally, but some free models have
-    # context limits as low as 32K. Without clamping, input+output exceeds the limit
-    # and the request fails with a 400 BadRequest (context_length exceeded).
-    # We estimate input tokens and clamp max_tokens to leave a 2K safety margin.
-    try:
-        body_to_send = body.copy()
-        body_to_send["model"] = model_name
-        requested_max_tokens = body_to_send.get("max_tokens", 4096)
-        if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
-            # Tier-aware minimum context length (from actual roster data):
-            # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-            # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-            # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-            _tier_min_ctx = {
-                "agent-simple-core": 32768,
-                "ollama-deepseek-v4-pro": 1000000,
-                "ollama-deepseek-v4-flash": 1000000,
-            }
-            _min_ctx = _tier_min_ctx.get(model_name, 262144)
-            # Rough input token estimate: 1 token ≈ 4 chars of JSON
-            _est_input = len(json.dumps(body_to_send)) // 4
-            _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
-            if requested_max_tokens > _safe_max:
-                logger.warning(
-                    f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
-                    f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
-                )
-                body_to_send["max_tokens"] = _safe_max
-    except Exception as e:
-        logger.warning(f"Pre-screening failed (non-fatal): {e}")
-        body_to_send = body.copy()
-        body_to_send["model"] = model_name
-    
-    try:
-        if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
-            body_to_send["metadata"] = {}
-        body_to_send["metadata"]["trace_name"] = "agent-completion"
-        
-        if body.get("stream", False):
-            logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
-            req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
-            r = await client.send(req, stream=True)
-            if r.status_code == 200:
-                async def stream_generator():
-                    """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
-                    completion_chars = 0
-                    request_tokens = len(json.dumps(body_to_send)) // 4
-                    try:
-                        async for chunk in r.aiter_bytes():
-                            completion_chars += len(chunk)
-                            yield chunk
-                        proxy_latency = (time.time() - proxy_start) * 1000.0
-                        stats["total_proxy_time_ms"] += proxy_latency
-                        stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                        record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
-                        # Finalize LiteLLM span (streaming path)
-                        if litellm_span_obj:
-                            try:
-                                litellm_span_obj.end(
-                                    output={"model": model_name, "stream": True},
-                                    metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
-                                )
-                            except Exception:
-                                pass
-                    except Exception as ex:
-                        logger.error(f"Stream error: {ex}")
-                    finally:
-                        await r.aclose()
-                        await client.aclose()
-                return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                body_to_send = body.copy()
+                body_to_send["model"] = model_name
+                requested_max_tokens = body_to_send.get("max_tokens", 4096)
+                
+                # Tier-aware minimum context length (from actual roster data):
+                # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
+                # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
+                # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
+                _tier_min_ctx = {
+                    "agent-simple-core": 32768,
+                    "ollama-deepseek-v4-pro": 524288,
+                    "ollama-deepseek-v4-flash": 524288,
+                }
+                _min_ctx = _tier_min_ctx.get(model_name, 262144)
+                _est_input = estimate_prompt_tokens(body_to_send)
+                _safe_max = _min_ctx - _est_input - 2048  # 2K safety margin
+                if _safe_max < 1024:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Context window exceeded. Estimated input tokens ({_est_input}) plus safety margin (2048) exceeds model context limit ({_min_ctx})."
+                    )
+                if requested_max_tokens > _safe_max:
+                    logger.warning(
+                        f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
+                        f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
+                    )
+                    body_to_send["max_tokens"] = _safe_max
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Pre-screening failed (non-fatal): {e}")
+                body_to_send = body.copy()
+                body_to_send["model"] = model_name
+            if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
+                body_to_send["metadata"] = {}
+            body_to_send["metadata"]["trace_name"] = "agent-completion"
+            
+            if body.get("stream", False):
+                logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
+                req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+                r = await client.send(req, stream=True)
+                if r.status_code == 200:
+                    async def stream_generator():
+                        """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
+                        import codecs
+                        completion_chars = 0
+                        request_tokens = estimate_prompt_tokens(body_to_send)
+                        sse_buffer = ""
+                        decoder = codecs.getincrementaldecoder("utf-8")()
+                        try:
+                            async for chunk in r.aiter_bytes():
+                                yield chunk
+                                try:
+                                    sse_buffer += decoder.decode(chunk)
+                                    while "\n" in sse_buffer:
+                                        line, sse_buffer = sse_buffer.split("\n", 1)
+                                        line = line.strip()
+                                        if line.startswith("data:"):
+                                            data_str = line[5:].strip()
+                                            if data_str == "[DONE]":
+                                                continue
+                                            try:
+                                                data_json = json.loads(data_str)
+                                                choices = data_json.get("choices", [])
+                                                if choices and isinstance(choices[0], dict):
+                                                    delta = choices[0].get("delta")
+                                                    if isinstance(delta, dict):
+                                                        content = delta.get("content") or ""
+                                                        completion_chars += len(content)
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
+                            proxy_latency = (time.time() - proxy_start) * 1000.0
+                            stats["total_proxy_time_ms"] += proxy_latency
+                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
+                            # Finalize LiteLLM span (streaming path)
+                            if litellm_span_obj:
+                                try:
+                                    litellm_span_obj.end(
+                                        output={"model": model_name, "stream": True},
+                                        metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
+                                    )
+                                except Exception:
+                                    pass
+                        except Exception as ex:
+                            logger.error(f"Stream error: {ex}")
+                            if model_name.startswith("ollama-"):
+                                global _ollama_cooldown_until
+                                _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+                                try:
+                                    await save_cooldowns_to_valkey()
+                                    logger.error(
+                                        f"🧊 Ollama failed midway through stream, activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+                                    )
+                                except Exception as save_err:
+                                    logger.warning(f"Failed to save cooldowns to Valkey: {save_err}")
+                        finally:
+                            await r.aclose()
+                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                else:
+                    error_body = await r.aread() if r else b""
+                    logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
+                    await r.aclose()
+                    raise HTTPException(status_code=r.status_code, detail="LiteLLM upstream request failed")
             else:
-                error_body = await r.aread() if r else b""
-                logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
-                await r.aclose(); await client.aclose()
-                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {r.status_code}")
-        else:
-            logger.info(f"Proxying to LiteLLM as model={model_name}")
-            response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
-            await client.aclose()
-            if response.status_code == 200:
-                proxy_latency = (time.time() - proxy_start) * 1000.0
-                stats["total_proxy_time_ms"] += proxy_latency
-                stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                resp_json = response.json()
-                usage = resp_json.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", len(json.dumps(body_to_send)) // 4)
-                completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
-                record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
-                # Finalize LiteLLM span (non-streaming path)
-                if litellm_span_obj:
-                    try:
-                        litellm_span_obj.end(
-                            output={"model": model_name, "tokens": completion_tokens},
-                            metadata={"latency_ms": proxy_latency},
-                        )
-                    except Exception:
-                        pass
-                return resp_json
+                logger.info(f"Proxying to LiteLLM as model={model_name}")
+                response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
+                if response.status_code == 200:
+                    proxy_latency = (time.time() - proxy_start) * 1000.0
+                    stats["total_proxy_time_ms"] += proxy_latency
+                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                    resp_json = response.json()
+                    usage = resp_json.get("usage") or {}
+                    prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
+                    choices = resp_json.get("choices") or []
+                    fallback_completion = 0
+                    if choices and isinstance(choices[0], dict):
+                        msg = choices[0].get("message")
+                        if isinstance(msg, dict):
+                            fallback_completion = len(msg.get("content") or "") // 4
+                    completion_tokens = usage.get("completion_tokens") or fallback_completion
+                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
+                    # Finalize LiteLLM span (non-streaming path)
+                    if litellm_span_obj:
+                        try:
+                            litellm_span_obj.end(
+                                output={"model": model_name, "tokens": completion_tokens},
+                                metadata={"latency_ms": proxy_latency},
+                            )
+                        except Exception:
+                            pass
+                    return resp_json
+                else:
+                    logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
+                    raise HTTPException(status_code=response.status_code, detail="LiteLLM upstream request failed")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"httpx call failed: {exc}")
+            raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}") from exc
+
+    if should_try_ollama:
+        # Sync state from Valkey first
+        await sync_cooldowns_from_valkey()
+
+        # --- Router-side Ollama cooldown check ---
+        global _ollama_cooldown_until
+        now_mono = time.monotonic()
+        if now_mono < _ollama_cooldown_until:
+            remaining = int(_ollama_cooldown_until - now_mono)
+            logger.warning(
+                f"⏳ Ollama cooldown active ({remaining}s remaining), "
+                f"skipping {target_model}"
+            )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                # Auto mode: silently fall through to the free tier
+                logger.info(f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)")
+                return await execute_proxy(original_target_model)
             else:
-                logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
-                raise HTTPException(status_code=502, detail=f"LiteLLM failed: {response.status_code}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Exception during LiteLLM proxy: {e}")
-        await client.aclose()
-        raise HTTPException(status_code=502, detail="LiteLLM upstream failed")
+                # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
+                # skips this model group and moves to openrouter-auto
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Ollama backend cooled down ({remaining}s remaining)"
+                )
+
+        try:
+            result = await execute_proxy(target_model)
+            return result
+        except HTTPException as e:
+            is_transient = e.status_code in (429, 500, 502, 503, 504)
+            if is_transient:
+                # Ollama failure — activate router-side cooldown
+                _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+                await save_cooldowns_to_valkey()
+                logger.error(
+                    f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+                )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                if is_transient:
+                    logger.warning(f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}")
+                    return await execute_proxy(original_target_model)
+                else:
+                    raise e
+            else:
+                # Direct/fallback llm-routing-ollama request
+                if is_transient:
+                    logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Ollama backend rate limited/unavailable"
+                    ) from e
+                else:
+                    raise e
+        except Exception as e:
+            # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
+            _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+            await save_cooldowns_to_valkey()
+            logger.error(
+                f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+            )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                logger.warning(f"Ollama proxy error ({e}), falling back to free tier {original_target_model}")
+                return await execute_proxy(original_target_model)
+            else:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Ollama backend rate limited/unavailable"
+                ) from e
+    else:
+        return await execute_proxy(target_model)
 
 @app.get("/metrics")
 async def metrics():
     """Expose triage and circuit breaker metrics in Prometheus format."""
+    await sync_cooldowns_from_valkey()
     breaker = get_breaker()
     breaker_status = breaker.status()
     
@@ -1641,16 +2092,27 @@ async def metrics():
     lines.append(f"circuit_breaker_vendor_tier {vendor['tier']}")
     lines.append("# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)")
     lines.append("# TYPE circuit_breaker_agy_allowed gauge")
-    lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed())}")
+    lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed_peek())}")
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
     lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
+
+    # Ollama router-side cooldown metrics
+    _now_mono = time.monotonic()
+    _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
+    lines.append("# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)")
+    lines.append("# TYPE ollama_cooldown_active gauge")
+    lines.append(f"ollama_cooldown_active {int(_ollama_remaining > 0)}")
+    lines.append("# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown")
+    lines.append("# TYPE ollama_cooldown_remaining_seconds gauge")
+    lines.append(f"ollama_cooldown_remaining_seconds {_ollama_remaining:.0f}")
     
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    await sync_cooldowns_from_valkey()
     # 1. Run live health checks
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
     litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
@@ -1658,7 +2120,7 @@ async def get_dashboard():
     langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
 
     # 1c. Check Gemini OAuth token status
-    oauth_status = get_gemini_oauth_status()
+    oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2637,8 +3099,10 @@ async def get_visualizer():
     """Serve the dataset visualizer for human review."""
     vis_path = STATIC_DIR / "visualizer.html"
     if vis_path.exists():
-        return HTMLResponse(vis_path.read_text())
+        content = await asyncio.to_thread(vis_path.read_text, encoding="utf-8")
+        return HTMLResponse(content)
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
+
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
@@ -2647,6 +3111,15 @@ class AnnotationItem(BaseModel):
     ts: Optional[str] = None
 
 VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+# NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
+# a single Python process. In multi-worker uvicorn deployments, concurrent requests
+# across different workers can still race. Eventual consistency is maintained via
+# the atomic file-replace mechanism, which is acceptable for this dashboard feature.
+annotations_lock = asyncio.Lock()
+
+def _read_annotations_sync(path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
@@ -2696,19 +3169,19 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
     try:
         ann_path = DATA_DIR / "annotations.json"
         existing = {}
-        if ann_path.exists():
-            try:
-                import json
-                with open(ann_path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except Exception as read_err:
-                logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
-        
-        # Merge new annotations into existing
-        for k, item in payload.items():
-            existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+        async with annotations_lock:
+            if ann_path.exists():
+                try:
+                    existing = await asyncio.to_thread(_read_annotations_sync, str(ann_path))
+                except Exception as read_err:
+                    logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
             
-        await _atomic_write_json_async(str(ann_path), existing)
+            # Merge new annotations into existing
+            for k, item in payload.items():
+                existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+                
+            await _atomic_write_json_async(str(ann_path), existing)
+
         return JSONResponse({"status": "ok", "saved": len(payload)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")

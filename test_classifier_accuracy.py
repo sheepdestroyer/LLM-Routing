@@ -8,7 +8,7 @@ import urllib.request
 import urllib.error
 
 # Load config to get system prompt
-CONFIG_PATH = os.getenv("CONFIG_PATH", "/home/gpav/Vrac/LAB/AI/LLM-Routing/router/config.yaml")
+CONFIG_PATH = os.getenv("CONFIG_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "router", "config.yaml"))
 system_prompt = ""
 if os.path.exists(CONFIG_PATH):
     try:

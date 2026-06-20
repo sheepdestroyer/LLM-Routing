@@ -66,6 +66,15 @@ class PerModelBreaker:
         )
         return False
 
+    def is_currently_allowed(self) -> bool:
+        """Check whether this model family is allowed, without mutating state."""
+        now = time.time()
+        if self.tier == 0:
+            return True
+        if now >= self.cooldown_until:
+            return not self.probe_granted
+        return False
+
     def record_success(self):
         """Reset breaker to Tier 0 on successful request."""
         if self.tier > 0:
@@ -113,13 +122,49 @@ class PerModelBreaker:
         return {
             "name": self.name,
             "tier": self.tier,
-            "allowed": self.is_allowed(),
+            "allowed": self.is_currently_allowed(),
             "cooldown_remaining_seconds": int(remaining),
             "cooldown_total_seconds": TIER_COOLDOWNS.get(self.tier, 0),
             "total_trips": self.total_trips,
             "last_trip_time": self.last_trip_time,
             "probe_granted": self.probe_granted,
         }
+
+    async def sync_from_valkey(self, redis_client) -> None:
+        """Synchronize circuit breaker state from Valkey."""
+        if not redis_client:
+            return
+        try:
+            state = await redis_client.hgetall(f"circuit_breaker:{self.name}")
+            if state:
+                self.tier = int(state.get("tier", "0"))
+                self.cooldown_until = float(state.get("cooldown_until", "0.0"))
+                self.probe_granted = state.get("probe_granted", "False") == "True"
+                self.total_trips = int(state.get("total_trips", "0"))
+                self.last_trip_time = float(state.get("last_trip_time", "0.0"))
+        except Exception as e:
+            logger.warning(f"Valkey circuit_breaker [{self.name}] sync failed: {e}")
+
+    async def save_to_valkey(self, redis_client) -> None:
+        """Persist circuit breaker state to Valkey."""
+        if not redis_client:
+            return
+        try:
+            key = f"circuit_breaker:{self.name}"
+            state = {
+                "tier": str(self.tier),
+                "cooldown_until": str(self.cooldown_until),
+                "probe_granted": "True" if self.probe_granted else "False",
+                "total_trips": str(self.total_trips),
+                "last_trip_time": str(self.last_trip_time),
+            }
+            await redis_client.hset(key, mapping=state)
+            now = time.time()
+            ttl = int(max(3600.0, self.cooldown_until - now + 3600.0))
+            await redis_client.expire(key, ttl)
+        except Exception as e:
+            logger.warning(f"Valkey circuit_breaker [{self.name}] save failed: {e}")
+
 
 
 class DualCircuitBreaker:
@@ -139,6 +184,10 @@ class DualCircuitBreaker:
     def is_allowed(self) -> bool:
         """Check if either the google or vendor breaker allows the request (backward-compat)."""
         return self.google.is_allowed() or self.vendor.is_allowed()
+
+    def is_allowed_peek(self) -> bool:
+        """Check if either sub-breaker is allowed, without mutating state."""
+        return self.google.is_currently_allowed() or self.vendor.is_currently_allowed()
 
     def record_failure(self):
         """Backward-compat: trip both breakers (conservative for old code)."""
@@ -161,6 +210,23 @@ class DualCircuitBreaker:
             "google": self.google.status(),
             "vendor": self.vendor.status(),
         }
+
+    async def sync_from_valkey(self, redis_client) -> None:
+        """Synchronize both sub-breakers from Valkey."""
+        import asyncio
+        await asyncio.gather(
+            self.google.sync_from_valkey(redis_client),
+            self.vendor.sync_from_valkey(redis_client)
+        )
+
+    async def save_to_valkey(self, redis_client) -> None:
+        """Persist both sub-breakers to Valkey."""
+        import asyncio
+        await asyncio.gather(
+            self.google.save_to_valkey(redis_client),
+            self.vendor.save_to_valkey(redis_client)
+        )
+
 
 
 # Module-level singleton

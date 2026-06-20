@@ -25,7 +25,19 @@ import logging
 import os
 import shlex
 import time
-from typing import Optional
+import httpx
+from typing import Optional, Protocol, runtime_checkable
+
+@runtime_checkable
+class CooldownPersistence(Protocol):
+    """Interface for persisting/syncing Valkey cooldown state."""
+    async def sync(self) -> None:
+        """Pull latest cooldown state from Valkey."""
+        ...
+
+    async def save(self) -> None:
+        """Push updated cooldown state to Valkey."""
+        ...
 
 from circuit_breaker import get_google_breaker, get_vendor_breaker
 
@@ -73,14 +85,12 @@ def _get_last_conversation_id() -> Optional[str]:
     return None
 
 
-async def _run_agy_print(prompt: str, model_override: str = "",
+async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override: str = "",
                          conversation_id: Optional[str] = None,
                          timeout: float = AGY_TIMEOUT_SECS) -> tuple[int, str, str, Optional[str]]:
     """
     Forward the agy execution request to the host-side agy daemon.
     """
-    import httpx
-    
     url = "http://127.0.0.1:5005/run"
     payload = {
         "prompt": prompt,
@@ -94,18 +104,21 @@ async def _run_agy_print(prompt: str, model_override: str = "",
     logger.info(f"agy proxy forwarding to host: [{model_tag}]{conv_tag} {prompt[:60]}...")
     
     try:
-        async with httpx.AsyncClient(timeout=timeout + 5.0) as client:
-            r = await client.post(url, json=payload)
-            if r.status_code == 200:
-                result = r.json()
-                return (
-                    result.get("returncode", 0),
-                    result.get("stdout", ""),
-                    result.get("stderr", ""),
-                    result.get("conversation_id", None)
-                )
-            else:
-                return -1, "", f"Daemon returned HTTP status {r.status_code}", None
+        r = await client.post(url, json=payload, timeout=timeout + 5.0)
+        if r.status_code == 200:
+            result = r.json()
+            ret_code = result.get("returncode", 0)
+            stdout_val = result.get("stdout", "")
+            stderr_val = result.get("stderr", "")
+            conv_id = result.get("conversation_id", None)
+            return (
+                0 if ret_code is None else ret_code,
+                "" if stdout_val is None else stdout_val,
+                "" if stderr_val is None else stderr_val,
+                conv_id
+            )
+        else:
+            return -1, "", f"Daemon returned HTTP status {r.status_code}", None
     except Exception as e:
         logger.error(f"Failed to communicate with Host agy Daemon: {e}")
         return -1, "", f"Daemon connection error: {e}", None
@@ -176,7 +189,9 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                         session_id: str = None,
                         total_timeout: float = AGY_TOTAL_TIMEOUT_SECS,
                         stream: bool = False,
-                        target_tier: str = "agent-advanced-core") -> Optional[dict]:
+                        target_tier: str = "agent-advanced-core",
+                        client: Optional[httpx.AsyncClient] = None,
+                        cooldown_persistence: Optional[CooldownPersistence] = None) -> Optional[dict]:
     """
     Attempt agy proxy with session-aware tier fallback.
     
@@ -188,6 +203,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         stream: If True, returns a dict with {"stream": async_generator, "model": model_name}
         target_tier: Classified tier — "agent-reasoning-core" uses gemini-3.5-flash (low thinking),
                      "agent-advanced-core" uses full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
+        client: Shared HTTP client instance from caller
+        cooldown_persistence: Valkey synchronization callback interface
     
     Returns:
         OpenAI-compatible response dict, streaming dict, or None if all tiers failed.
@@ -201,224 +218,266 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         ]
     else:
         agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
-    # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
-    # rate-limit windows (separate 5-hour quota refresh cycles).
-    google_breaker = get_google_breaker()
-    vendor_breaker = get_vendor_breaker()
 
-    # Check if ANY model path is available
-    if not google_breaker.is_allowed() and not vendor_breaker.is_allowed():
-        logger.info(
-            f"agy proxy: both circuit breakers open (google tier={google_breaker.tier}, "
-            f"vendor tier={vendor_breaker.tier}) — skipping agy, falling through to LiteLLM"
-        )
-        return None
+    should_close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=total_timeout + 5.0)
+        should_close_client = True
 
-    # Build context-aware prompt from message history
-    proxy_prompt = prompt
-    if messages:
-        context_parts = []
-        for msg in messages[-10:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "user":
-                context_parts.append(f"User: {content}")
-            elif role == "assistant":
-                context_parts.append(f"Assistant: {content}")
-        proxy_prompt = "\n".join(context_parts[-6:])
-
-    # Check if we have an existing session with a conversation ID
-    existing_conv_id = None
-    start_tier_index = 0
-    if session_id and session_id in _session_store:
-        session = _session_store[session_id]
-        existing_conv_id = session.get("conversation_id")
-        start_tier_index = session.get("current_tier_index", 0)
-        logger.info(f"agy proxy: resuming session {session_id[:8]}..., "
-                    f"conversation={existing_conv_id[:8]}...")
-    
-    start_time = time.time()
-    last_conv_id = existing_conv_id
-    
-    import httpx
-    
-    for tier_idx, tier in enumerate(agy_tiers[start_tier_index:]):
-        actual_tier_idx = start_tier_index + tier_idx
-        elapsed = time.time() - start_time
-        remaining = total_timeout - elapsed
-        if remaining <= 0:
-            logger.warning(f"agy proxy: total timeout exhausted at tier {tier['model_name']}")
-            break
-
-        # Determine which breaker to use for this tier
-        # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
-        # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
-        is_google_tier = "gemini" in tier.get("model_name", "").lower()
-        tier_breaker = google_breaker if is_google_tier else vendor_breaker
-
-        if not tier_breaker.is_allowed():
-            logger.info(
-                f"agy proxy: tier {tier['model_name']} blocked by circuit breaker "
-                f"(tier {tier_breaker.tier}, {tier_breaker.cooldown_until - time.time():.0f}s remaining) — skipping"
-            )
-            continue
-
-        tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
-        
-        if stream:
-            url = "http://127.0.0.1:5005/run"
-            payload = {
-                "prompt": proxy_prompt,
-                "model_override": tier["env_override"],
-                "conversation_id": last_conv_id if actual_tier_idx > 0 or existing_conv_id else None,
-                "timeout": tier_timeout,
-                "stream": True
-            }
-            
-            model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.5-flash)"
-            logger.info(f"agy proxy connecting stream to daemon: [{model_tag}]...")
-            
-            client = httpx.AsyncClient(timeout=tier_timeout + 5.0)
-            req = client.build_request("POST", url, json=payload)
+    stream_returned = False
+    try:
+        if cooldown_persistence is not None:
             try:
-                r = await client.send(req, stream=True)
+                await cooldown_persistence.sync()
             except Exception as e:
-                logger.error(f"Failed to connect stream to daemon: {e}")
-                await client.aclose()
+                logger.warning(f"Failed to sync state from Valkey: {e}")
+
+        # Per-model circuit breakers — Google and vendor (Claude/GPT) have independent
+        # rate-limit windows (separate 5-hour quota refresh cycles).
+        google_breaker = get_google_breaker()
+        vendor_breaker = get_vendor_breaker()
+
+        # Check if ANY model path is available without mutating state
+        if not google_breaker.is_currently_allowed() and not vendor_breaker.is_currently_allowed():
+            logger.info(
+                f"agy proxy: both circuit breakers open (google tier={google_breaker.tier}, "
+                f"vendor tier={vendor_breaker.tier}) — skipping agy, falling through to LiteLLM"
+            )
+            return None
+
+        # Build context-aware prompt from message history
+        proxy_prompt = prompt
+        if messages:
+            context_parts = []
+            for msg in messages[-10:]:
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role", "user")
+                content = msg.get("content") or ""
+                if isinstance(content, list):
+                    content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
+                if role == "user":
+                    context_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    context_parts.append(f"Assistant: {content}")
+            proxy_prompt = "\n".join(context_parts[-6:])
+
+        # Check if we have an existing session with a conversation ID
+        existing_conv_id = None
+        start_tier_index = 0
+        if session_id and session_id in _session_store:
+            session = _session_store[session_id]
+            existing_conv_id = session.get("conversation_id")
+            start_tier_index = session.get("current_tier_index", 0)
+            conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
+            logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
+        
+        start_time = time.time()
+        last_conv_id = existing_conv_id
+        
+        for tier_idx, tier in enumerate(agy_tiers[start_tier_index:]):
+            actual_tier_idx = start_tier_index + tier_idx
+            elapsed = time.time() - start_time
+            remaining = total_timeout - elapsed
+            if remaining <= 0:
+                logger.warning(f"agy proxy: total timeout exhausted at tier {tier['model_name']}")
+                break
+
+            # Determine which breaker to use for this tier
+            # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
+            # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
+            is_google_tier = "gemini" in tier.get("model_name", "").lower()
+            tier_breaker = google_breaker if is_google_tier else vendor_breaker
+
+            if not tier_breaker.is_allowed():
+                logger.info(
+                    f"agy proxy: tier {tier['model_name']} blocked by circuit breaker "
+                    f"(tier {tier_breaker.tier}, {max(0.0, tier_breaker.cooldown_until - time.time()):.0f}s remaining) — skipping"
+                )
                 continue
+
+            tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
+            
+            if stream:
+                url = "http://127.0.0.1:5005/run"
+                payload = {
+                    "prompt": proxy_prompt,
+                    "model_override": tier["env_override"],
+                    "conversation_id": last_conv_id if actual_tier_idx > 0 or existing_conv_id else None,
+                    "timeout": tier_timeout,
+                    "stream": True
+                }
                 
-            # Read first line to see if it's successful or quota error
-            first_line = None
-            try:
-                lines_iter = r.aiter_lines()
-                first_line = await anext(lines_iter)
-            except (StopAsyncIteration, Exception):
-                pass
+                model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.5-flash)"
+                logger.info(f"agy proxy connecting stream to daemon: [{model_tag}]...")
                 
-            if not first_line:
-                await r.aclose()
-                await client.aclose()
-                logger.warning(f"agy proxy: tier {tier['model_name']} returned empty stream. Trying next tier...")
-                continue
-                
-            try:
-                first_data = json.loads(first_line)
-            except Exception:
-                await r.aclose()
-                await client.aclose()
-                logger.error(f"agy proxy: invalid JSON from daemon: {first_line}")
-                continue
-                
-            # Check if first message is a status failure
-            if first_data.get("type") == "status":
-                rc = first_data.get("returncode", 0)
-                stderr_content = first_data.get("stderr", "")
-                if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
-                    if _is_quota_exhausted(rc, "", stderr_content):
-                        tier_breaker.record_failure()
-                    await r.aclose()
-                    await client.aclose()
-                    logger.warning(f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier...")
+                req = client.build_request("POST", url, json=payload, timeout=tier_timeout + 5.0)
+                try:
+                    r = await client.send(req, stream=True)
+                except Exception as e:
+                    logger.error(f"Failed to connect stream to daemon: {e}")
                     continue
                     
-            # Success! Stream has started.
-            tier_breaker.record_success()
-            async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id):
-                """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
-                # Yield the initial token if it was a token
-                init_data = json.loads(initial_line)
-                if init_data.get("type") == "token" and init_data.get("content"):
-                    yield init_data["content"]
-                elif init_data.get("type") == "conversation_id" and init_data.get("id"):
-                    current_conv_id = init_data["id"]
-                    if session_id:
+                # Read first line to see if it's successful or quota error
+                first_line = None
+                try:
+                    lines_iter = r.aiter_lines()
+                    first_line = await anext(lines_iter)
+                except StopAsyncIteration:
+                    pass
+                except Exception as e:
+                    logger.warning(f"agy proxy: failed reading initial stream line from {tier['model_name']}: {e}")
+                    
+                if not first_line:
+                    await r.aclose()
+                    logger.warning(f"agy proxy: tier {tier['model_name']} returned empty stream. Trying next tier...")
+                    continue
+                    
+                try:
+                    first_data = json.loads(first_line)
+                except Exception:
+                    await r.aclose()
+                    logger.error(f"agy proxy: invalid JSON from daemon: {first_line}")
+                    continue
+                    
+                # Check if first message is a status failure
+                if first_data.get("type") == "status":
+                    raw_rc = first_data.get("returncode", 0)
+                    rc = 0 if raw_rc is None else raw_rc
+                    raw_stderr = first_data.get("stderr", "")
+                    stderr_content = "" if raw_stderr is None else raw_stderr
+                    if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
+                        if _is_quota_exhausted(rc, "", stderr_content):
+                            tier_breaker.record_failure()
+                            if cooldown_persistence is not None:
+                                try:
+                                    await cooldown_persistence.save()
+                                except Exception as e:
+                                    logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+                        await r.aclose()
+                        logger.warning(f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier...")
+                        continue
+                        
+                # Success! Stream has started.
+                tier_breaker.record_success()
+                if cooldown_persistence is not None:
+                    try:
+                        await cooldown_persistence.save()
+                    except Exception as e:
+                        logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+                
+                async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id, close_client):
+                    """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
+                    # Yield the initial token if it was a token
+                    init_data = json.loads(initial_line)
+                    if init_data.get("type") == "token" and init_data.get("content"):
+                        yield init_data["content"]
+                    elif init_data.get("type") == "conversation_id" and init_data.get("id"):
+                        current_conv_id = init_data["id"]
+                        if session_id:
+                            _session_store[session_id] = {
+                                "conversation_id": current_conv_id,
+                                "current_tier_index": actual_tier_idx,
+                            }
+                    
+                    try:
+                        async for line in lines_iter:
+                            if not line.strip():
+                                continue
+                            data = json.loads(line)
+                            if data.get("type") == "token" and data.get("content"):
+                                yield data["content"]
+                            elif data.get("type") == "conversation_id" and data.get("id"):
+                                current_conv_id = data["id"]
+                                if session_id:
+                                    _session_store[session_id] = {
+                                        "conversation_id": current_conv_id,
+                                        "current_tier_index": actual_tier_idx,
+                                    }
+                    finally:
+                        await stream_resp.aclose()
+                        if close_client:
+                            await httpx_client.aclose()
+                        
+                stream_returned = True
+                return {
+                    "stream": token_generator(r, client, first_line, last_conv_id, should_close_client),
+                    "model": tier["model_name"]
+                }
+                
+            else:
+                # Non-streaming path
+                returncode, stdout, stderr, result_conv_id = await _run_agy_print(
+                    client,
+                    proxy_prompt,
+                    model_override=tier["env_override"],
+                    conversation_id=last_conv_id if actual_tier_idx > 0 or existing_conv_id else None,
+                    timeout=tier_timeout,
+                )
+
+                # Update the conversation ID from the result
+                if result_conv_id:
+                    last_conv_id = result_conv_id
+
+                # Check for quota exhaustion
+                if _is_quota_exhausted(returncode, stdout, stderr):
+                    tier_breaker.record_failure()
+                    if cooldown_persistence is not None:
+                        try:
+                            await cooldown_persistence.save()
+                        except Exception as e:
+                            logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+                    logger.warning(
+                        f"agy proxy: tier {tier['model_name']} quota exhausted. "
+                        f"Falling to tier {actual_tier_idx + 2}..."
+                    )
+                    continue
+
+                # Check for other errors
+                if returncode != 0:
+                    logger.warning(
+                        f"agy proxy: tier {tier['model_name']} failed "
+                        f"(rc={returncode}, stderr={stderr[:200]}). "
+                        f"Falling to next tier..."
+                    )
+                    continue
+
+                # Success!
+                if stdout:
+                    elapsed_total = time.time() - start_time
+                    
+                    # Save session state for continuation
+                    if session_id and last_conv_id is not None:
                         _session_store[session_id] = {
-                            "conversation_id": current_conv_id,
+                            "conversation_id": last_conv_id,
                             "current_tier_index": actual_tier_idx,
                         }
-                
-                try:
-                    async for line in lines_iter:
-                        if not line.strip():
-                            continue
-                        data = json.loads(line)
-                        if data.get("type") == "token" and data.get("content"):
-                            yield data["content"]
-                        elif data.get("type") == "conversation_id" and data.get("id"):
-                            current_conv_id = data["id"]
-                            if session_id:
-                                _session_store[session_id] = {
-                                    "conversation_id": current_conv_id,
-                                    "current_tier_index": actual_tier_idx,
-                                }
-                finally:
-                    await stream_resp.aclose()
-                    await httpx_client.aclose()
+                        logger.info(f"agy proxy: saved session {session_id[:8]}..."
+                                    f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}")
                     
-            return {
-                "stream": token_generator(r, client, first_line, last_conv_id),
-                "model": tier["model_name"]
-            }
-            
-        else:
-            # Non-streaming path
-            returncode, stdout, stderr, result_conv_id = await _run_agy_print(
-                proxy_prompt,
-                model_override=tier["env_override"],
-                conversation_id=last_conv_id if actual_tier_idx > 0 or existing_conv_id else None,
-                timeout=tier_timeout,
-            )
+                    logger.info(
+                        f"agy proxy: ✅ tier {tier['model_name']} succeeded "
+                        f"({len(stdout)} chars, {elapsed_total:.1f}s)"
+                    )
+                    tier_breaker.record_success()
+                    if cooldown_persistence is not None:
+                        try:
+                            await cooldown_persistence.save()
+                        except Exception as e:
+                            logger.warning(f"Failed to save cooldowns to Valkey: {e}")
+                    return _wrap_response(stdout, tier["model_name"], proxy_prompt)
+                else:
+                    logger.warning(
+                        f"agy proxy: tier {tier['model_name']} returned empty response"
+                    )
+                    continue
 
-            # Update the conversation ID from the result
-            if result_conv_id:
-                last_conv_id = result_conv_id
-
-            # Check for quota exhaustion
-            if _is_quota_exhausted(returncode, stdout, stderr):
-                tier_breaker.record_failure()
-                logger.warning(
-                    f"agy proxy: tier {tier['model_name']} quota exhausted. "
-                    f"Falling to tier {actual_tier_idx + 2}..."
-                )
-                continue
-
-            # Check for other errors
-            if returncode != 0:
-                logger.warning(
-                    f"agy proxy: tier {tier['model_name']} failed "
-                    f"(rc={returncode}, stderr={stderr[:200]}). "
-                    f"Falling to next tier..."
-                )
-                continue
-
-            # Success!
-            if stdout:
-                elapsed_total = time.time() - start_time
-                
-                # Save session state for continuation
-                if session_id:
-                    _session_store[session_id] = {
-                        "conversation_id": last_conv_id,
-                        "current_tier_index": actual_tier_idx,
-                    }
-                    logger.info(f"agy proxy: saved session {session_id[:8]}..."
-                                f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}")
-                
-                logger.info(
-                    f"agy proxy: ✅ tier {tier['model_name']} succeeded "
-                    f"({len(stdout)} chars, {elapsed_total:.1f}s)"
-                )
-                tier_breaker.record_success()
-                return _wrap_response(stdout, tier["model_name"], proxy_prompt)
-            else:
-                logger.warning(
-                    f"agy proxy: tier {tier['model_name']} returned empty response"
-                )
-                continue
-
-    # All tiers exhausted — clean up session
-    if session_id and session_id in _session_store:
-        del _session_store[session_id]
-    
-    logger.warning("agy proxy: all tiers exhausted — falling back to LiteLLM")
-    return None
+        # All tiers exhausted — clean up session
+        if session_id and session_id in _session_store:
+            del _session_store[session_id]
+        
+        logger.warning("agy proxy: all tiers exhausted — falling back to LiteLLM")
+        return None
+    finally:
+        if should_close_client and not stream_returned:
+            await client.aclose()

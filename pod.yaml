@@ -42,7 +42,7 @@ spec:
     - name: STORE_MODEL_IN_DB
       value: 'True'
     - name: LITELLM_LOG
-      value: WARNING
+      value: INFO
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
     - name: LITELLM_MASTER_KEY
@@ -90,6 +90,10 @@ spec:
     env:
     - name: CONFIG_PATH
       value: /config/router_dir/config.yaml
+    - name: LITELLM_CONFIG_PATH
+      value: /config/litellm_dir/config.yaml
+    - name: DATABASE_URL
+      value: postgresql://postgres:***@127.0.0.1:5432/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
       value: unix:path=/run/user/1000/bus
     - name: LITELLM_MASTER_KEY
@@ -127,6 +131,8 @@ spec:
     volumeMounts:
     - mountPath: /config/router_dir
       name: router-config
+    - mountPath: /config/litellm_dir
+      name: litellm-config
     - mountPath: /app/data
       name: dataset-data
     - mountPath: /config/gemini_auth

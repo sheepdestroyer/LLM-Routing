@@ -1,5 +1,5 @@
 general_settings:
-  master_key: sk-lit...33bf
+  master_key: os.environ/LITELLM_MASTER_KEY
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
@@ -20,41 +20,76 @@ litellm_settings:
   - langfuse
   detailed_debug: false
   drop_params: true
+  public_model_groups:
+    - openrouter-auto
+    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
+    - ollama-deepseek-v4-flash
+    - agent-advanced-core
+    - agent-reasoning-core
+    - agent-complex-core
+    - agent-medium-core
+    - agent-simple-core
   fallbacks:
   - agent-simple-core:
     - agent-medium-core
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED: 35B model unloaded (23GB GTT saved)
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-reasoning-core:
     - agent-advanced-core
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
   - agent-advanced-core:
+    - llm-routing-ollama
     - openrouter-auto
     # - local-qwen-3.6  # DISABLED
-  - ollama-deepseek-v4-pro:
-    - agent-advanced-core
-  - ollama-deepseek-v4-flash:
-    - agent-reasoning-core
+
 model_list:
 - litellm_params:
     model: openrouter/openrouter/auto
     request_timeout: 120
   model_name: openrouter-auto
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 2000000
+    max_input_tokens: 2000000
+    is_public_model_group: true
+- litellm_params:
+    model: openai/llm-routing-ollama
+    api_base: http://127.0.0.1:5000/v1
+    api_key: os.environ/LITELLM_MASTER_KEY
+    request_timeout: 120
+  model_name: llm-routing-ollama
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
+
 # DISABLED 2026-06-08 — 20GB on disk, 23GB GTT (system RAM as GPU buffer).
 # Uncomment to re-enable once a lighter model replaces it.
 #- litellm_params:
@@ -73,7 +108,10 @@ model_list:
 # ================================================================================
 # OLLAMA PAID TIER — ollama.com via LiteLLM's native ollama_chat provider.
 # LiteLLM calls https://api.ollama.com/api/chat with Bearer auth (OLLAMA_API_KEY).
-# Fallback: ollama-deepseek-v4-pro → agent-advanced-core → openrouter-auto.
+# No LiteLLM-level fallbacks: failures propagate back to the triage router
+# (router/main.py) which manages Ollama cooldowns internally. When Ollama fails,
+# the router activates a 5-minute cooldown and skips Ollama on subsequent
+# requests, returning 429 so LiteLLM falls through to openrouter-auto.
 # ================================================================================
 - model_name: ollama-deepseek-v4-pro
   litellm_params:
@@ -81,10 +119,20 @@ model_list:
     api_base: https://api.ollama.com
     api_key: os.environ/OLLAMA_API_KEY
     request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    input_cost_per_token: 0.00000174
+    output_cost_per_token: 0.00000348
+    is_public_model_group: true
 
 # ================================================================================
 # OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
-# Fallback: ollama-deepseek-v4-flash → agent-reasoning-core → openrouter-auto.
+# Same cooldown architecture as the pro tier above.
 # ================================================================================
 - model_name: ollama-deepseek-v4-flash
   litellm_params:
@@ -92,6 +140,16 @@ model_list:
     api_base: https://api.ollama.com
     api_key: os.environ/OLLAMA_API_KEY
     request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    input_cost_per_token: 0.00000014
+    output_cost_per_token: 0.00000028
+    is_public_model_group: true
 
 # ================================================================================
 # AGENT TIER DEPLOYMENTS — safety-net entries (one per tier)
@@ -119,45 +177,84 @@ model_list:
 
 - model_name: agent-advanced-core
   litellm_params:
-    model: openrouter/minimax/minimax-m2.5:free
-    request_timeout: 120
+    model: openrouter/google/gemma-4-31b-it:free
+    request_timeout: 20
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-reasoning-core
   litellm_params:
-    model: openrouter/moonshotai/kimi-k2.6:free
-    request_timeout: 120
+    model: openrouter/google/gemma-4-26b-a4b-it:free
+    request_timeout: 20
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-complex-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-    request_timeout: 120
+    request_timeout: 20
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
     model: openrouter/google/gemma-4-26b-a4b-it:free
-    request_timeout: 120
+    request_timeout: 20
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
 - model_name: agent-simple-core
   litellm_params:
     model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
-    request_timeout: 120
+    request_timeout: 20
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 256000
+    max_input_tokens: 256000
+    is_public_model_group: true
 
 redis_settings:
   redis_host: 127.0.0.1
   redis_port: 6379
 router_settings:
-  allowed_fails: 2
+  allowed_fails: 0
   cooldown_time: 300
   enable_pre_call_checks: false
   num_retries: 1
   routing_strategy: latency-based-routing
-  # Per-error-type cooldown thresholds (overrides allowed_fails for specific errors).
-  # Upstream rate limits ("temporarily rate-limited upstream") can last minutes —
-  # a 30s cooldown just wastes retries. 300s gives providers time to clear the limit.
-  # RateLimitError: cooldown on FIRST 429 (upstream rate limits persist for minutes —
-  # allowing even 1 retry wastes a request against a provider that's still throttling)
-  allowed_fails_policy:
-    RateLimitErrorAllowedFails: 0
-    TimeoutErrorAllowedFails: 3
-    BadRequestErrorAllowedFails: 1
+  enable_health_check_routing: false
+  # NOTE: allowed_fails_policy is an enterprise-only feature in LiteLLM.
+  # allowed_fails is set to 0 to ensure that any model deployment failure
+  # immediately escalates through the fallback chain (to fallback models)
+  # instead of retrying the failed model. This does not interfere with the
+  # triage router's internal cooldowns, which return 429 when a specific
+  # backend (like Ollama) is cooling down, allowing LiteLLM to immediately
+  # trigger the fallback path.
 vector_store_settings:
   collection_name: litellm_semantic_cache
-  connection_string: postgresql://postgres:***@127.0.0.1:5432/postgres
+  connection_string: os.environ/DATABASE_URL
   embedding_model: local-nomic-embed
   store_type: postgres
