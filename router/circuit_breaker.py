@@ -66,6 +66,15 @@ class PerModelBreaker:
         )
         return False
 
+    def is_currently_allowed(self) -> bool:
+        """Check whether this model family is allowed, without mutating state."""
+        now = time.time()
+        if self.tier == 0:
+            return True
+        if now >= self.cooldown_until:
+            return not self.probe_granted
+        return False
+
     def record_success(self):
         """Reset breaker to Tier 0 on successful request."""
         if self.tier > 0:
@@ -175,6 +184,10 @@ class DualCircuitBreaker:
     def is_allowed(self) -> bool:
         """Check if either the google or vendor breaker allows the request (backward-compat)."""
         return self.google.is_allowed() or self.vendor.is_allowed()
+
+    def is_allowed_peek(self) -> bool:
+        """Check if either sub-breaker is allowed, without mutating state."""
+        return self.google.is_currently_allowed() or self.vendor.is_currently_allowed()
 
     def record_failure(self):
         """Backward-compat: trip both breakers (conservative for old code)."""

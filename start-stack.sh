@@ -304,6 +304,17 @@ import os, sys
 uid = os.getuid()
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     text = f.read()
+placeholders = [
+    "/home/gpav/Vrac/LAB/AI/LLM-Routing",
+    "/home/gpav/",
+    "/run/user/1000",
+    "sk-lit...33bf",
+    "postgres:***"
+]
+for ph in placeholders:
+    if ph not in text:
+        sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml\n")
+        sys.exit(1)
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")

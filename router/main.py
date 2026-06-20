@@ -1420,7 +1420,7 @@ async def chat_completions(request: Request):
             content = msg.get("content") or ""
             if isinstance(content, list):
                 content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
-            last_user_message = content
+            last_user_message = str(content)
             break
 
     # Known tier names that can be routed directly (bypass classifier)
@@ -1550,7 +1550,7 @@ async def chat_completions(request: Request):
                     content = msg.get("content") or ""
                     if isinstance(content, list):
                         content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
-                    last_prompt = content
+                    last_prompt = str(content)
                     break
 
             session_id = None
@@ -1884,10 +1884,11 @@ async def chat_completions(request: Request):
                                             try:
                                                 data_json = json.loads(data_str)
                                                 choices = data_json.get("choices", [])
-                                                if choices:
-                                                    delta = choices[0].get("delta", {})
-                                                    content = delta.get("content") or ""
-                                                    completion_chars += len(content)
+                                                if choices and isinstance(choices[0], dict):
+                                                    delta = choices[0].get("delta")
+                                                    if isinstance(delta, dict):
+                                                        content = delta.get("content") or ""
+                                                        completion_chars += len(content)
                                             except Exception:
                                                 pass
                                 except Exception:
@@ -1907,6 +1908,16 @@ async def chat_completions(request: Request):
                                     pass
                         except Exception as ex:
                             logger.error(f"Stream error: {ex}")
+                            if model_name.startswith("ollama-"):
+                                global _ollama_cooldown_until
+                                _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
+                                try:
+                                    await save_cooldowns_to_valkey()
+                                    logger.error(
+                                        f"🧊 Ollama failed midway through stream, activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
+                                    )
+                                except Exception as save_err:
+                                    logger.warning(f"Failed to save cooldowns to Valkey: {save_err}")
                         finally:
                             await r.aclose()
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
@@ -1926,7 +1937,11 @@ async def chat_completions(request: Request):
                     usage = resp_json.get("usage") or {}
                     prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
                     choices = resp_json.get("choices") or []
-                    fallback_completion = (len(choices[0].get("message", {}).get("content") or "") // 4) if choices else 0
+                    fallback_completion = 0
+                    if choices and isinstance(choices[0], dict):
+                        msg = choices[0].get("message")
+                        if isinstance(msg, dict):
+                            fallback_completion = len(msg.get("content") or "") // 4
                     completion_tokens = usage.get("completion_tokens") or fallback_completion
                     record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
                     # Finalize LiteLLM span (non-streaming path)
@@ -2085,7 +2100,7 @@ async def metrics():
     lines.append(f"circuit_breaker_vendor_tier {vendor['tier']}")
     lines.append("# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)")
     lines.append("# TYPE circuit_breaker_agy_allowed gauge")
-    lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed())}")
+    lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed_peek())}")
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
     lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")

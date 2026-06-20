@@ -107,11 +107,15 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
         r = await client.post(url, json=payload, timeout=timeout + 5.0)
         if r.status_code == 200:
             result = r.json()
+            ret_code = result.get("returncode", 0)
+            stdout_val = result.get("stdout", "")
+            stderr_val = result.get("stderr", "")
+            conv_id = result.get("conversation_id", None)
             return (
-                result.get("returncode", 0),
-                result.get("stdout", ""),
-                result.get("stderr", ""),
-                result.get("conversation_id", None)
+                0 if ret_code is None else ret_code,
+                "" if stdout_val is None else stdout_val,
+                "" if stderr_val is None else stderr_val,
+                conv_id
             )
         else:
             return -1, "", f"Daemon returned HTTP status {r.status_code}", None
@@ -233,8 +237,12 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         google_breaker = get_google_breaker()
         vendor_breaker = get_vendor_breaker()
 
+        # Call is_allowed() exactly once per breaker to avoid consuming multiple probes
+        google_allowed = google_breaker.is_allowed()
+        vendor_allowed = vendor_breaker.is_allowed()
+
         # Check if ANY model path is available
-        if not google_breaker.is_allowed() and not vendor_breaker.is_allowed():
+        if not google_allowed and not vendor_allowed:
             logger.info(
                 f"agy proxy: both circuit breakers open (google tier={google_breaker.tier}, "
                 f"vendor tier={vendor_breaker.tier}) — skipping agy, falling through to LiteLLM"
@@ -265,8 +273,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             session = _session_store[session_id]
             existing_conv_id = session.get("conversation_id")
             start_tier_index = session.get("current_tier_index", 0)
-            logger.info(f"agy proxy: resuming session {session_id[:8]}..., "
-                        f"conversation={existing_conv_id[:8]}...")
+            conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
+            logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
         
         start_time = time.time()
         last_conv_id = existing_conv_id
@@ -284,11 +292,12 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
             is_google_tier = "gemini" in tier.get("model_name", "").lower()
             tier_breaker = google_breaker if is_google_tier else vendor_breaker
+            allowed = google_allowed if is_google_tier else vendor_allowed
 
-            if not tier_breaker.is_allowed():
+            if not allowed:
                 logger.info(
                     f"agy proxy: tier {tier['model_name']} blocked by circuit breaker "
-                    f"(tier {tier_breaker.tier}, {tier_breaker.cooldown_until - time.time():.0f}s remaining) — skipping"
+                    f"(tier {tier_breaker.tier}, {max(0.0, tier_breaker.cooldown_until - time.time()):.0f}s remaining) — skipping"
                 )
                 continue
 
@@ -439,7 +448,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     elapsed_total = time.time() - start_time
                     
                     # Save session state for continuation
-                    if session_id:
+                    if session_id and last_conv_id is not None:
                         _session_store[session_id] = {
                             "conversation_id": last_conv_id,
                             "current_tier_index": actual_tier_idx,
