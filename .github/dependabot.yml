@@ -19,7 +19,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-      time: "03:23"
+      time: "02:55"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
