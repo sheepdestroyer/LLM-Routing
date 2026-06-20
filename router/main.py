@@ -351,6 +351,18 @@ triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 classification_lock = asyncio.Lock()
 
+async def _purge_stale_deployments(db_url: str, pattern: str):
+    """Purge stale deployments matching the pattern from LiteLLM's DB."""
+    import asyncpg
+    conn = await asyncpg.connect(db_url)
+    try:
+        await conn.execute(
+            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
+            pattern
+        )
+    finally:
+        await conn.close()
+
 async def sync_adaptive_router_roster(master_key: str):
     """Fetch free OpenRouter models and register them as deployments in LiteLLM."""
     if not master_key:
@@ -370,6 +382,7 @@ async def sync_adaptive_router_roster(master_key: str):
         return
     free_models = []
     model_contexts = {}
+    model_supported_params = {}
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
@@ -400,6 +413,7 @@ async def sync_adaptive_router_roster(master_key: str):
                 score = 25.0  # conservative fallback for unparseable models
             free_models.append((score, mid))
             model_contexts[mid] = m.get("context_length") or 262144
+            model_supported_params[mid] = supported_params
     free_models.sort(reverse=True)
     if not free_models:
         logger.warning("No free models found — skipping roster sync")
@@ -461,13 +475,7 @@ async def sync_adaptive_router_roster(master_key: str):
         # starts clean — delete all, then register only the current roster.
         try:
             db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
-            import asyncpg
-            conn = await asyncpg.connect(db_url)
-            await conn.execute(
-                'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
-                'agent-%'
-            )
-            await conn.close()
+            await _purge_stale_deployments(db_url, 'agent-%')
             logger.info("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
             logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
@@ -477,13 +485,14 @@ async def sync_adaptive_router_roster(master_key: str):
         for tier_name, model_ids in tier_assignments.items():
             for mid in model_ids:
                 ctx_len = model_contexts.get(mid, 262144)
+                sp = model_supported_params.get(mid, [])
                 payload = {
                     "model_name": tier_name,
                     "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
                     "model_info": {
-                        "supports_vision": True,
-                        "supports_reasoning": True,
-                        "supports_function_calling": True,
+                        "supports_vision": "vision" in sp,
+                        "supports_reasoning": True,  # OpenRouter API has no "reasoning" param; assume all modern LLMs support it
+                        "supports_function_calling": "tools" in sp,
                         "mode": "chat",
                         "max_tokens": ctx_len,
                         "max_input_tokens": ctx_len,
@@ -519,7 +528,7 @@ async def _register_ollama_models_in_db(master_key: str):
             "litellm_params": {
                 "model": "ollama_chat/deepseek-v4-pro",
                 "api_base": "https://api.ollama.com",
-                "api_key": os.getenv("OLLAMA_API_KEY", ""),
+                "api_key": "os.environ/OLLAMA_API_KEY",
                 "request_timeout": 120,
             },
             "model_info": {
@@ -539,7 +548,7 @@ async def _register_ollama_models_in_db(master_key: str):
             "litellm_params": {
                 "model": "ollama_chat/deepseek-v4-flash",
                 "api_base": "https://api.ollama.com",
-                "api_key": os.getenv("OLLAMA_API_KEY", ""),
+                "api_key": "os.environ/OLLAMA_API_KEY",
                 "request_timeout": 120,
             },
             "model_info": {
@@ -555,30 +564,31 @@ async def _register_ollama_models_in_db(master_key: str):
             },
         },
     ]
-
-    # Purge stale ollama-deepseek DB entries before re-registering
+    # Purge stale ollama-deepseek DB entries before re-registering.
+    # Mirrors the agent-* purge pattern above — delete all, then register fresh.
     try:
         db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
-        import asyncpg
-        conn = await asyncpg.connect(db_url)
-        await conn.execute(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
-            'ollama-deepseek-%'
-        )
-        await conn.close()
+        await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
+        logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
     except Exception as e:
         logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
+        registered = 0
+        failed = 0
         for payload in ollama_models:
             try:
                 r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
                 if r.status_code in (200, 201):
-                    logger.info(f"✅ Registered {payload['model_name']} in DB")
+                    registered += 1
                 else:
+                    failed += 1
                     logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
             except Exception as e:
+                failed += 1
                 logger.warning(f"Failed to register {payload['model_name']}: {e}")
+        logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1297,15 +1307,17 @@ async def proxy_models():
             data = r.json()
             # Inject llm-routing-* models at the top of the list.
             # Auto models (classifier pipeline) first, then direct models.
-            # context_length: 262144 (256K) — the downstream models (gemini-3.5-flash,
-            # claude-opus-4.6, deepseek-v4-pro/flash) all support 256K+ context.
+            # Context lengths aligned with downstream model targets:
+            # - auto-free / auto-agy: 262144 (262K)
+            # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
+            # - llm-routing-agy: 1048576 (1M)
             routing_models = [
                 {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
                 {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
             ]
             for entry in reversed(routing_models):
                 data["data"].insert(0, entry)

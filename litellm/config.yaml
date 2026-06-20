@@ -180,7 +180,7 @@ model_list:
     model: openrouter/google/gemma-4-31b-it:free
     request_timeout: 20
   model_info:
-    supports_vision: true
+    supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
@@ -192,7 +192,7 @@ model_list:
     model: openrouter/google/gemma-4-26b-a4b-it:free
     request_timeout: 20
   model_info:
-    supports_vision: true
+    supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
@@ -204,19 +204,19 @@ model_list:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
     request_timeout: 20
   model_info:
-    supports_vision: true
+    supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 1000000
-    max_input_tokens: 1000000
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
     model: openrouter/google/gemma-4-26b-a4b-it:free
     request_timeout: 20
   model_info:
-    supports_vision: true
+    supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
@@ -228,7 +228,7 @@ model_list:
     model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
     request_timeout: 20
   model_info:
-    supports_vision: true
+    supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
     mode: chat

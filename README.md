@@ -253,17 +253,20 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 
 | Model | Classifier | Premium backend | Fallback | Context Length |
 |:---|---:|:---|:---|:---|
-| `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 256K |
-| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 256K |
-| `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 256K |
-| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 256K |
-| `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 256K |
-| `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM agent-advanced-core / agent-reasoning-core | 256K |
-| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 256K |
-| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 256K |
-| `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 256K |
-| `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 256K |
+| `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 262K |
+| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 262K |
+| `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 512K |
+| `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
+| `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
+| `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM agent-advanced-core / agent-reasoning-core | 512K |
+| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 262K |
+| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
+| `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |
+| `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-simple-core` | ❌ | — | LiteLLM fallback chain | 256K |
+
+> [!TIP]
+> Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
 - **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
