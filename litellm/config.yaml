@@ -251,6 +251,6 @@ router_settings:
   # not by LiteLLM's deployment cooldown mechanism.
 vector_store_settings:
   collection_name: litellm_semantic_cache
-  connection_string: postgresql://postgres:***@127.0.0.1:5432/postgres
+  connection_string: os.environ/DATABASE_URL
   embedding_model: local-nomic-embed
   store_type: postgres

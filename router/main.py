@@ -1552,17 +1552,19 @@ async def chat_completions(request: Request):
                 or request.headers.get("x-session-id")
                 or request.headers.get("x-user")
             )
-            if user_key and len(messages) >= 2:
+            if user_key and len(messages) >= 1:
                 import hashlib
-                fingerprint_parts = [str(user_key)]
-                for msg in messages[:4]:
-                    if not isinstance(msg, dict):
-                        continue
-                    c = msg.get("content") or ""
-                    if isinstance(c, list):
-                        c = "".join(block.get("text") or "" for block in c if isinstance(block, dict) and block.get("type") == "text")
-                    if isinstance(c, str) and c:
-                        fingerprint_parts.append(c[:200])
+                # Find the first user message to use as a stable session anchor
+                first_user_content = ""
+                for msg in messages:
+                    if isinstance(msg, dict) and msg.get("role") == "user":
+                        c = msg.get("content") or ""
+                        if isinstance(c, list):
+                            c = "".join(block.get("text") or "" for block in c if isinstance(block, dict) and block.get("type") == "text")
+                        if isinstance(c, str):
+                            first_user_content = c
+                        break
+                fingerprint_parts = [str(user_key), first_user_content[:200]]
                 fingerprint = "|".join(fingerprint_parts)
                 session_id = hashlib.md5(fingerprint.encode()).hexdigest()
 
@@ -1912,8 +1914,10 @@ async def chat_completions(request: Request):
                     stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                     resp_json = response.json()
                     usage = resp_json.get("usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", estimate_prompt_tokens(body_to_send))
-                    completion_tokens = usage.get("completion_tokens", len(json.dumps(resp_json)) // 4)
+                    prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
+                    choices = resp_json.get("choices") or []
+                    fallback_completion = (len(choices[0].get("message", {}).get("content") or "") // 4) if choices else 0
+                    completion_tokens = usage.get("completion_tokens") or fallback_completion
                     record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
                     # Finalize LiteLLM span (non-streaming path)
                     if litellm_span_obj:
