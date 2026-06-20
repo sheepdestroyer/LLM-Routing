@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-import urllib.request
 import json
 import sys
 import os
+import httpx
 
 URL = "http://localhost:5000/v1/chat/completions"
 
@@ -29,24 +29,23 @@ def send_request(model: str, prompt: str, expected_model: str):
         "temperature": 0.0,
         "max_tokens": 10
     }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        URL,
-        data=data,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {litellm_key}"}
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res_body = response.read().decode("utf-8")
-            result = json.loads(res_body)
-            model_returned = result.get("model", "unknown")
-            text = (result["choices"][0]["message"].get("content") or "").strip()
-            print(f"Request: model={model}, prompt='{prompt[:40]}...'")
-            print(f"Response: model={model_returned}, text='{text[:60]}...'")
-            if model_returned != expected_model:
-                print(f"❌ FAILURE: Expected model '{expected_model}', but got '{model_returned}'", file=sys.stderr)
-                sys.exit(1)
-            print("✓ SUCCESS: Routed correctly!")
+        response = httpx.post(
+            URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {litellm_key}"},
+            timeout=30.0
+        )
+        response.raise_for_status()
+        result = response.json()
+        model_returned = result.get("model", "unknown")
+        text = (result["choices"][0]["message"].get("content") or "").strip()
+        print(f"Request: model={model}, prompt='{prompt[:40]}...'")
+        print(f"Response: model={model_returned}, text='{text[:60]}...'")
+        if model_returned != expected_model:
+            print(f"❌ FAILURE: Expected model '{expected_model}', but got '{model_returned}'", file=sys.stderr)
+            sys.exit(1)
+        print("✓ SUCCESS: Routed correctly!")
     except Exception as e:
         print(f"❌ ERROR: Request to model={model} failed or timed out: {e}", file=sys.stderr)
         sys.exit(1)
