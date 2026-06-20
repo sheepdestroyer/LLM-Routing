@@ -92,6 +92,8 @@ spec:
       value: /config/router_dir/config.yaml
     - name: LITELLM_CONFIG_PATH
       value: /config/litellm_dir/config.yaml
+    - name: DATABASE_URL
+      value: postgresql://postgres:***@127.0.0.1:5432/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
       value: unix:path=/run/user/1000/bus
     - name: LITELLM_MASTER_KEY

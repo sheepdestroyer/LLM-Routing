@@ -480,7 +480,7 @@ async def sync_adaptive_router_roster(master_key: str):
         # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
         # starts clean — delete all, then register only the current roster.
         try:
-            db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
+            db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres")
             await _purge_stale_deployments(db_url, 'agent-%')
             logger.info("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
@@ -609,7 +609,7 @@ async def _register_ollama_models_in_db(master_key: str):
     # Purge stale ollama-deepseek DB entries before re-registering.
     # Mirrors the agent-* purge pattern above — delete all, then register fresh.
     try:
-        db_url = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/postgres")
+        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres")
         await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
         logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
     except Exception as e:
@@ -1800,25 +1800,25 @@ async def chat_completions(request: Request):
                 body_to_send = body.copy()
                 body_to_send["model"] = model_name
                 requested_max_tokens = body_to_send.get("max_tokens", 4096)
-                if requested_max_tokens > 32768:  # Only intervene for unusually large max_tokens
-                    # Tier-aware minimum context length (from actual roster data):
-                    # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-                    # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-                    # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-                    _tier_min_ctx = {
-                        "agent-simple-core": 32768,
-                        "ollama-deepseek-v4-pro": 524288,
-                        "ollama-deepseek-v4-flash": 524288,
-                    }
-                    _min_ctx = _tier_min_ctx.get(model_name, 262144)
-                    _est_input = estimate_prompt_tokens(body_to_send)
-                    _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
-                    if requested_max_tokens > _safe_max:
-                        logger.warning(
-                            f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
-                            f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
-                        )
-                        body_to_send["max_tokens"] = _safe_max
+                
+                # Tier-aware minimum context length (from actual roster data):
+                # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
+                # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
+                # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
+                _tier_min_ctx = {
+                    "agent-simple-core": 32768,
+                    "ollama-deepseek-v4-pro": 524288,
+                    "ollama-deepseek-v4-flash": 524288,
+                }
+                _min_ctx = _tier_min_ctx.get(model_name, 262144)
+                _est_input = estimate_prompt_tokens(body_to_send)
+                _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
+                if requested_max_tokens > _safe_max:
+                    logger.warning(
+                        f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
+                        f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
+                    )
+                    body_to_send["max_tokens"] = _safe_max
             except Exception as e:
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
                 body_to_send = body.copy()
