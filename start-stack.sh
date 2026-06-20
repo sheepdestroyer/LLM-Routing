@@ -6,7 +6,7 @@ set -e
 #   ./start-stack.sh --replace    → Graceful stop + clean ports + redeploy pod
 #                                    (for pod.yaml changes: ports, probes, env vars)
 #   ./start-stack.sh --full-rebuild → Same as --replace + rebuild router image
-#                                      (for router/Containerfile changes)
+#                                      (for router/Dockerfile changes)
 
 # Set working directory
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -315,7 +315,7 @@ PY
 if podman pod exists agent-router-pod 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
-        podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
+        podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
         render_pod_yaml | podman play kube -
@@ -347,7 +347,7 @@ else
     # First deploy — no pod exists, clean ports just in case
     cleanup_zombie_ports
     echo "🔨 Building custom local triage router image..."
-    podman build -t localhost/llm-triage-router:latest -f router/Containerfile router
+    podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
     render_pod_yaml | podman play kube -
