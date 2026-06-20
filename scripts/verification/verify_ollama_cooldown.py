@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import urllib.request
 import json
 import time
 import os
 import uuid
 import sys
+import httpx
 
 # Resolve the absolute path to .env file in the workspace
 workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,11 +25,11 @@ METRICS_URL = "http://localhost:5000/metrics"
 
 def get_triage_request_count():
     try:
-        with urllib.request.urlopen(METRICS_URL, timeout=5) as response:
-            lines = response.read().decode("utf-8").splitlines()
-            for line in lines:
-                if line.startswith("triage_requests_total"):
-                    return int(float(line.split()[1]))
+        response = httpx.get(METRICS_URL, timeout=5.0)
+        lines = response.text.splitlines()
+        for line in lines:
+            if line.startswith("triage_requests_total"):
+                return int(float(line.split()[1]))
     except Exception as e:
         print(f"Error fetching metrics: {e}")
     return 0
@@ -44,29 +44,26 @@ def send_litellm_request(model: str, prompt: str):
         "temperature": 0.0,
         "max_tokens": 10
     }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        LITELLM_URL,
-        data=data,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {litellm_key}"}
-    )
     start_time = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res_body = response.read().decode("utf-8")
-            result = json.loads(res_body)
-            model_returned = result.get("model", "unknown")
-            text = (result["choices"][0]["message"].get("content") or "").strip()
-            print(f"Success in {time.time() - start_time:.1f}s: model={model_returned}, text='{text[:40]}'")
-            return True, model_returned
+        response = httpx.post(
+            LITELLM_URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {litellm_key}"},
+            timeout=30.0
+        )
+        response.raise_for_status()
+        result = response.json()
+        model_returned = result.get("model", "unknown")
+        text = (result["choices"][0]["message"].get("content") or "").strip()
+        print(f"Success in {time.time() - start_time:.1f}s: model={model_returned}, text='{text[:40]}'")
+        return True, model_returned
+    except httpx.HTTPStatusError as e:
+        err_msg = f"{e} - {e.response.text}"
+        print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
+        return False, err_msg
     except Exception as e:
-        # Check if the error body is readable
         err_msg = str(e)
-        if hasattr(e, "read"):
-            try:
-                err_msg += " - " + e.read().decode("utf-8")
-            except Exception:
-                pass
         print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
         return False, err_msg
 
