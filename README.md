@@ -700,56 +700,7 @@ the agent tier cascade to OpenRouter's free model pool.
 
 All three modes ultimately fall back to LiteLLM's agent tier cascade if the premium backends fail.
 
-## 9d. Hermes Cron Jobs & Health Check Alerting
-
-The stack uses 5 Hermes cron jobs for automated monitoring, maintenance, and alerting. All jobs are managed through Hermes built-in cron system. The **E1 health check** job includes alerting via Hermes `send_message` when containers fail.
-
-### E1 — Stack Health Check (every 5 minutes)
-- **Runs with**: `${PROVIDER_OPENROUTER_STRING}` provider, `openrouter/auto` model (independent of local stack)
-- **Checks**: All 10 containers in `agent-router-pod` are running and healthy via `podman ps --pod`
-- **Alerting**: If any container is down/crashlooping/unhealthy, the cron discovers available messaging targets via `send_message(action='list')` and sends an alert to each discovered target
-- **Diagnosis**: Identifies common failures (ClickHouse ASYNC_LOAD_FAILED, zombie ports, LiteLLM startup race, PostgreSQL readiness) and applies known fixes
-- **Chain Advancement**: Checks kanban board for stuck workers and advances dependency chains
-- **Scheduling**: `*/5 * * * *` (every 5 minutes)
-
-### E2 — OpenRouter Roster Refresh (daily 6 AM)
-- Fetches current free models from OpenRouter API
-- Filters by `pricing.prompt == 0` and `pricing.completion == 0`
-- Updates `agentic_scores.json` with new models
-- Restarts triage router to pick up roster changes
-
-### E3 — agy Quota Monitor (every 30 minutes)
-- Checks `cli.log` for quota exhaustion signals
-- Monitors circuit breaker tier state via dashboard
-- Reports silently when quota is available
-
-### E4 — Backup Verification (daily 7 AM)
-- Verifies backup `.dump` files are non-empty and recent (< 25 hours)
-- Reports backup health status
-
-### E5 — Kanban Status Report (every 15 minutes)
-- Generates compact status from `hermes kanban stats` and `hermes kanban list`
-
-### Alert Configuration
-The E1 cron uses Hermes `send_message` tool to deliver outage alerts. To receive alerts, configure at least one of these messaging platforms in `~/.hermes/config.yaml`:
-- **Google Chat**: Add webhook URL under `google_chat` section
-- **WhatsApp**: Configure WhatsApp Business API credentials (whatsapp.enabled: true)
-- **Telegram**: Set up a bot token and chat ID under `telegram` section
-
-> **Note**: When no messaging platforms are configured, the cron gracefully skips alerting (`send_message` discovers zero targets). Configure one platform to start receiving real-time outage alerts.
-
-#### Verification Test
-```bash
-# Simulate a container failure and trigger the cron:
-podman stop agent-router-pod-valkey-cache
-hermes cron run b679796dc232
-# Check hermes agent log for "send_message" entries:
-grep send_message ~/.hermes/logs/agent.log
-# Restore the container:
-podman start agent-router-pod-valkey-cache
-```
-
-Through our local benchmarks, the following performance characteristics have been achieved:
+### Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |
