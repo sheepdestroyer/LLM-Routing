@@ -1,26 +1,64 @@
 version: 2
+
+# Example registries block — reference repo-level secrets for private registries
+registries:
+  ghcr:
+    type: "docker-registry"
+    url: "https://ghcr.io"
+    username: "${{secrets.GHCR_USERNAME}}"
+    password: "${{secrets.GHCR_TOKEN}}"
+  dockerhub:
+    type: "docker-registry"
+    url: "https://index.docker.io"
+    username: "${{secrets.DOCKERHUB_USERNAME}}"
+    password: "${{secrets.DOCKERHUB_TOKEN}}"
+
 updates:
-  # Docker image dependency updates
-  - package-ecosystem: "docker"
-    directory: "/router"
+  # Container image scanning for YAML manifests (pod.yaml, k8s manifests, helm values, etc.)
+  - package-ecosystem: "container"
+    directory: "/"
     schedule:
-      interval: "daily"
-      time: "03:20"
+      interval: "daily"      # TEMPORARY: set to daily for testing; revert to weekly after verification
     open-pull-requests-limit: 5
-    pull-request-branch-name:
-      separator: "/"
+    labels:
+      - "dependencies"
+      - "container"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-    labels:
-      - "dependencies"
-      - "docker"
     reviewers:
       - "sheepdestroyer"
     allow:
-      - dependency-type: "direct"
+      - dependency-type: "all"
+    # If you need to check private registries, uncomment and reference the registry keys above
+    # registries:
+    #   - ghcr
+    #   - dockerhub
+    ignore:
+      # Example: ignore semver-major updates for Postgres and ClickHouse while testing
+      - dependency-name: "docker.io/pgvector/pgvector"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "docker.io/clickhouse/clickhouse-server"
+        update-types: ["version-update:semver-major"]
 
-  # GitHub Actions dependency updates (optional - add if using GH Actions)
+  # Dockerfiles / Containerfiles (keeps Dockerfile FROM lines updated)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "03:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    reviewers:
+      - "sheepdestroyer"
+
+  # GitHub Actions workflow updates (optional)
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -28,13 +66,19 @@ updates:
       day: "monday"
       time: "04:00"
     open-pull-requests-limit: 5
-    pull-request-branch-name:
-      separator: "/"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
     labels:
       - "dependencies"
       - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
     reviewers:
       - "sheepdestroyer"
+
+# Notes:
+# - Create repository secrets with names used above when using private registries:
+#   GHCR_USERNAME, GHCR_TOKEN, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#   (Settings → Secrets and variables → Actions → New repository secret)
+# - The 'container' ecosystem scans YAML/Helm/other manifests for `image:` keys and will
+#   update the tag or digest portion when newer versions are available on the registry.
+# - Dependabot will NOT update images that are local-only (e.g., localhost/llm-triage-router).
