@@ -80,14 +80,16 @@ async def sync_cooldowns_from_valkey() -> None:
         return
     try:
         val = await redis.get("cooldown:ollama")
+        global _ollama_cooldown_until
         if val is not None:
-            global _ollama_cooldown_until
             epoch_until = float(val)
             remaining = epoch_until - time.time()
             if remaining > 0:
                 _ollama_cooldown_until = time.monotonic() + remaining
             else:
                 _ollama_cooldown_until = 0.0
+        else:
+            _ollama_cooldown_until = 0.0
             
         breaker = get_breaker()
         await breaker.sync_from_valkey(redis)
@@ -1370,9 +1372,10 @@ async def chat_completions(request: Request):
     
     try:
         body = await request.json()
-        await sync_cooldowns_from_valkey()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    await sync_cooldowns_from_valkey()
 
     messages = body.get("messages", [])
     if not messages:
