@@ -15,7 +15,7 @@ version: 2
 ##
 updates:
   # Container image scanning for YAML manifests (pod.yaml, k8s manifests, helm values, etc.)
-  - package-ecosystem: "docker"
+  - package-ecosystem: "container"
     directory: "/"
     schedule:
       interval: "daily"
