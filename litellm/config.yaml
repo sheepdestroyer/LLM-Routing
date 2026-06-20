@@ -247,8 +247,12 @@ router_settings:
   routing_strategy: latency-based-routing
   enable_health_check_routing: false
   # NOTE: allowed_fails_policy is an enterprise-only feature in LiteLLM.
-  # Ollama cooldowns are handled by the triage router itself (router/main.py),
-  # not by LiteLLM's deployment cooldown mechanism.
+  # allowed_fails is set to 0 to ensure that any model deployment failure
+  # immediately escalates through the fallback chain (to fallback models)
+  # instead of retrying the failed model. This does not interfere with the
+  # triage router's internal cooldowns, which return 429 when a specific
+  # backend (like Ollama) is cooling down, allowing LiteLLM to immediately
+  # trigger the fallback path.
 vector_store_settings:
   collection_name: litellm_semantic_cache
   connection_string: os.environ/DATABASE_URL
