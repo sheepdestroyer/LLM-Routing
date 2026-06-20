@@ -50,11 +50,10 @@ def main():
     
     if count_after_1 > count_init:
         print("✓ First request successfully reached the triage router.")
-        # Verify that the second request failed and returned a 429 status code
-        if not success2 and "429" in response_msg2:
-            print(f"✅ SUCCESS: llm-routing-ollama was successfully cooled down and router rejected second request (diff={diff}, err='{response_msg2}')!")
+        if not success2 and "429" in response_msg2 and count_after_2 == count_after_1:
+            print(f"✅ SUCCESS: llm-routing-ollama was successfully cooled down and LiteLLM locally blocked the second request (diff={diff}, err='{response_msg2}')!")
         else:
-            print(f"❌ FAILURE: llm-routing-ollama was NOT cooled down properly! success={success2}, err='{response_msg2}'")
+            print(f"❌ FAILURE: llm-routing-ollama was NOT cooled down properly! success={success2}, err='{response_msg2}', diff={diff}")
             sys.exit(1)
     else:
         print("❌ FAILURE: First request did not even reach the triage router.")

@@ -37,7 +37,7 @@ Sends sample prompts of varying complexity to `llm-routing-auto-ollama` and `llm
   - Reasoning/Advanced $\rightarrow$ `ollama-deepseek-v4-pro` (Intentional design choice)
 
 ### `scripts/verification/verify_ollama_cooldown.py`
-Simulates fallback cascades to verify that failed Ollama requests activate the 5-minute router-side cooldown and correctly bypass LiteLLM to prevent crash loops.
+Simulates fallback cascades to verify that failed Ollama requests activate the router-side cooldown (configured by the OLLAMA_COOLDOWN_SECONDS environment variable) and correctly bypass LiteLLM to prevent crash loops.
 
 ### `scripts/verification/verify_direct_ollama_cooldown.py`
 Asserts that direct requests to `llm-routing-ollama` immediately trigger the cooldown response without hammering downstream endpoints.

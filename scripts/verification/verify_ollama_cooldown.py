@@ -47,7 +47,7 @@ def main():
     # Verify by checking if the count incremented on the first request and the second request was fallback handled successfully.
     if count_after_1 > count_init:
         print("✓ First request successfully reached the triage router via fallback!")
-        if success2 and model_returned2 != "llm-routing-ollama":
+        if success2 and model_returned2 != "llm-routing-ollama" and not model_returned2.startswith("ollama-"):
             print(f"✅ SUCCESS: llm-routing-ollama was successfully cooled down and LiteLLM fell back to openrouter-auto (diff={diff}, model={model_returned2})!")
         else:
             print(f"❌ FAILURE: Second request did not properly fall back! success={success2}, model={model_returned2}")

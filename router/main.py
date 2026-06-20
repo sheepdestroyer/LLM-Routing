@@ -89,7 +89,8 @@ async def sync_cooldowns_from_valkey() -> None:
             else:
                 _ollama_cooldown_until = 0.0
         else:
-            _ollama_cooldown_until = 0.0
+            if _ollama_cooldown_until <= time.monotonic():
+                _ollama_cooldown_until = 0.0
             
         breaker = get_breaker()
         await breaker.sync_from_valkey(redis)
@@ -958,8 +959,9 @@ def detect_active_tool(body: dict) -> str:
                             continue
                         if prev_msg.get("role") == "assistant":
                             tcalls = prev_msg.get("tool_calls") or []
-                            for tc in tcalls:
-                                if isinstance(tc, dict) and tc.get("id") == tool_call_id:
+                            if isinstance(tcalls, list):
+                                for tc in tcalls:
+                                    if isinstance(tc, dict) and tc.get("id") == tool_call_id:
                                     fn = tc.get("function")
                                     if isinstance(fn, dict):
                                         name = fn.get("name")
@@ -1553,30 +1555,13 @@ async def chat_completions(request: Request):
                     last_prompt = str(content)
                     break
 
-            session_id = None
-            user_key = (
-                body.get("user")
-                or body.get("session_id")
+            session_id = (
+                body.get("session_id")
                 or body.get("session")
-                or request.headers.get("x-user-id")
                 or request.headers.get("x-session-id")
-                or request.headers.get("x-user")
             )
-            if user_key and len(messages) >= 1:
-                import hashlib
-                # Find the first user message to use as a stable session anchor
-                first_user_content = ""
-                for msg in messages:
-                    if isinstance(msg, dict) and msg.get("role") == "user":
-                        c = msg.get("content") or ""
-                        if isinstance(c, list):
-                            c = "".join(block.get("text") or "" for block in c if isinstance(block, dict) and block.get("type") == "text")
-                        if isinstance(c, str):
-                            first_user_content = c
-                        break
-                fingerprint_parts = [str(user_key), first_user_content[:200]]
-                fingerprint = "|".join(fingerprint_parts)
-                session_id = hashlib.blake2b(fingerprint.encode(), digest_size=32).hexdigest()
+            if session_id:
+                session_id = str(session_id)
 
             if last_prompt:
                 # --- Langfuse child span: agy proxy ---
@@ -1842,13 +1827,20 @@ async def chat_completions(request: Request):
                 }
                 _min_ctx = _tier_min_ctx.get(model_name, 262144)
                 _est_input = estimate_prompt_tokens(body_to_send)
-                _safe_max = max(1024, _min_ctx - _est_input - 2048)  # 2K safety margin
+                _safe_max = _min_ctx - _est_input - 2048  # 2K safety margin
+                if _safe_max < 1024:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Context window exceeded. Estimated input tokens ({_est_input}) plus safety margin (2048) exceeds model context limit ({_min_ctx})."
+                    )
                 if requested_max_tokens > _safe_max:
                     logger.warning(
                         f"⛔ Clamping max_tokens: {requested_max_tokens} → {_safe_max} "
                         f"(est_input={_est_input}, min_ctx={_min_ctx}, tier={model_name})"
                     )
                     body_to_send["max_tokens"] = _safe_max
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
                 body_to_send = body.copy()

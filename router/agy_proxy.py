@@ -237,12 +237,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         google_breaker = get_google_breaker()
         vendor_breaker = get_vendor_breaker()
 
-        # Call is_allowed() exactly once per breaker to avoid consuming multiple probes
-        google_allowed = google_breaker.is_allowed()
-        vendor_allowed = vendor_breaker.is_allowed()
-
-        # Check if ANY model path is available
-        if not google_allowed and not vendor_allowed:
+        # Check if ANY model path is available without mutating state
+        if not google_breaker.is_currently_allowed() and not vendor_breaker.is_currently_allowed():
             logger.info(
                 f"agy proxy: both circuit breakers open (google tier={google_breaker.tier}, "
                 f"vendor tier={vendor_breaker.tier}) — skipping agy, falling through to LiteLLM"
@@ -292,9 +288,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
             is_google_tier = "gemini" in tier.get("model_name", "").lower()
             tier_breaker = google_breaker if is_google_tier else vendor_breaker
-            allowed = google_allowed if is_google_tier else vendor_allowed
 
-            if not allowed:
+            if not tier_breaker.is_allowed():
                 logger.info(
                     f"agy proxy: tier {tier['model_name']} blocked by circuit breaker "
                     f"(tier {tier_breaker.tier}, {max(0.0, tier_breaker.cooldown_until - time.time()):.0f}s remaining) — skipping"
@@ -328,8 +323,10 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 try:
                     lines_iter = r.aiter_lines()
                     first_line = await anext(lines_iter)
-                except (StopAsyncIteration, Exception):
+                except StopAsyncIteration:
                     pass
+                except Exception as e:
+                    logger.warning(f"agy proxy: failed reading initial stream line from {tier['model_name']}: {e}")
                     
                 if not first_line:
                     await r.aclose()
@@ -345,8 +342,10 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     
                 # Check if first message is a status failure
                 if first_data.get("type") == "status":
-                    rc = first_data.get("returncode", 0)
-                    stderr_content = first_data.get("stderr", "")
+                    raw_rc = first_data.get("returncode", 0)
+                    rc = 0 if raw_rc is None else raw_rc
+                    raw_stderr = first_data.get("stderr", "")
+                    stderr_content = "" if raw_stderr is None else raw_stderr
                     if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
                         if _is_quota_exhausted(rc, "", stderr_content):
                             tier_breaker.record_failure()

@@ -60,8 +60,9 @@ import litellm
 
 litellm_path = os.path.dirname(litellm.__file__)
 endpoints_paths = [
-    os.path.join(litellm_path, "proxy/spend_tracking/spend_management_endpoints.py")
-] + glob.glob("/app/.venv/lib/python*/site-packages/litellm/proxy/spend_tracking/spend_management_endpoints.py")
+    os.path.join(litellm_path, "proxy/spend_tracking/spend_management_endpoints.py"),
+    *glob.glob("/app/.venv/lib/python*/site-packages/litellm/proxy/spend_tracking/spend_management_endpoints.py")
+]
 
 for endpoints_path in endpoints_paths:
     if os.path.exists(endpoints_path):
@@ -102,7 +103,10 @@ for endpoints_path in endpoints_paths:
             "%Y-%m-%dT%H:%M:%S%z"
         ]:
             try:
-                return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+                dt = datetime.strptime(date_str, fmt)
+                if dt.tzinfo is not None:
+                    return dt.astimezone(timezone.utc)
+                return dt.replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
         raise ValueError(f"Invalid date format: {date_str}")

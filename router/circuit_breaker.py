@@ -122,7 +122,7 @@ class PerModelBreaker:
         return {
             "name": self.name,
             "tier": self.tier,
-            "allowed": self.is_allowed(),
+            "allowed": self.is_currently_allowed(),
             "cooldown_remaining_seconds": int(remaining),
             "cooldown_total_seconds": TIER_COOLDOWNS.get(self.tier, 0),
             "total_trips": self.total_trips,

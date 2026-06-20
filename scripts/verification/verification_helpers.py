@@ -18,14 +18,18 @@ def load_litellm_key(workspace_dir: str) -> str:
     return litellm_key
 
 def get_triage_request_count(metrics_url: str = "http://localhost:5000/metrics") -> int:
-    """Fetch the total triage request count from metrics."""
     try:
         response = httpx.get(metrics_url, timeout=5.0)
         response.raise_for_status()
         lines = response.text.splitlines()
+        total_count = 0
+        found = False
         for line in lines:
             if line.startswith("triage_requests_total"):
-                return int(float(line.split()[1]))
+                total_count += int(float(line.split()[1]))
+                found = True
+        if found:
+            return total_count
     except (httpx.HTTPError, ValueError) as e:
         print(f"Error fetching metrics: {e}")
     return 0
