@@ -761,7 +761,7 @@ To prevent cascading fallback loops where a rate-limited Ollama backend repeated
 The cooldown mechanism works as follows:
 
 1. **Failure Detection**: When calls to `ollama-deepseek-v4-pro` or `ollama-deepseek-v4-flash` fail (due to rate limiting, 429/502/503 errors, or connection issues), the failure is caught by the Triage Router.
-2. **Router-Side Cooldown Activation**: The Triage Router activates an internal **5-minute cooldown** (configurable via `OLLAMA_COOLDOWN_SECONDS` env var). During this window, all subsequent Ollama requests are **immediately rejected** without making any LiteLLM calls.
+2. **Router-Side Cooldown Activation**: The Triage Router activates an internal **5-minute cooldown** (configurable via `OLLAMA_COOLDOWN_SECONDS` env var). During this window, subsequent requests targeting the Ollama backend are immediately short-circuited (either rejected or redirected) to prevent downstream Ollama backend calls.
 3. **Direct / Fallback Requests (`llm-routing-ollama`)**:
    - During cooldown, the Triage Router returns an HTTP `429` immediately.
    - LiteLLM receives this 429, skips `llm-routing-ollama` in the fallback chain, and cascades directly to `openrouter-auto`.

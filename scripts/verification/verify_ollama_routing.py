@@ -49,8 +49,11 @@ def send_request(model: str, prompt: str, expected_model: str):
     except httpx.HTTPStatusError as e:
         print(f"❌ HTTP ERROR: Request to model={model} failed with status {e.response.status_code}: {e}\nResponse body:\n{e.response.text}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
-        print(f"❌ ERROR: Request to model={model} failed or timed out: {e}", file=sys.stderr)
+    except httpx.HTTPError as e:
+        print(f"❌ HTTP ERROR: Request to model={model} failed: {e}", file=sys.stderr)
+        sys.exit(1)
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"❌ PARSE ERROR: Failed to parse response for model={model}: {e}", file=sys.stderr)
         sys.exit(1)
 
 def main():
