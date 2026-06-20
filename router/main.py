@@ -1670,9 +1670,9 @@ async def chat_completions(request: Request):
                         return StreamingResponse(native_agy_stream_generator(agy_response["stream"], model_name), media_type="text/event-stream")
                     else:
                         latency_ms = (time.time() - start_time) * 1000.0
-                        usage = agy_response.get("usage", {})
-                        prompt_tokens = usage.get("prompt_tokens", 0)
-                        completion_tokens = usage.get("completion_tokens", 0)
+                        usage = agy_response.get("usage") or {}
+                        prompt_tokens = usage.get("prompt_tokens") or 0
+                        completion_tokens = usage.get("completion_tokens") or 0
                         record_tool_usage(
                             active_tool, prompt_tokens, completion_tokens,
                             model_name, latency_ms, route="google_oauth_direct"
@@ -1913,7 +1913,7 @@ async def chat_completions(request: Request):
                     stats["total_proxy_time_ms"] += proxy_latency
                     stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                     resp_json = response.json()
-                    usage = resp_json.get("usage", {})
+                    usage = resp_json.get("usage") or {}
                     prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
                     choices = resp_json.get("choices") or []
                     fallback_completion = (len(choices[0].get("message", {}).get("content") or "") // 4) if choices else 0
