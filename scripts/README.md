@@ -23,14 +23,18 @@ Automated database backup script that runs before every stack deployment. Uses `
 These scripts are located in `scripts/verification/` and are used to assert that the router-side Ollama cooldowns and prompt-classification gating function correctly:
 
 ### `scripts/verification/verify_ollama_routing.py`
-Sends sample prompts of varying complexity to `llm-routing-auto-ollama` and `llm-routing-ollama` to verify correct gating and routing:
+Sends sample prompts of varying complexity to `llm-routing-auto-ollama` and `llm-routing-ollama` to verify correct gating and routing.
+
+> [!NOTE]
+> Routing `agent-reasoning-core` to the Pro tier (`ollama-deepseek-v4-pro`) is an intentional design choice rather than routing it to the Flash tier. This ensures that reasoning-tier queries receive the highest accuracy and reasoning capabilities available in the Pro model group.
+
 - **Expected Routing (`llm-routing-auto-ollama`)**:
   - Simple $\rightarrow$ `agent-simple-core`
   - Complex $\rightarrow$ `ollama-deepseek-v4-flash`
-  - Reasoning $\rightarrow$ `ollama-deepseek-v4-pro`
+  - Reasoning $\rightarrow$ `ollama-deepseek-v4-pro` (Intentional design choice)
 - **Expected Routing (`llm-routing-ollama`)**:
   - Simple/Complex $\rightarrow$ `ollama-deepseek-v4-flash`
-  - Reasoning/Advanced $\rightarrow$ `ollama-deepseek-v4-pro`
+  - Reasoning/Advanced $\rightarrow$ `ollama-deepseek-v4-pro` (Intentional design choice)
 
 ### `scripts/verification/verify_ollama_cooldown.py`
 Simulates fallback cascades to verify that failed Ollama requests activate the 5-minute router-side cooldown and correctly bypass LiteLLM to prevent crash loops.
@@ -58,13 +62,24 @@ These tools are used to benchmark the prompt classifier and extract datasets fro
 
 ## 4. Integration Test Suite (Root Directory)
 
+The integration test suite is located in the root directory. Tests are categorized below based on their primary function:
+
+### Circuit Breaker Tests
 - **`test_circuit_breaker.py`**: Unit/integration tests for the dual circuit breaker (`router/circuit_breaker.py`), covering independent Google/Vendor tiers and probe-granting logic.
-- **`test_classifier_accuracy.py`**: Accuracy evaluation suite covering 25 system prompts.
-- **`test_agy_tiers.py`**: Validates `agy` proxy model tier routing.
-- **`test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
-- **`test_a2_verify.py`**: Quick sanity integration check for the agy proxy circuit breaker.
-- **`test_antigravity.py`**: Tests the connection to the host Antigravity CLI daemon (`agentapi`).
-- **`test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.
-- **`test_quota_reset.sh`**: Simulates/triggers quota reset conditions.
 - **`verify_breaker.py`**: Sanity verification check for the circuit breaker.
+- **`test_a2_verify.py`**: Quick sanity integration check for the agy proxy circuit breaker.
+
+### Classifier Tests
+- **`test_classifier_accuracy.py`**: Accuracy evaluation suite covering 25 system prompts.
+
+### Routing & Proxy Tests
+- **`test_agy_tiers.py`**: Validates `agy` proxy model tier routing.
+- **`test_antigravity.py`**: Tests the connection to the host Antigravity CLI daemon (`agentapi`).
+
+### Performance & Monitoring Tests
+- **`test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.
+
+### Simulation Tests
+- **`test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
+- **`test_quota_reset.sh`**: Simulates/triggers quota reset conditions.
 - **`watch_quota.sh`**: Watch/polling script for observing quota status.
