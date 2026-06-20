@@ -1,24 +1,25 @@
 version: 2
 
 # Example registries block — reference repo-level secrets for private registries
-registries:
-  ghcr:
-    type: "docker-registry"
-    url: "https://ghcr.io"
-    username: "${{secrets.GHCR_USERNAME}}"
-    password: "${{secrets.GHCR_TOKEN}}"
-  dockerhub:
-    type: "docker-registry"
-    url: "https://index.docker.io"
-    username: "${{secrets.DOCKERHUB_USERNAME}}"
-    password: "${{secrets.DOCKERHUB_TOKEN}}"
-
+#registries:
+#  ghcr:
+#    type: "docker-registry"
+#    url: "https://ghcr.io"
+#    username: "${{secrets.GHCR_USERNAME}}"
+#    password: "${{secrets.GHCR_TOKEN}}"
+#  dockerhub:
+#    type: "docker-registry"
+#    url: "https://index.docker.io"
+#    username: "${{secrets.DOCKERHUB_USERNAME}}"
+#    password: "${{secrets.DOCKERHUB_TOKEN}}"##
+##
 updates:
   # Container image scanning for YAML manifests (pod.yaml, k8s manifests, helm values, etc.)
   - package-ecosystem: "container"
     directory: "/"
     schedule:
-      interval: "daily"      # TEMPORARY: set to daily for testing; revert to weekly after verification
+      interval: "daily"
+      time: "03:32"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
