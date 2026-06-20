@@ -190,10 +190,20 @@ async def push_aggregate_scores():
                 {"name": "circuit_breaker_vendor_tier", "value": float(router.vendor.tier)},
                 {"name": "google_oauth_direct_ratio_pct", "value": stats["routing_paths"]["google_oauth_direct"] / total * 100},
             ]
+            trace_id = lf.create_trace_id(seed=f"aggregate_scores_{int(time.time())}")
+            lf.start_observation(
+                trace_context={"trace_id": trace_id},
+                name="push-aggregate-scores",
+                level="DEFAULT",
+            )
             for s in scores:
-                lf.create_score(name=s["name"], value=s["value"])
+                lf.create_score(
+                    name=s["name"],
+                    value=s["value"],
+                    trace_id=trace_id
+                )
             lf.flush()
-            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse")
+            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})")
         except Exception as e:
             logger.warning(f"Langfuse score push failed (non-fatal): {e}")
 
