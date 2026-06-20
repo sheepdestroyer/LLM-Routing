@@ -700,7 +700,7 @@ the agent tier cascade to OpenRouter's free model pool.
 
 All three modes ultimately fall back to LiteLLM's agent tier cascade if the premium backends fail.
 
-### Through our local benchmarks, the following performance characteristics have been achieved:
+## 10. Performance Benchmarks\n\nThrough our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |
