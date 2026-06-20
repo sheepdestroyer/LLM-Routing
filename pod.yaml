@@ -392,9 +392,9 @@ spec:
     - --quiet
     - /data
     - --address
-    - :9002
+    - ":9002"
     - --console-address
-    - :9001
+    - ":9001"
     env:
     - name: MINIO_ROOT_USER
       value: minioadmin
