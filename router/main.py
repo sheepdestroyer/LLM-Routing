@@ -67,7 +67,7 @@ def estimate_prompt_tokens(body: dict) -> int:
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    tokens += len(block.get("text", "")) // 4
+                    tokens += len(block.get("text") or "") // 4
     # Include a flat estimate for system prompt / metadata overhead
     tokens += 50
     return max(1, tokens)
@@ -1399,7 +1399,7 @@ async def chat_completions(request: Request):
         if msg.get("role") == "user":
             content = msg.get("content") or ""
             if isinstance(content, list):
-                content = "".join(block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+                content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
             last_user_message = content
             break
 
@@ -1529,7 +1529,7 @@ async def chat_completions(request: Request):
                 if msg.get("role") == "user":
                     content = msg.get("content") or ""
                     if isinstance(content, list):
-                        content = "".join(block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+                        content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
                     last_prompt = content
                     break
 
@@ -1542,7 +1542,7 @@ async def chat_completions(request: Request):
                         continue
                     c = msg.get("content") or ""
                     if isinstance(c, list):
-                        c = "".join(block.get("text", "") for block in c if isinstance(block, dict) and block.get("type") == "text")
+                        c = "".join(block.get("text") or "" for block in c if isinstance(block, dict) and block.get("type") == "text")
                     if isinstance(c, str) and c:
                         fingerprint_parts.append(c[:200])
                 fingerprint = "|".join(fingerprint_parts)
@@ -1671,7 +1671,7 @@ async def chat_completions(request: Request):
 
                         if is_stream_requested:
                             # Robust fallback: simulate stream if we requested stream but got buffered response
-                            content = agy_response.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                            content = (agy_response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                             async def agy_stream_generator():
                                 """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
                                 import uuid

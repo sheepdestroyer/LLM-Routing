@@ -251,7 +251,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                 role = msg.get("role", "user")
                 content = msg.get("content") or ""
                 if isinstance(content, list):
-                    content = "".join(block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text")
+                    content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
                 if role == "user":
                     context_parts.append(f"User: {content}")
                 elif role == "assistant":
