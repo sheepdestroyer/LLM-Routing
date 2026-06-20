@@ -23,7 +23,7 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
-      - "container"
+      - "docker"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
