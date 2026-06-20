@@ -24,6 +24,7 @@ METRICS_URL = "http://localhost:5000/metrics"
 def get_triage_request_count():
     try:
         response = httpx.get(METRICS_URL, timeout=5.0)
+        response.raise_for_status()
         lines = response.text.splitlines()
         for line in lines:
             if line.startswith("triage_requests_total"):

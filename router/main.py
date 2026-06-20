@@ -541,12 +541,13 @@ async def _register_ollama_models_in_db(master_key: str):
             try:
                 with open(path, "r") as f:
                     litellm_config = yaml.safe_load(f)
-                if litellm_config and "model_list" in litellm_config:
+                if litellm_config and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
-                        model_name = item.get("model_name", "")
-                        if model_name.startswith("ollama-deepseek-"):
-                            # Create a clean deep copy to avoid mutating configuration structures
-                            ollama_models.append(copy.deepcopy(item))
+                        if isinstance(item, dict):
+                            model_name = item.get("model_name", "")
+                            if isinstance(model_name, str) and model_name.startswith("ollama-deepseek-"):
+                                # Create a clean deep copy to avoid mutating configuration structures
+                                ollama_models.append(copy.deepcopy(item))
                     if ollama_models:
                         logger.info(f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}")
                         loaded_from_config = True

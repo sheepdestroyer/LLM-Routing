@@ -46,6 +46,9 @@ def send_request(model: str, prompt: str, expected_model: str):
             print(f"❌ FAILURE: Expected model '{expected_model}', but got '{model_returned}'", file=sys.stderr)
             sys.exit(1)
         print("✓ SUCCESS: Routed correctly!")
+    except httpx.HTTPStatusError as e:
+        print(f"❌ HTTP ERROR: Request to model={model} failed with status {e.response.status_code}: {e}\nResponse body:\n{e.response.text}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"❌ ERROR: Request to model={model} failed or timed out: {e}", file=sys.stderr)
         sys.exit(1)
