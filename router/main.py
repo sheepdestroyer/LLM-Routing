@@ -519,51 +519,86 @@ async def _register_ollama_models_in_db(master_key: str):
     capabilities (vision, reasoning, function_calling) and token limits come back
     as null/false.  Registering them as DB models ensures our model_info wins.
     """
-    admin_url = "http://127.0.0.1:4000"
+    if not master_key:
+        logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
+        return
+
+    admin_url = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
-    ollama_models = [
-        {
-            "model_name": "ollama-deepseek-v4-pro",
-            "litellm_params": {
-                "model": "ollama_chat/deepseek-v4-pro",
-                "api_base": "https://api.ollama.com",
-                "api_key": "os.environ/OLLAMA_API_KEY",
-                "request_timeout": 120,
-            },
-            "model_info": {
-                "supports_vision": True,
-                "supports_reasoning": True,
-                "supports_function_calling": True,
-                "mode": "chat",
-                "max_tokens": 524288,
-                "max_input_tokens": 524288,
-                "input_cost_per_token": 0.00000174,
-                "output_cost_per_token": 0.00000348,
-                "is_public_model_group": True,
-            },
-        },
-        {
-            "model_name": "ollama-deepseek-v4-flash",
-            "litellm_params": {
-                "model": "ollama_chat/deepseek-v4-flash",
-                "api_base": "https://api.ollama.com",
-                "api_key": "os.environ/OLLAMA_API_KEY",
-                "request_timeout": 120,
-            },
-            "model_info": {
-                "supports_vision": True,
-                "supports_reasoning": True,
-                "supports_function_calling": True,
-                "mode": "chat",
-                "max_tokens": 524288,
-                "max_input_tokens": 524288,
-                "input_cost_per_token": 0.00000014,
-                "output_cost_per_token": 0.00000028,
-                "is_public_model_group": True,
-            },
-        },
+    ollama_models = []
+    litellm_config_path = os.getenv("LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml")
+
+    config_paths_to_try = [
+        litellm_config_path,
+        str(Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"),
+        "./litellm/config.yaml"
     ]
+
+    loaded_from_config = False
+    for path in config_paths_to_try:
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    litellm_config = yaml.safe_load(f)
+                if litellm_config and "model_list" in litellm_config:
+                    for item in litellm_config["model_list"]:
+                        model_name = item.get("model_name", "")
+                        if model_name.startswith("ollama-deepseek-"):
+                            # Create a clean deep copy to avoid mutating configuration structures
+                            ollama_models.append(copy.deepcopy(item))
+                    if ollama_models:
+                        logger.info(f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}")
+                        loaded_from_config = True
+                        break
+            except Exception as e:
+                logger.warning(f"Failed to load/parse LiteLLM config at {path}: {e}")
+
+    if not loaded_from_config:
+        logger.warning("Could not load Ollama models from config.yaml, falling back to static definitions")
+        ollama_models = [
+            {
+                "model_name": "ollama-deepseek-v4-pro",
+                "litellm_params": {
+                    "model": "ollama_chat/deepseek-v4-pro",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 524288,
+                    "max_input_tokens": 524288,
+                    "input_cost_per_token": 0.00000174,
+                    "output_cost_per_token": 0.00000348,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-deepseek-v4-flash",
+                "litellm_params": {
+                    "model": "ollama_chat/deepseek-v4-flash",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 524288,
+                    "max_input_tokens": 524288,
+                    "input_cost_per_token": 0.00000014,
+                    "output_cost_per_token": 0.00000028,
+                    "is_public_model_group": True,
+                },
+            },
+        ]
+
     # Purge stale ollama-deepseek DB entries before re-registering.
     # Mirrors the agent-* purge pattern above — delete all, then register fresh.
     try:
