@@ -27,12 +27,14 @@ def test_antigravity_connection():
             [agentapi_path, "--print", "Hello, who are you?"],
             capture_output=True,
             text=True,
-            timeout=20
+            timeout=20,
+            check=True
         )
         print(f"Antigravity AgentAPI response: {result.stdout.strip()}")
         print("Success: Antigravity-cli bridge confirmed.")
     except Exception as e:
         print(f"Failed to connect: {e}")
+        raise
 
 if __name__ == "__main__":
     test_antigravity_connection()

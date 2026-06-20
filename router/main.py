@@ -258,8 +258,10 @@ stats = {
 _ollama_cooldown_until: float = 0.0      # monotonic timestamp when cooldown expires
 try:
     OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
-except (TypeError, ValueError):
-    logger.warning("Invalid OLLAMA_COOLDOWN_SECONDS value; defaulting to 300")
+    if OLLAMA_COOLDOWN_SECONDS <= 0:
+        raise ValueError("OLLAMA_COOLDOWN_SECONDS must be positive")
+except (TypeError, ValueError) as e:
+    logger.warning(f"Invalid OLLAMA_COOLDOWN_SECONDS value: {e}; defaulting to 300")
     OLLAMA_COOLDOWN_SECONDS = 300
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
@@ -480,9 +482,12 @@ async def sync_adaptive_router_roster(master_key: str):
         # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
         # starts clean — delete all, then register only the current roster.
         try:
-            db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres")
-            await _purge_stale_deployments(db_url, 'agent-%')
-            logger.info("🧹 Purged stale agent-* deployments before roster sync")
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url:
+                logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
+            else:
+                await _purge_stale_deployments(db_url, 'agent-%')
+                logger.info("🧹 Purged stale agent-* deployments before roster sync")
         except Exception as e:
             logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
@@ -609,9 +614,12 @@ async def _register_ollama_models_in_db(master_key: str):
     # Purge stale ollama-deepseek DB entries before re-registering.
     # Mirrors the agent-* purge pattern above — delete all, then register fresh.
     try:
-        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres-local-pw-2026@127.0.0.1:5432/postgres")
-        await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
-        logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries")
+        else:
+            await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
+            logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
     except Exception as e:
         logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
 
@@ -689,11 +697,13 @@ async def lifespan(app: FastAPI):
         global _http_client
         if _http_client is not None:
             await _http_client.aclose()
+            _http_client = None
 
         # Close Redis client
         global _redis_client
         if _redis_client is not None and _redis_client is not False:
             await _redis_client.aclose()
+            _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
@@ -1534,9 +1544,17 @@ async def chat_completions(request: Request):
                     break
 
             session_id = None
-            if len(messages) >= 2:
+            user_key = (
+                body.get("user")
+                or body.get("session_id")
+                or body.get("session")
+                or request.headers.get("x-user-id")
+                or request.headers.get("x-session-id")
+                or request.headers.get("x-user")
+            )
+            if user_key and len(messages) >= 2:
                 import hashlib
-                fingerprint_parts = []
+                fingerprint_parts = [str(user_key)]
                 for msg in messages[:4]:
                     if not isinstance(msg, dict):
                         continue

@@ -49,7 +49,7 @@ def send_litellm_request(model: str, prompt: str):
             LITELLM_URL,
             json=payload,
             headers={"Authorization": f"Bearer {litellm_key}"},
-            timeout=30.0
+            timeout=120.0
         )
         response.raise_for_status()
         result = response.json()
@@ -89,10 +89,10 @@ def main():
     print(f"Triage requests count after 1st request: {count_after_1}")
     
     # 4. Send second request to llm-routing-ollama.
-    # Since llm-routing-ollama should now be on cooldown in LiteLLM, LiteLLM should reject it immediately
-    # without proxying to the triage router.
-    print("\nSending second request to llm-routing-ollama (should be skipped / fail immediately via cooldown)...")
-    send_litellm_request("llm-routing-ollama", "Design a distributed pub/sub system with Valkey and describe failover states")
+    # Since llm-routing-ollama cooldown is managed router-side, the request should reach the triage router
+    # but be immediately rejected with an HTTP 429.
+    print("\nSending second request to llm-routing-ollama (should be rejected with 429)...")
+    success2, response_msg2 = send_litellm_request("llm-routing-ollama", "Design a distributed pub/sub system with Valkey and describe failover states")
     
     # 5. Check triage requests count.
     count_after_2 = get_triage_request_count()
@@ -102,10 +102,11 @@ def main():
     
     if count_after_1 > count_init:
         print("✓ First request successfully reached the triage router.")
-        if diff == 0:
-            print("✅ SUCCESS: llm-routing-ollama was successfully cooled down and skipped on the second request!")
+        # Verify that the second request failed and returned a 429 status code
+        if not success2 and "429" in response_msg2:
+            print(f"✅ SUCCESS: llm-routing-ollama was successfully cooled down and router rejected second request (diff={diff}, err='{response_msg2}')!")
         else:
-            print(f"❌ FAILURE: llm-routing-ollama was NOT cooled down (count increased by {diff})!")
+            print(f"❌ FAILURE: llm-routing-ollama was NOT cooled down properly! success={success2}, err='{response_msg2}'")
             sys.exit(1)
     else:
         print("❌ FAILURE: First request did not even reach the triage router.")

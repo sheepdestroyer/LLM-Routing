@@ -8,10 +8,16 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         print(f"Mock server: received POST request to {self.path}", flush=True)
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 0:
+            self.rfile.read(content_length)
+
+        response_body = b'{"error":{"message":"Rate limit exceeded","type":"rate_limit_error","param":null,"code":null}}'
         self.send_response(429)
         self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(response_body)))
         self.end_headers()
-        self.wfile.write(b'{"error":{"message":"Rate limit exceeded","type":"rate_limit_error","param":null,"code":null}}')
+        self.wfile.write(response_body)
 
 def main():
     port = 9999
