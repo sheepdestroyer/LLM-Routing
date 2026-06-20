@@ -16,7 +16,7 @@ version: 2
 updates:
   # Container image scanning for YAML manifests (pod.yaml, k8s manifests, helm values, etc.)
   - package-ecosystem: "container"
-    directory: "router/"
+    directory: "/"
     schedule:
       interval: "daily"
       time: "03:32"
@@ -42,9 +42,9 @@ updates:
       - dependency-name: "docker.io/clickhouse/clickhouse-server"
         update-types: ["version-update:semver-major"]
 
-  # Dockerfiles / Containerfiles (keeps Dockerfile FROM lines updated)
+  # Dockerfiles (keeps Dockerfile FROM lines updated)
   - package-ecosystem: "docker"
-    directory: "/"
+    directory: "router/"
     schedule:
       interval: "weekly"
       day: "monday"
