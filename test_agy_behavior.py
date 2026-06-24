@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Quick test to understand agy output behavior for quota errors."""
-import asyncio, json, os, time
+import asyncio
+import os
 
 AGY = os.path.expanduser("~/.local/bin/agy")
 
