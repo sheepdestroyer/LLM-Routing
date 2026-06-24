@@ -145,30 +145,17 @@ def test_dual_breaker_tier_max_logic():
     reset_breakers()
     b = get_breaker()
 
-    # 0/0 -> 0
-    b.google.tier = 0
-    b.vendor.tier = 0
-    assert b.tier == 0
-
-    # 1/0 -> 1
-    b.google.tier = 1
-    b.vendor.tier = 0
-    assert b.tier == 1
-
-    # 0/2 -> 2
-    b.google.tier = 0
-    b.vendor.tier = 2
-    assert b.tier == 2
-
-    # 3/3 -> 3
-    b.google.tier = 3
-    b.vendor.tier = 3
-    assert b.tier == 3
-
-    # 3/1 -> 3
-    b.google.tier = 3
-    b.vendor.tier = 1
-    assert b.tier == 3
+    test_cases = [
+        (0, 0, 0),
+        (1, 0, 1),
+        (0, 2, 2),
+        (3, 3, 3),
+        (3, 1, 3),
+    ]
+    for google_tier, vendor_tier, expected_tier in test_cases:
+        b.google.tier = google_tier
+        b.vendor.tier = vendor_tier
+        assert b.tier == expected_tier, f"Expected tier {expected_tier} for google={google_tier}, vendor={vendor_tier}, but got {b.tier}"
 
     print("✓ Dual breaker tier correctly evaluates to max of sub-breakers")
 
