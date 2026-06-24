@@ -1,9 +1,7 @@
-import pytest
+import json
 import subprocess
 import time
-import json
-import sys
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open
 
 import sync_gemini_token
 
