@@ -31,7 +31,7 @@ def test_silent_failure_fallback(mock_time, mock_exists):
 
     assert _is_quota_exhausted(0, "", "") == True
 
-@patch("builtins.open", new_callable=mock_open, read_data="some log\nRESOURCE_EXHAUSTED\n")
+@patch("router.agy_proxy.open", new_callable=mock_open, read_data="some log\nRESOURCE_EXHAUSTED\n")
 @patch("os.path.exists")
 @patch("time.time")
 def test_silent_failure_with_log_exhaustion(mock_time, mock_exists, mock_file):
@@ -41,7 +41,7 @@ def test_silent_failure_with_log_exhaustion(mock_time, mock_exists, mock_file):
     assert _is_quota_exhausted(0, "", "") == True
     mock_file.assert_called_once()
 
-@patch("builtins.open", new_callable=mock_open, read_data="normal log\nno errors\n")
+@patch("router.agy_proxy.open", new_callable=mock_open, read_data="normal log\nno errors\n")
 @patch("os.path.exists")
 @patch("time.time")
 def test_silent_failure_with_log_no_exhaustion(mock_time, mock_exists, mock_file):
@@ -52,7 +52,7 @@ def test_silent_failure_with_log_no_exhaustion(mock_time, mock_exists, mock_file
     assert _is_quota_exhausted(0, "", "") == True
     mock_file.assert_called_once()
 
-@patch("builtins.open", new_callable=mock_open, read_data="RESOURCE_EXHAUSTED\n")
+@patch("router.agy_proxy.open", new_callable=mock_open, read_data="RESOURCE_EXHAUSTED\n")
 @patch("os.path.exists")
 @patch("time.time")
 def test_throttling_behavior(mock_time, mock_exists, mock_file):
@@ -73,7 +73,7 @@ def test_throttling_behavior(mock_time, mock_exists, mock_file):
     assert _is_quota_exhausted(0, "", "") == True
     assert mock_file.call_count == 2 # File read again
 
-@patch("builtins.open")
+@patch("router.agy_proxy.open")
 @patch("os.path.exists")
 @patch("time.time")
 def test_log_read_exception(mock_time, mock_exists, mock_file):
