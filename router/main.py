@@ -2177,7 +2177,7 @@ async def get_dashboard():
     best_free_model = await get_best_free_model()
 
     # 2. Query Goose Sessions SQLite DB
-    goose_sessions = get_goose_sessions()
+    goose_sessions = await asyncio.to_thread(get_goose_sessions)
 
     # 2b. Fetch live llama.cpp metrics
     llamacpp = await get_llamacpp_metrics()
