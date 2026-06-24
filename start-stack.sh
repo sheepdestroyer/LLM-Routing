@@ -90,6 +90,17 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
     exit 1
 fi
 
+if [ -z "$LANGFUSE_SALT" ]; then
+    LANGFUSE_SALT="$(openssl rand -hex 32)"
+    echo "LANGFUSE_SALT=\"$LANGFUSE_SALT\"" >> "$ENV_FILE"
+    echo "✓ Generated new Langfuse salt and saved to $ENV_FILE"
+fi
+
+if [ -z "$LANGFUSE_SALT" ]; then
+    echo "❌ Error: LANGFUSE_SALT is not set and could not be generated."
+    exit 1
+fi
+
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
 FULL_REBUILD=false
@@ -298,7 +309,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY LANGFUSE_SALT
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys
 uid = os.getuid()
@@ -309,7 +320,8 @@ placeholders = [
     "/home/gpav/",
     "/run/user/1000",
     "sk-lit...33bf",
-    "postgres:***"
+    "postgres:***",
+    "LANGFUSE_SALT_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -319,6 +331,7 @@ text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
+text = text.replace("LANGFUSE_SALT_PLACEHOLDER", os.environ["LANGFUSE_SALT"])
 text = text.replace("postgres:***", "postgres:postgres-local-pw-2026")
 sys.stdout.write(text)
 PY

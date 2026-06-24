@@ -1,9 +1,9 @@
-🎯 **What:** The `src_badge` string formatting function in `router/main.py` lacked direct unit testing. Because it dynamically generates UI-facing HTML based on label and color strings, tests are critical for protecting its styling against silent regressions.
+🔒 [Security Fix: Remove Hardcoded Cryptographic Salt]
 
-📊 **Coverage:** A new test suite (`test_src_badge.py`) was created, verifying:
-- Happy path output formatting.
-- Empty label injection handling.
-- Special character inclusion logic.
-- Exact full string match of generated HTML (verifying structural rules and styling components).
+🎯 **What:** The `pod.yaml` deployment file contained a hardcoded cryptographic salt (`my-super-strong-salt-token-2026-value-1234`) for the Langfuse web observability dashboard container.
 
-✨ **Result:** Enhanced test coverage around the UI string generating utility. The function's deterministic string output is now thoroughly protected by test cases. No regressions were introduced into the remaining suite.
+⚠️ **Risk:** Hardcoded cryptographic salts present a severe security vulnerability. Storing them in plaintext within source control means anyone with read access to the repository (or the compiled manifests) could decrypt sensitive authentication tokens or bypass security mechanisms meant to protect user sessions and data integrity. It compromises the randomness and secrecy required for cryptographic operations.
+
+🛡️ **Solution:** Modified the deployment pipeline to generate and inject a secure salt at runtime:
+- `pod.yaml` was updated to use a placeholder (`LANGFUSE_SALT_PLACEHOLDER`) instead of the hardcoded secret.
+- The `start-stack.sh` shell script was updated to securely generate a 32-byte hexadecimal random string (`openssl rand -hex 32`) if one doesn't exist, append it to the `.env` file, and inject it dynamically via environment substitution during the podman play command. This mirrors the existing secure pattern used for the `LITELLM_MASTER_KEY`.

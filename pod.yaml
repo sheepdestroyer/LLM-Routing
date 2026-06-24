@@ -269,7 +269,7 @@ spec:
     - name: NEXTAUTH_URL
       value: http://localhost:3001
     - name: SALT
-      value: my-super-strong-salt-token-2026-value-1234
+      value: LANGFUSE_SALT_PLACEHOLDER
     - name: ENCRYPTION_KEY
       value: 4c265d39d04389f069225db1e88726727a090e7fc6275e8c910b81aa4b763135
     - name: HOSTNAME

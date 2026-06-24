@@ -37,3 +37,6 @@ pr_description.txt
 
 # Dataset work in progress
 data/
+.cache/
+.cache/
+test_output*.log
