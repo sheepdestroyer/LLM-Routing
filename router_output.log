@@ -1,0 +1,3 @@
+INFO:     Started server process [179493]
+INFO:     Waiting for application startup.
+2026-06-24 15:39:04,277 [WARNING] Failed to sync cooldowns from Valkey: Error 111 connecting to 127.0.0.1:6379. Connect call failed ('127.0.0.1', 6379).

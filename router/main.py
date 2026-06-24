@@ -2931,10 +2931,80 @@ async def get_dashboard():
             }}
         </style>
         <script>
-            // Auto refresh metrics every 3 seconds
-            setInterval(() => {{
-                window.location.reload();
-            }}, 3000);
+            async function refreshDashboard() {{
+                try {{
+                    const res = await fetch("/api/dashboard-stats");
+                    if (!res.ok) throw new Error(`HTTP error! status: ${{res.status}}`);
+                    const data = await res.json();
+
+                    // 1. Update infrastructure status indicators
+                    const updateStatus = (id, isOnline) => {{
+                        const el = document.getElementById(id);
+                        if (el) {{
+                            el.className = isOnline ? "badge badge-online" : "badge badge-offline";
+                            el.innerHTML = `<span class="pulse-dot"></span>${{isOnline ? "Online" : "Offline"}}`;
+                        }}
+                    }};
+                    updateStatus("litellm-status", data.litellm_status);
+                    updateStatus("valkey-status", data.valkey_status);
+                    updateStatus("llama-server-status", data.llama_server_status);
+                    updateStatus("langfuse-status", data.langfuse_status);
+
+                    // 2. Update metrics grid
+                    document.getElementById("total-requests").textContent = data.total_requests;
+                    document.getElementById("last-triage-decision").textContent = data.last_triage_decision;
+                    document.getElementById("avg-triage-latency").textContent = data.avg_triage_latency_ms.toFixed(1) + " ms";
+                    document.getElementById("avg-proxy-latency").textContent = data.avg_proxy_latency_ms.toFixed(1) + " ms";
+                    document.getElementById("cache-hits").textContent = data.cache_hits;
+
+                    // 3. Update token counts
+                    document.getElementById("p-tokens").textContent = data.p_tokens.toLocaleString();
+                    document.getElementById("c-tokens").textContent = data.c_tokens.toLocaleString();
+                    document.getElementById("t-tokens").textContent = data.t_tokens.toLocaleString();
+
+                    // 4. Update dynamic HTML blocks
+                    document.getElementById("oauth-banner-container").innerHTML = data.oauth_banner_html;
+                    document.getElementById("tier-table-container").innerHTML = data.tier_table_html;
+                    document.getElementById("pie-legend-container").innerHTML = data.pie_legend_html;
+                    document.getElementById("routing-legend-container").innerHTML = data.routing_legend_html || "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>";
+                    document.getElementById("tool-tokens-container").innerHTML = data.tool_tokens_html;
+                    document.getElementById("timeline-container").innerHTML = data.timeline_html;
+                    document.getElementById("goose-sessions-container").innerHTML = data.goose_html;
+                    document.getElementById("llamacpp-models-container").innerHTML = data.llamacpp_models_html;
+                    document.getElementById("llamacpp-slots-container").innerHTML = data.llamacpp_slots_html;
+
+                    // 5. Update Frontier Free Model widget
+                    const bestFreeModelContainer = document.getElementById("best-free-model-container");
+                    if (bestFreeModelContainer) {{
+                        const m = data.best_free_model;
+                        const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
+                        bestFreeModelContainer.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <span style="font-weight: 800; font-size: 16px; color: #fff;">${{m.name}}</span>
+                                <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${{m.score.toFixed(1)}}</span>
+                            </div>
+                            <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
+                                ID: ${{m.id}}
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
+                                <span>📐 context ${{m.context_length.toLocaleString()}} tok</span>
+                                <span style="color: #34d399; font-weight: bold;">${{statusLabel}}</span>
+                            </div>
+                        `;
+                    }}
+
+                    // 6. Update pie chart gradients
+                    document.getElementById("tool-token-pie-chart").style.background = data.pie_gradient;
+                    document.getElementById("routing-path-pie-chart").style.background = data.routing_pie_gradient;
+
+                }} catch (e) {{
+                    console.error("Dashboard fetch failed: ", e);
+                }}
+            }}
+
+            // Initialize on load and set periodic polling
+            window.addEventListener("DOMContentLoaded", refreshDashboard);
+            setInterval(refreshDashboard, 3000);
         </script>
     </head>
     <body>
@@ -2949,7 +3019,9 @@ async def get_dashboard():
             </div>
         </header>
 
-        {oauth_banner_html}
+        <div id="oauth-banner-container">
+            {oauth_banner_html}
+        </div>
 
         <main>
             <!-- LEFT COLUMN: LIVE TELEMETRY, METERS, PIES & TIMELINES -->
@@ -2963,30 +3035,32 @@ async def get_dashboard():
 
                     <div class="metrics-grid">
                         <div class="metric-box">
-                            <span class="metric-value">{total_requests}</span>
+                            <span class="metric-value" id="total-requests">{total_requests}</span>
                             <span class="metric-label">Total API Calls</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{last_triage_decision}</span>
+                            <span class="metric-value" id="last-triage-decision" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{last_triage_decision}</span>
                             <span class="metric-label">Last Triage Split</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value">{avg_triage_latency_ms:.1f} ms</span>
+                            <span class="metric-value" id="avg-triage-latency">{avg_triage_latency_ms:.1f} ms</span>
                             <span class="metric-label">Avg Triage Time</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value">{avg_proxy_latency_ms:.1f} ms</span>
+                            <span class="metric-value" id="avg-proxy-latency">{avg_proxy_latency_ms:.1f} ms</span>
                             <span class="metric-label">Avg Proxy Time</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value" style="color: #34d399;">{cache_hits}</span>
+                            <span class="metric-value" id="cache-hits" style="color: #34d399;">{cache_hits}</span>
                             <span class="metric-label">Triage Cache Hits</span>
                         </div>
                     </div>
 
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
                         <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
-                        {tier_table_html}
+                        <div id="tier-table-container">
+                            {tier_table_html}
+                        </div>
                     </div>
                 </div>
 
@@ -2998,24 +3072,26 @@ async def get_dashboard():
                     </div>
                     
                     <div style="display: flex; gap: 40px; align-items: center; margin-bottom: 30px; flex-wrap: wrap;">
-                        <div class="pie-chart"></div>
+                        <div class="pie-chart" id="tool-token-pie-chart" style="{pie_gradient}"></div>
                         <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 200px;">
                             <h4 style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; margin-bottom: 5px;">Active Tool Split %</h4>
-                            {pie_legend_html}
+                            <div id="pie-legend-container">
+                                {pie_legend_html}
+                            </div>
                         </div>
                     </div>
 
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px; text-align: center;">
                         <div>
-                            <div style="font-size: 20px; font-weight: 800; color: #60a5fa;">{p_tokens:,}</div>
+                            <div class="metric-value" id="p-tokens" style="font-size: 20px; font-weight: 800; color: #60a5fa;">{p_tokens:,}</div>
                             <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Prompt Tokens</div>
                         </div>
                         <div>
-                            <div style="font-size: 20px; font-weight: 800; color: #a78bfa;">{c_tokens:,}</div>
+                            <div class="metric-value" id="c-tokens" style="font-size: 20px; font-weight: 800; color: #a78bfa;">{c_tokens:,}</div>
                             <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Completion Tokens</div>
                         </div>
                         <div>
-                            <div style="font-size: 20px; font-weight: 800; color: #34d399;">{t_tokens:,}</div>
+                            <div class="metric-value" id="t-tokens" style="font-size: 20px; font-weight: 800; color: #34d399;">{t_tokens:,}</div>
                             <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Combined Total</div>
                         </div>
                     </div>
@@ -3028,10 +3104,10 @@ async def get_dashboard():
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">% requests per path</span>
                     </div>
                     <div style="display: flex; gap: 40px; align-items: center; flex-wrap: wrap;">
-                        <div style="width: 130px; height: 130px; border-radius: 50%; {routing_pie_gradient} box-shadow: 0 0 25px rgba(0,0,0,0.4); position: relative; flex-shrink: 0;">
+                        <div id="routing-path-pie-chart" style="width: 130px; height: 130px; border-radius: 50%; {routing_pie_gradient} box-shadow: 0 0 25px rgba(0,0,0,0.4); position: relative; flex-shrink: 0;">
                             <div style="position: absolute; width: 60px; height: 60px; background: #111827; border-radius: 50%; top: 35px; left: 35px; box-shadow: inset 0 0 10px rgba(0,0,0,0.8);"></div>
                         </div>
-                        <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 180px;">
+                        <div id="routing-legend-container" style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 180px;">
                             {routing_legend_html if routing_legend_html else "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>"}
                         </div>
                     </div>
@@ -3055,7 +3131,7 @@ async def get_dashboard():
                         <span>{src_badge('GOOSE', '#fbbf24')} Live Tool Token Meters</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Token meters per extension tool</span>
                     </div>
-                    <div>
+                    <div id="tool-tokens-container">
                         {tool_tokens_html}
                     </div>
                 </div>
@@ -3066,7 +3142,7 @@ async def get_dashboard():
                         <span>{src_badge('ROUTER', '#818cf8')} Request Timeline</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Recent completions cascade</span>
                     </div>
-                    <div style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
+                    <div id="timeline-container" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         {timeline_html}
                     </div>
                 </div>
@@ -3080,7 +3156,7 @@ async def get_dashboard():
                         <span>{src_badge('INTELLECT', '#34d399')} Frontier Free Model</span>
                         <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">agentic index score</span>
                     </div>
-                    <div style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 12px; padding: 16px 20px;">
+                    <div id="best-free-model-container" style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 12px; padding: 16px 20px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <span style="font-weight: 800; font-size: 16px; color: #fff;">{best_free_model['name']}</span>
                             <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {best_free_model['score']:.1f}</span>
@@ -3112,7 +3188,7 @@ async def get_dashboard():
                             <span class="service-name">LiteLLM Proxy</span>
                             <span class="service-port">{LITELLM_PORT}</span>
                         </div>
-                        <span class="badge {'badge-online' if litellm_status else 'badge-offline'}">
+                        <span id="litellm-status" class="badge {'badge-online' if litellm_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if litellm_status else 'Offline'}
                         </span>
                     </div>
@@ -3122,7 +3198,7 @@ async def get_dashboard():
                             <span class="service-name">Valkey Cache</span>
                             <span class="service-port">:{VALKEY_PORT}</span>
                         </div>
-                        <span class="badge {'badge-online' if valkey_status else 'badge-offline'}">
+                        <span id="valkey-status" class="badge {'badge-online' if valkey_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if valkey_status else 'Offline'}
                         </span>
                     </div>
@@ -3132,7 +3208,7 @@ async def get_dashboard():
                             <span class="service-name">Llama-Server</span>
                             <span class="service-port">{LLAMA_SERVER_PORT}</span>
                         </div>
-                        <span class="badge {'badge-online' if llama_server_status else 'badge-offline'}">
+                        <span id="llama-server-status" class="badge {'badge-online' if llama_server_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if llama_server_status else 'Offline'}
                         </span>
                     </div>
@@ -3142,7 +3218,7 @@ async def get_dashboard():
                             <span class="service-name">Langfuse Traces</span>
                             <span class="service-port">{LANGFUSE_PORT}</span>
                         </div>
-                        <span class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
+                        <span id="langfuse-status" class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if langfuse_status else 'Offline'}
                         </span>
                     </div>
@@ -3152,16 +3228,20 @@ async def get_dashboard():
                 <div class="glass-card">
                     <div class="section-title" style="margin-bottom: 10px;">
                         <span>{src_badge('LLAMA.CPP', '#fb923c')} Engine Metrics</span>
-                        <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">build {llamacpp['build']}</span>
+                        <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">Engine Details</span>
                     </div>
-                    {llamacpp_models_html}
-                    {llamacpp_slots_html}
+                    <div id="llamacpp-models-container">
+                        {llamacpp_models_html}
+                    </div>
+                    <div id="llamacpp-slots-container">
+                        {llamacpp_slots_html}
+                    </div>
                 </div>
 
                 <!-- Goose active sessions and status card -->
                 <div class="glass-card">
                     <div class="section-title" style="margin-bottom: 10px;">{src_badge('GOOSE', '#fbbf24')} Session Directory</div>
-                    <div style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
+                    <div id="goose-sessions-container" style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
                         {goose_html}
                     </div>
                 </div>

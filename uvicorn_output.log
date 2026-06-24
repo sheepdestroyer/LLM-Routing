@@ -1,0 +1,11 @@
+INFO:     Started server process [169284]
+INFO:     Waiting for application startup.
+2026-06-24 15:37:55,145 [WARNING] Failed to sync cooldowns from Valkey: Error 111 connecting to 127.0.0.1:6379. Connect call failed ('127.0.0.1', 6379).
+2026-06-24 15:39:01,229 [WARNING] ⚠️  LiteLLM not ready within timeout — proceeding without roster sync
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-06-24 15:39:01,333 [ERROR] Failed to persist stats to disk: [Errno 13] Permission denied: '/config'
+INFO:     Application shutdown complete.
+INFO:     Finished server process [148789]
