@@ -1,9 +1,3 @@
-🎯 **What:** The `_memory_entry` helper function in `router/memory_mcp.py` was previously completely untested. This function is responsible for converting a raw dictionary representation of a memory entry from LiteLLM into a structured dictionary used by the MCP.
-
-📊 **Coverage:** The new `test_memory_mcp.py` file covers several scenarios for the `_memory_entry` dictionary translation helper:
-- **Happy Path:** Tests that valid and complete memory dictionaries are properly parsed, mapped, and typed.
-- **Invalid Key:** Verifies that if a memory has a key that does not start with `"memory:"`, the function properly returns `None`.
-- **Malformed/String Value:** Tests the graceful fallback when a memory value is a raw string instead of the expected JSON payload, ensuring it still parses the string into the `data` field and initializes an empty `tags` array without throwing a JSON decode error.
-- **Missing Fields:** Tests dictionary inputs that are missing either `"key"` or `"value"` or both to ensure graceful behavior, fallback values, and early exits without `KeyError`s.
-
-✨ **Result:** Increased code reliability and coverage for the core memory data transformation logic with pure, isolated dictionary tests ensuring zero runtime side effects.
+🎯 What: Add a comprehensive test file for `sync_gemini_token.py`.
+📊 Coverage: Added tests covering the happy path (successful retrieval and parsing of credentials with nanosecond/offset handling), error conditions (secret-tool failure, empty output), edge cases for bad JSON (missing token key, missing access token), and exception handling (date parsing fallback, general exceptions).
+✨ Result: `sync_gemini_token.py` is now fully covered by tests, ensuring its logic handles all expected scenarios correctly.
