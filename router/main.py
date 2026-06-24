@@ -160,7 +160,7 @@ def get_langfuse():
                 release="llm-triage-router-v1",
             )
             logger.info("Langfuse client initialized")
-        except Exception as e:
+        except (ImportError, ValueError, TypeError) as e:
             logger.warning(f"Langfuse client initialization failed: {e} — traces disabled")
             _langfuse_client = False  # sentinel to avoid retry
     return _langfuse_client if _langfuse_client is not False else None
