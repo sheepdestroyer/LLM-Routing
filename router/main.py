@@ -7,17 +7,37 @@ import asyncio
 import logging
 import copy
 import tempfile
+import uuid
+import codecs
+import sqlite3
+import uvicorn
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Optional, Union
+from contextlib import asynccontextmanager
+
 import yaml
 import httpx
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None
+
+try:
+    import langfuse
+except ImportError:
+    langfuse = None
 import redis.asyncio as aioredis
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-from circuit_breaker import get_breaker
 from pydantic import BaseModel
-from typing import Dict, Optional, Union
+
+from circuit_breaker import get_breaker
+try:
+    from agy_proxy import try_agy_proxy
+except ImportError:
+    try_agy_proxy = None
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -152,7 +172,8 @@ def get_langfuse():
     global _langfuse_client
     if _langfuse_client is None:
         try:
-            import langfuse
+            if langfuse is None:
+                raise ImportError("langfuse is not installed")
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
@@ -372,7 +393,8 @@ classification_lock = asyncio.Lock()
 
 async def _purge_stale_deployments(db_url: str, pattern: str):
     """Purge stale deployments matching the pattern from LiteLLM's DB."""
-    import asyncpg
+    if asyncpg is None:
+        raise ImportError("asyncpg is not installed")
     conn = await asyncpg.connect(db_url)
     try:
         await conn.execute(
@@ -1087,7 +1109,6 @@ def get_goose_sessions() -> list:
     if not os.path.exists(db_path):
         return []
     try:
-        import sqlite3
         conn = sqlite3.connect(db_path, timeout=1.0)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -1169,7 +1190,6 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-        import json
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
             data = json.load(f)
@@ -1188,28 +1208,24 @@ def compute_free_model_score(m: dict) -> float:
 
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
-    import json as _json
-    import datetime as _dt
     payload = {
         "models": free_models,
-        "updated_at": _dt.datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z",
         "count": len(free_models)
     }
     try:
         with open("/config/router_dir/free_models_roster.json", "w") as f:
-            _json.dump(payload, f, indent=2)
+            json.dump(payload, f, indent=2)
     except Exception:
         pass
 
 
 def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
-    import json as _json
-    import datetime as _dt
-    payload = {**best_model, "updated_at": _dt.datetime.utcnow().isoformat() + "Z"}
+    payload = {**best_model, "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "") + "Z"}
     try:
         with open("/config/router_dir/best_free_model.json", "w") as f:
-            _json.dump(payload, f, indent=2)
+            json.dump(payload, f, indent=2)
     except Exception:
         pass  # Non-critical — Ralph falls back gracefully
 
@@ -1542,8 +1558,8 @@ async def chat_completions(request: Request):
     if should_try_agy:
         agy_span_obj = None
         try:
-            from agy_proxy import try_agy_proxy
-
+            if try_agy_proxy is None:
+                raise ImportError("agy_proxy is not available")
             last_prompt = ""
             for msg in reversed(messages):
                 if not isinstance(msg, dict):
@@ -1597,7 +1613,6 @@ async def chat_completions(request: Request):
                         # Real native stream generator
                         async def native_agy_stream_generator(stream_gen, model_name):
                             """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
-                            import uuid
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                             token_count = 0
@@ -1689,7 +1704,6 @@ async def chat_completions(request: Request):
                             content = (agy_response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                             async def agy_stream_generator():
                                 """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
-                                import uuid
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 chunk_size = 40
@@ -1856,7 +1870,6 @@ async def chat_completions(request: Request):
                 if r.status_code == 200:
                     async def stream_generator():
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
-                        import codecs
                         completion_chars = 0
                         request_tokens = estimate_prompt_tokens(body_to_send)
                         sse_buffer = ""
@@ -3257,6 +3270,5 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
         raise HTTPException(status_code=500, detail="Failed to save annotations")
 
 if __name__ == "__main__":
-    import uvicorn
     logger.info(f"Starting LLM Triage Router on {host}:{port}...")
     uvicorn.run(app, host=host, port=port)
