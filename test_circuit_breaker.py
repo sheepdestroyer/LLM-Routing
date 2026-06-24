@@ -177,8 +177,6 @@ def test_full_cycle():
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
 
 
-
-
 def test_sync_from_valkey_exception_handling():
     """Exception during Valkey sync is caught and logged."""
     reset_breakers()
