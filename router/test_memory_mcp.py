@@ -75,6 +75,7 @@ def test_make_key_determinism_and_uniqueness():
         # If timestamp is different, keys should be different
         assert key1 != key2
 
+
 def test_memory_value_happy_path():
     """Test _memory_value with standard data and tags."""
     result = _memory_value("some data", ["tag1", "tag2"])

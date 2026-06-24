@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+"""
+Tests for memory_mcp.py
+"""
+import sys
 import json
 import pytest
-from router.memory_mcp import _memory_entry, _parse_memory_value
+from router.memory_mcp import _memory_entry, _parse_key, _parse_memory_value
 
 def test_memory_entry_happy_path():
     """Test correctly formatted and complete memory entry."""
@@ -74,6 +78,68 @@ def test_memory_entry_missing_fields():
     result3 = _memory_entry({})
     assert result3 is None
 
+def test_parse_key_happy_path():
+    """Test full standard key structure"""
+    key = "memory:local:code::20240101T120000Z:abc123hash"
+    result = _parse_key(key)
+    assert result == {
+        "scope": "local",
+        "category": "code",
+        "timestamp": "20240101T120000Z"
+    }
+
+def test_parse_key_missing_timestamp_hash():
+    """Test key without the :: delimiter section"""
+    key = "memory:global:general"
+    result = _parse_key(key)
+    assert result == {
+        "scope": "global",
+        "category": "general",
+        "timestamp": ""
+    }
+
+def test_parse_key_missing_category():
+    """Test key with missing category"""
+    key = "memory:local::20240101T120000Z:abc123hash"
+    result = _parse_key(key)
+    # The split(":") on "memory:local" results in ["memory", "local"] length 2
+    # So category should be ""
+    assert result == {
+        "scope": "local",
+        "category": "",
+        "timestamp": "20240101T120000Z"
+    }
+
+def test_parse_key_missing_scope_and_category():
+    """Test minimal key prefix"""
+    key = "memory"
+    result = _parse_key(key)
+    assert result == {
+        "scope": "",
+        "category": "",
+        "timestamp": ""
+    }
+
+def test_parse_key_empty_string():
+    """Test completely empty string"""
+    key = ""
+    result = _parse_key(key)
+    assert result == {
+        "scope": "",
+        "category": "",
+        "timestamp": ""
+    }
+
+def test_parse_key_invalid_type():
+    """Test handling of an invalid type that triggers the exception branch"""
+    key = None
+    result = _parse_key(key)
+    assert result == {
+        "scope": "",
+        "category": "",
+        "timestamp": ""
+    }
+
 def test_parse_memory_value_valid_json():
     raw_data = json.dumps({"data": "some data", "tags": ["tag1", "tag2"]})
     result = _parse_memory_value(raw_data)
@@ -96,3 +162,7 @@ def test_parse_memory_value_non_dict_json():
     raw_data = '"just a string"'
     result = _parse_memory_value(raw_data)
     assert result == "just a string"
+
+if __name__ == "__main__":
+    sys.exit(pytest.main(["-v", __file__]))
+
