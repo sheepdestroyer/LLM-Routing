@@ -188,6 +188,7 @@ def test_sync_from_valkey_exception_handling():
     with patch("router.circuit_breaker.logger.warning") as mock_logger_warning:
         asyncio.run(b.google.sync_from_valkey(mock_redis))
 
+        mock_redis.hgetall.assert_called_once_with("circuit_breaker:google")
         mock_logger_warning.assert_called_once_with(
             "Valkey circuit_breaker [google] sync failed: Simulated connection error"
         )
