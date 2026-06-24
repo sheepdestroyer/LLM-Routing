@@ -9,18 +9,18 @@ def reset_global_throttle():
     router.agy_proxy._last_log_check = 0.0
 
 def test_direct_stderr_exhaustion():
-    assert _is_quota_exhausted(1, "", "RESOURCE_EXHAUSTED: out of quota") == True
-    assert _is_quota_exhausted(1, "", "error code 429 received") == True
-    assert _is_quota_exhausted(1, "", "your quota reached the limit") == True
-    assert _is_quota_exhausted(1, "", "rate limit exceeded") == True
+    assert _is_quota_exhausted(1, "", "RESOURCE_EXHAUSTED: out of quota")
+    assert _is_quota_exhausted(1, "", "error code 429 received")
+    assert _is_quota_exhausted(1, "", "your quota reached the limit")
+    assert _is_quota_exhausted(1, "", "rate limit exceeded")
 
 def test_success_response():
-    assert _is_quota_exhausted(0, "success response", "") == False
-    assert _is_quota_exhausted(0, "success", "some warning") == False
+    assert not _is_quota_exhausted(0, "success response", "")
+    assert not _is_quota_exhausted(0, "success", "some warning")
 
 def test_non_quota_error():
-    assert _is_quota_exhausted(1, "", "syntax error") == False
-    assert _is_quota_exhausted(127, "", "command not found") == False
+    assert not _is_quota_exhausted(1, "", "syntax error")
+    assert not _is_quota_exhausted(127, "", "command not found")
 
 @patch("os.path.exists")
 @patch("time.time")
