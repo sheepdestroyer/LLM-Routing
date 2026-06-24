@@ -1,7 +1,0 @@
-🎯 What: Removed the unused `os` import from `scripts/extract_complex.py`. Added a standard `pytest.ini` for local tests.
-
-💡 Why: It was identified as an unused import in the codebase (line 2). Removing it reduces noise, standardizes imports, and prevents unnecessary dependencies in the file context.
-
-✅ Verification: Verified by checking `extract_complex.py` functionality visually (no internal calls to `os` in file logic, only unused at top-level) and by running the full unit test suite (via both `pytest` and `python test_agy_tiers.py` directly). No regressions were introduced.
-
-✨ Result: A cleaner, more maintainable script file without unused imports.
