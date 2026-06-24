@@ -1,9 +1,3 @@
-🎯 **What:** The `src_badge` string formatting function in `router/main.py` lacked direct unit testing. Because it dynamically generates UI-facing HTML based on label and color strings, tests are critical for protecting its styling against silent regressions.
-
-📊 **Coverage:** A new test suite (`test_src_badge.py`) was created, verifying:
-- Happy path output formatting.
-- Empty label injection handling.
-- Special character inclusion logic.
-- Exact full string match of generated HTML (verifying structural rules and styling components).
-
-✨ **Result:** Enhanced test coverage around the UI string generating utility. The function's deterministic string output is now thoroughly protected by test cases. No regressions were introduced into the remaining suite.
+🎯 **What:** Removed the hardcoded PostgreSQL password (`postgres-local-pw-2026`) from `pod.yaml` and replaced it with a dynamic environment variable insertion (`postgres-password-***`) that `start-stack.sh` replaces at runtime.
+⚠️ **Risk:** Storing credentials in plain text in configuration files (like `pod.yaml`) can lead to unauthorized access to the database or unauthorized operations if the codebase is exposed or shared. It creates a critical security risk.
+🛡️ **Solution:** Updated `pod.yaml` to use a generic placeholder instead of the password. Modified `start-stack.sh` to load or securely generate (`openssl rand -hex 16`) a password from the `.env` file, and securely inject it at runtime into the `pod.yaml` file.
