@@ -31,6 +31,7 @@ router/free_models_roster.json
 
 # agent artifacts
 .hermes/
+.jules/
 workdirs/
 pr_description.txt
 
