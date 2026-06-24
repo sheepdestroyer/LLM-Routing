@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json
 import pytest
-from router.memory_mcp import _memory_entry
+from router.memory_mcp import _memory_entry, _parse_memory_value
 
 def test_memory_entry_happy_path():
     """Test correctly formatted and complete memory entry."""
@@ -73,3 +73,20 @@ def test_memory_entry_missing_fields():
     # Empty dict
     result3 = _memory_entry({})
     assert result3 is None
+
+def test_parse_memory_value_valid_json():
+    raw_data = json.dumps({"data": "some data", "tags": ["tag1", "tag2"]})
+    result = _parse_memory_value(raw_data)
+    assert result == {"data": "some data", "tags": ["tag1", "tag2"]}
+
+def test_parse_memory_value_invalid_json():
+    raw_data = "this is not json"
+    result = _parse_memory_value(raw_data)
+    assert result == {"data": "this is not json", "tags": []}
+
+def test_parse_memory_value_type_error():
+    # json.loads will raise TypeError if given something that isn't str, bytes, or bytearray
+    raw_data = 12345
+    result = _parse_memory_value(raw_data)
+    assert result == {"data": 12345, "tags": []}
+
