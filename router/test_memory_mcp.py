@@ -137,3 +137,8 @@ def test_parse_memory_value_type_error():
     """Test _parse_memory_value with TypeError (e.g. passing None)."""
     result = _parse_memory_value(None)
     assert result == {"data": None, "tags": []}
+
+def test_parse_memory_value_invalid_json_string():
+    """Test _parse_memory_value with invalid JSON string."""
+    result = _parse_memory_value("this is not a valid json string")
+    assert result == {"data": "this is not a valid json string", "tags": []}
