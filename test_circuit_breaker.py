@@ -228,9 +228,9 @@ async def test_save_to_valkey_exception_handling():
     mock_redis = AsyncMock()
     mock_redis.hset.side_effect = Exception("Connection lost")
 
-    # Should not raise exception
-    await sub.save_to_valkey(mock_redis)
-    print("✓ Valkey save exception caught safely")
+    with patch('router.circuit_breaker.logger') as mock_logger:
+        await sub.save_to_valkey(mock_redis)
+        mock_logger.warning.assert_called_once()
 
 
 if __name__ == "__main__":
