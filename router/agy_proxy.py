@@ -19,11 +19,9 @@ Fallback Tiers (same conversation, different model):
   Fallback: Existing LiteLLM chain (OpenRouter free → local Qwen)
 """
 
-import asyncio
 import json
 import logging
 import os
-import shlex
 import time
 import httpx
 from typing import Optional, Protocol, runtime_checkable
