@@ -1,9 +1,8 @@
-🎯 **What:** The `_memory_entry` helper function in `router/memory_mcp.py` was previously completely untested. This function is responsible for converting a raw dictionary representation of a memory entry from LiteLLM into a structured dictionary used by the MCP.
+🎯 **What:** The `get_goose_sessions` function in `router/main.py`, which is responsible for querying the live mounted SQLite goose database to fetch the latest agentic sessions, was previously untested. This PR adds dedicated unit tests for it.
 
-📊 **Coverage:** The new `test_memory_mcp.py` file covers several scenarios for the `_memory_entry` dictionary translation helper:
-- **Happy Path:** Tests that valid and complete memory dictionaries are properly parsed, mapped, and typed.
-- **Invalid Key:** Verifies that if a memory has a key that does not start with `"memory:"`, the function properly returns `None`.
-- **Malformed/String Value:** Tests the graceful fallback when a memory value is a raw string instead of the expected JSON payload, ensuring it still parses the string into the `data` field and initializes an empty `tags` array without throwing a JSON decode error.
-- **Missing Fields:** Tests dictionary inputs that are missing either `"key"` or `"value"` or both to ensure graceful behavior, fallback values, and early exits without `KeyError`s.
+📊 **Coverage:**
+* Happy path: DB exists, query succeeds, and returns correctly structured and sorted list of sessions.
+* DB Not Found path: Handled gracefully and returns an empty list.
+* DB Error path: Simulation of a locked database resulting in `sqlite3.OperationalError`, caught and returns an empty list.
 
-✨ **Result:** Increased code reliability and coverage for the core memory data transformation logic with pure, isolated dictionary tests ensuring zero runtime side effects.
+✨ **Result:** Increased codebase reliability by ensuring the SQLite session fetching implementation works as expected, catches potential DB connectivity and filesystem errors gracefully, and remains regression-free.
