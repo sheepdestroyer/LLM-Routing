@@ -1,10 +1,8 @@
 """Re-extract prompts using FIRST user message (not last) — fixes truncation."""
-import os
 import base64
 import json
 import urllib.request
 import urllib.error
-import sys
 import time
 import re
 from pathlib import Path
