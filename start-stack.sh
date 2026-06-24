@@ -79,6 +79,24 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
+if [ -z "$NEXTAUTH_SECRET" ]; then
+    NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+    echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
+    echo "✓ Generated new NEXTAUTH_SECRET and saved to $ENV_FILE"
+fi
+
+if [ -z "$SALT" ]; then
+    SALT="$(openssl rand -hex 16)"
+    echo "SALT=\"$SALT\"" >> "$ENV_FILE"
+    echo "✓ Generated new SALT and saved to $ENV_FILE"
+fi
+
+if [ -z "$ENCRYPTION_KEY" ]; then
+    ENCRYPTION_KEY="$(openssl rand -hex 32)"
+    echo "ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"" >> "$ENV_FILE"
+    echo "✓ Generated new ENCRYPTION_KEY and saved to $ENV_FILE"
+fi
+
 if [ -z "$LITELLM_MASTER_KEY" ]; then
     LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
@@ -298,7 +316,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY NEXTAUTH_SECRET SALT ENCRYPTION_KEY
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys
 uid = os.getuid()
@@ -309,7 +327,10 @@ placeholders = [
     "/home/gpav/",
     "/run/user/1000",
     "sk-lit...33bf",
-    "postgres:***"
+    "postgres:***",
+    "NEXTAUTH_SECRET_PLACEHOLDER",
+    "SALT_PLACEHOLDER",
+    "ENCRYPTION_KEY_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -320,6 +341,9 @@ text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
 text = text.replace("postgres:***", "postgres:postgres-local-pw-2026")
+text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
+text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
+text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
 sys.stdout.write(text)
 PY
 }

@@ -1,9 +1,5 @@
-🎯 **What:** The `src_badge` string formatting function in `router/main.py` lacked direct unit testing. Because it dynamically generates UI-facing HTML based on label and color strings, tests are critical for protecting its styling against silent regressions.
+🎯 **What:** Hardcoded security secrets (`NEXTAUTH_SECRET`, `SALT`, and `ENCRYPTION_KEY`) in `pod.yaml` were replaced with placeholders. The `start-stack.sh` deployment script was updated to dynamically generate these cryptographically secure values (using `openssl rand`) and store them in `.env`.
 
-📊 **Coverage:** A new test suite (`test_src_badge.py`) was created, verifying:
-- Happy path output formatting.
-- Empty label injection handling.
-- Special character inclusion logic.
-- Exact full string match of generated HTML (verifying structural rules and styling components).
+⚠️ **Risk:** Hardcoded secrets in source control (like `pod.yaml`) can lead to unauthorized access, privilege escalation, or data decryption if the repository is compromised or accessed by unauthorized individuals.
 
-✨ **Result:** Enhanced test coverage around the UI string generating utility. The function's deterministic string output is now thoroughly protected by test cases. No regressions were introduced into the remaining suite.
+🛡️ **Solution:** Implemented environment-based secret injection. The deployment script now ensures these keys are automatically and securely generated on first deployment if they are missing, appended to `.env` for persistence, and dynamically injected into the pod configuration at runtime, keeping them safely out of source control.
