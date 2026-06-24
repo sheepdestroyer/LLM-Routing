@@ -27,15 +27,15 @@ async def test_proxy_models_success():
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.json.return_value = {"data": [{"id": "model-a", "object": "model"}]}
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
-    
+
     with patch("main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, JSONResponse)
         assert response.status_code == 200
-        
+
         # Verify that the response contains injected models
         import json
         body = json.loads(response.body)
@@ -51,10 +51,10 @@ async def test_proxy_models_error_status():
     mock_resp.status_code = 500
     mock_resp.content = b"Internal Server Error"
     mock_resp.headers = {"Content-Type": "text/plain"}
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
-    
+
     with patch("main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, Response)
@@ -69,10 +69,10 @@ async def test_proxy_models_invalid_json():
     mock_resp.json.side_effect = ValueError("Invalid JSON")
     mock_resp.content = b"not a json"
     mock_resp.headers = {"Content-Type": "text/plain"}
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
-    
+
     with patch("main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, Response)
