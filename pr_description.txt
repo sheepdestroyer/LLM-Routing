@@ -1,3 +1,12 @@
-🎯 What: Add a comprehensive test file for `sync_gemini_token.py`.
-📊 Coverage: Added tests covering the happy path (successful retrieval and parsing of credentials with nanosecond/offset handling), error conditions (secret-tool failure, empty output), edge cases for bad JSON (missing token key, missing access token), and exception handling (date parsing fallback, general exceptions).
-✨ Result: `sync_gemini_token.py` is now fully covered by tests, ensuring its logic handles all expected scenarios correctly.
+🎯 **What:**
+The `estimate_prompt_tokens` function inside `router/main.py` computes token approximations for requests by parsing dictionary components (`messages`, `content`, `type: text`), however it lacked test coverage to ensure resilience across different JSON payload permutations (strings, list blocks, ignored variables, nested fields, empty fields).
+
+📊 **Coverage:**
+- Evaluated empty payload handling and fallback to 50 overhead estimate.
+- String messages mapping (1 token per 4 chars).
+- Object list contents processing block arrays.
+- Graceful skipping of non-dictionary structures.
+- Bypassing non-existent text elements safely.
+
+✨ **Result:**
+Significant testing footprint improvement verifying prompt token estimators act properly towards all valid and malformed data variations avoiding unpredictable token counts for request tracing.
