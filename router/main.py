@@ -18,7 +18,6 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
-
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 
@@ -401,7 +400,7 @@ async def sync_adaptive_router_roster(master_key: str):
         logger.warning("No LITELLM_MASTER_KEY — skipping roster sync")
         return
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
-    admin_url = "http://127.0.0.1:4000"
+    admin_url = LITELLM_URL
     try:
         client = get_http_client()
         r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
@@ -559,7 +558,7 @@ async def _register_ollama_models_in_db(master_key: str):
         logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
         return
 
-    admin_url = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
+    admin_url = LITELLM_URL
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     ollama_models = []
@@ -741,13 +740,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
 async def check_tcp_port(ip: str, port: int) -> bool:
-    """Verifies if a TCP port is open locally."""
+    """Verifies if a TCP port is open locally asynchronously."""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        return result == 0
+        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.5)
+        writer.close()
+        await writer.wait_closed()
+        return True
     except Exception:
         return False
 
@@ -1152,8 +1150,14 @@ async def get_llamacpp_metrics() -> dict:
             if r3.status_code == 200:
                 slots_data = r3.json()
                 for s in slots_data:
-                    next_tok = s.get("next_token", [{}])
-                    decoded = next_tok[0].get("n_decoded", 0) if next_tok else 0
+                    next_tok = s.get("next_token")
+                    decoded = 0
+                    if isinstance(next_tok, dict):
+                        decoded = next_tok.get("n_decoded", 0)
+                    elif isinstance(next_tok, list) and next_tok:
+                        first_tok = next_tok[0]
+                        if isinstance(first_tok, dict):
+                            decoded = first_tok.get("n_decoded", 0)
                     result["slots"].append({
                         "id": s.get("id", 0),
                         "is_processing": s.get("is_processing", False),
@@ -1207,7 +1211,7 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
     import datetime as _dt
     payload = {
         "models": free_models,
-        "updated_at": _dt.datetime.utcnow().isoformat() + "Z",
+        "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "count": len(free_models)
     }
     try:
@@ -1221,7 +1225,7 @@ def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
     import datetime as _dt
-    payload = {**best_model, "updated_at": _dt.datetime.utcnow().isoformat() + "Z"}
+    payload = {**best_model, "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")}
     try:
         with open("/config/router_dir/best_free_model.json", "w") as f:
             _json.dump(payload, f, indent=2)
@@ -1236,7 +1240,7 @@ async def get_best_free_model() -> dict:
     
     # Check if cache is still valid
     if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
-        _save_best_model_to_disk(free_model_cache["data"])
+        await asyncio.to_thread(_save_best_model_to_disk, free_model_cache["data"])
         return free_model_cache["data"]
         
     fallback_best = {
@@ -1284,17 +1288,17 @@ async def get_best_free_model() -> dict:
                         best_model = {**entry, "is_fallback": False}
             # Sort by score descending
             all_free.sort(key=lambda x: x["score"], reverse=True)
-            _save_free_models_roster(all_free)
+            await asyncio.to_thread(_save_free_models_roster, all_free)
             if best_model:
                 free_model_cache["data"] = best_model
                 free_model_cache["last_fetched"] = now
                 logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
-                _save_best_model_to_disk(best_model)
+                await asyncio.to_thread(_save_best_model_to_disk, best_model)
                 return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
     
-    _save_best_model_to_disk(fallback_best)
+    await asyncio.to_thread(_save_best_model_to_disk, fallback_best)
     return fallback_best
 
 def get_pie_chart_gradient() -> str:
@@ -1366,7 +1370,7 @@ async def proxy_memory(request: Request, path: str = ""):
         # Exclude standard headers that FastAPI/uvicorn will manage
         for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
             response_headers.pop(h, None)
-            
+
         return Response(
             content=r.content,
             status_code=r.status_code,
@@ -2151,10 +2155,12 @@ async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
     # 1. Run live health checks
-    valkey_status = await check_tcp_port("127.0.0.1", 6379)
-    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
-    llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
-    langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
+    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+        check_tcp_port("127.0.0.1", 6379),
+        check_http_endpoint("http://127.0.0.1:4000/"),
+        check_http_endpoint("http://127.0.0.1:8080/health"),
+        check_http_endpoint("http://127.0.0.1:3001")
+    )
 
     # 1c. Check Gemini OAuth token status
     oauth_status = await asyncio.to_thread(get_gemini_oauth_status)

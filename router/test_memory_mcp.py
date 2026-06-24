@@ -1,4 +1,3 @@
-import pytest
 import time
 import re
 import sys
@@ -51,6 +50,33 @@ def test_make_key_local():
 
     assert before_ts <= ts <= after_ts
     assert len(h) <= 12
+
+
+def test_make_key_formatting_details(monkeypatch):
+    """Test the exact output formatting of _make_key, including handling of negative and short hashes."""
+    # Mock time.time to return a predictable float so ts = 1620000000123
+    monkeypatch.setattr(time, "time", lambda: 1620000000.123)
+
+    # Positive hash, long enough to be truncated
+    monkeypatch.setattr("builtins.hash", lambda _: 123456789012345)
+    key1 = _make_key("cat1", True, "data")
+    assert key1 == f"{PREFIX}:{SCOPE_GLOBAL}:cat1::1620000000123:123456789012"
+
+    # Negative hash, should replace "-" with "x" and truncate
+    monkeypatch.setattr("builtins.hash", lambda _: -87654321098765)
+    key2 = _make_key("cat2", False, "data")
+    assert key2 == f"{PREFIX}:{SCOPE_LOCAL}:cat2::1620000000123:x87654321098"
+
+    # Short positive hash
+    monkeypatch.setattr("builtins.hash", lambda _: 42)
+    key3 = _make_key("cat3", True, "data")
+    assert key3 == f"{PREFIX}:{SCOPE_GLOBAL}:cat3::1620000000123:42"
+
+    # Short negative hash
+    monkeypatch.setattr("builtins.hash", lambda _: -42)
+    key4 = _make_key("cat4", False, "data")
+    assert key4 == f"{PREFIX}:{SCOPE_LOCAL}:cat4::1620000000123:x42"
+
 
 def test_make_key_determinism_and_uniqueness():
     """Test determinism for same inputs within same timestamp, and uniqueness across timestamps/data."""
@@ -111,3 +137,8 @@ def test_parse_memory_value_type_error():
     """Test _parse_memory_value with TypeError (e.g. passing None)."""
     result = _parse_memory_value(None)
     assert result == {"data": None, "tags": []}
+
+def test_parse_memory_value_invalid_json_string():
+    """Test _parse_memory_value with invalid JSON string."""
+    result = _parse_memory_value("this is not a valid json string")
+    assert result == {"data": "this is not a valid json string", "tags": []}
