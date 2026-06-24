@@ -18,7 +18,6 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
-
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
     "/"
@@ -450,11 +449,8 @@ async def sync_adaptive_router_roster(master_key: str):
     if not master_key:
         logger.warning("No LITELLM_MASTER_KEY — skipping roster sync")
         return
-    headers = {
-        "Authorization": f"Bearer {master_key}",
-        "Content-Type": "application/json",
-    }
-    admin_url = "http://127.0.0.1:4000"
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+    admin_url = LITELLM_URL
     try:
         client = get_http_client()
         r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
@@ -645,11 +641,8 @@ async def _register_ollama_models_in_db(master_key: str):
         )
         return
 
-    admin_url = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
-    headers = {
-        "Authorization": f"Bearer {master_key}",
-        "Content-Type": "application/json",
-    }
+    admin_url = LITELLM_URL
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     ollama_models = []
     litellm_config_path = os.getenv(
@@ -1349,6 +1342,7 @@ async def get_llamacpp_metrics() -> dict:
             if r3.status_code == 200:
                 slots_data = r3.json()
                 for s in slots_data:
+
                     next_tok = s.get("next_token", [{}])
                     decoded = next_tok[0].get("n_decoded", 0) if next_tok else 0
                     result["slots"].append(
@@ -1362,6 +1356,7 @@ async def get_llamacpp_metrics() -> dict:
                             "speculative": s.get("speculative", False),
                         }
                     )
+
     except Exception as e:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
     return result
@@ -1408,13 +1403,12 @@ async def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
     import json as _json
     import datetime as _dt
-    from datetime import timezone
     import asyncio
 
     payload = {
         "models": free_models,
-        "updated_at": _dt.datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "count": len(free_models),
+        "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "count": len(free_models)
     }
 
     def _do_write():
@@ -1431,12 +1425,11 @@ async def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
     import datetime as _dt
-    from datetime import timezone
     import asyncio
 
     payload = {
         **best_model,
-        "updated_at": _dt.datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     def _do_write():
