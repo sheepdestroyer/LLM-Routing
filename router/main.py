@@ -19,6 +19,9 @@ from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
 
+LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+
 _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
@@ -43,13 +46,23 @@ def get_redis():
     return _redis_client
 
 
+# Connection pool limits configuration for the shared HTTP client
+HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
+HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
+
 _http_client = None
 
 def get_http_client():
-    """Return the shared global httpx.AsyncClient singleton."""
+    """Return the shared global httpx.AsyncClient singleton with configured limits."""
     global _http_client
     if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=3600.0)
+        limits = httpx.Limits(
+            max_connections=HTTP_MAX_CONNECTIONS,
+            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+        )
+        _http_client = httpx.AsyncClient(limits=limits, timeout=3600.0)
     return _http_client
 
 
@@ -1375,25 +1388,40 @@ async def proxy_models():
             headers={"Authorization": auth_header},
             timeout=10.0
         )
-        data = r.json()
-        if r.status_code == 200 and isinstance(data, dict) and "data" in data:
-            # Inject llm-routing-* models at the top of the list.
-            # Auto models (classifier pipeline) first, then direct models.
-            # Context lengths aligned with downstream model targets:
-            # - auto-free / auto-agy: 262144 (262K)
-            # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
-            # - llm-routing-agy: 1048576 (1M)
-            routing_models = [
-                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
-                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-            ]
-            for entry in reversed(routing_models):
-                data["data"].insert(0, entry)
-        return JSONResponse(content=data, status_code=r.status_code)
+
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                if isinstance(data, dict) and "data" in data:
+                    # Inject llm-routing-* models at the top of the list.
+                    # Auto models (classifier pipeline) first, then direct models.
+                    # Context lengths aligned with downstream model targets:
+                    # - auto-free / auto-agy: 262144 (262K)
+                    # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
+                    # - llm-routing-agy: 1048576 (1M)
+                    routing_models = [
+                        {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                        {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                    ]
+                    for entry in reversed(routing_models):
+                        data["data"].insert(0, entry)
+                    return JSONResponse(content=data, status_code=200)
+            except Exception as parse_err:
+                logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
+
+        # If not 200, or parsing failed, return the raw response with appropriate headers
+        response_headers = dict(r.headers)
+        for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
+            response_headers.pop(h, None)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            headers=response_headers
+        )
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
         raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
