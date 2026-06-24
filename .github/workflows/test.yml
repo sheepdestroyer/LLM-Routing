@@ -20,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install httpx==0.28.1
+        run: pip install httpx==0.28.1 pytest pytest-asyncio redis
 
       - name: Run Circuit Breaker Tests
         run: python3 test_circuit_breaker.py

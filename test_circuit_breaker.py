@@ -15,6 +15,9 @@ Simulates consecutive quota failures and verifies:
 
 import sys
 import time
+import asyncio
+import pytest
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -136,6 +139,27 @@ def test_backward_compatibility():
     print("✓ Master record_failure and record_success maintain compatibility")
 
 
+
+def test_dual_breaker_tier_max_logic():
+    """Master breaker tier returns max of sub-breakers."""
+    reset_breakers()
+    b = get_breaker()
+
+    test_cases = [
+        (0, 0, 0),
+        (1, 0, 1),
+        (0, 2, 2),
+        (3, 3, 3),
+        (3, 1, 3),
+    ]
+    for google_tier, vendor_tier, expected_tier in test_cases:
+        b.google.tier = google_tier
+        b.vendor.tier = vendor_tier
+        assert b.tier == expected_tier, f"Expected tier {expected_tier} for google={google_tier}, vendor={vendor_tier}, but got {b.tier}"
+
+    print("✓ Dual breaker tier correctly evaluates to max of sub-breakers")
+
+
 def test_full_cycle():
     """Complete cycle: success → 3 failures → probe success → reset."""
     reset_breakers()
@@ -175,6 +199,61 @@ def test_full_cycle():
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
 
 
+@pytest.mark.asyncio
+async def test_save_to_valkey_success():
+    """Verify state is correctly serialized and persisted to Valkey."""
+    b = get_breaker()
+    sub = b.google
+    sub.tier = 2
+    sub.cooldown_until = 1234567890.0
+    sub.probe_granted = True
+    sub.total_trips = 5
+    sub.last_trip_time = 1234567000.0
+
+    mock_redis = AsyncMock()
+
+    with patch('time.time', return_value=1234560000.0):
+        await sub.save_to_valkey(mock_redis)
+
+    expected_state = {
+        "tier": "2",
+        "cooldown_until": "1234567890.0",
+        "probe_granted": "True",
+        "total_trips": "5",
+        "last_trip_time": "1234567000.0",
+    }
+
+    mock_redis.hset.assert_awaited_once_with("circuit_breaker:google", mapping=expected_state)
+    # TTL logic: max(3600.0, cooldown_until - now + 3600.0)
+    # max(3600.0, 1234567890.0 - 1234560000.0 + 3600.0) = max(3600.0, 7890.0 + 3600.0) = 11490
+    mock_redis.expire.assert_awaited_once_with("circuit_breaker:google", 11490)
+    print("✓ Valkey save succeeds with correct data and TTL")
+
+
+@pytest.mark.asyncio
+async def test_save_to_valkey_no_client():
+    """Verify early return when redis client is None."""
+    b = get_breaker()
+    sub = b.google
+    # Should not raise exception
+    await sub.save_to_valkey(None)
+    print("✓ Valkey save handles None client safely")
+
+
+@pytest.mark.asyncio
+async def test_save_to_valkey_exception_handling():
+    """Verify exceptions during Valkey save are caught and logged."""
+    b = get_breaker()
+    sub = b.google
+
+    mock_redis = AsyncMock()
+    mock_redis.hset.side_effect = Exception("Connection lost")
+
+    with patch('router.circuit_breaker.logger') as mock_logger:
+        await sub.save_to_valkey(mock_redis)
+        mock_logger.warning.assert_called_once()
+
+
 if __name__ == "__main__":
     test_initial_state()
     test_first_failure_trips_to_tier1()
@@ -184,7 +263,12 @@ if __name__ == "__main__":
     test_success_resets()
     test_backward_compatibility()
     test_full_cycle()
+    test_dual_breaker_tier_max_logic()
     
+    asyncio.run(test_save_to_valkey_success())
+    asyncio.run(test_save_to_valkey_no_client())
+    asyncio.run(test_save_to_valkey_exception_handling())
+
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
     print("=" * 60)
