@@ -39,6 +39,13 @@ try:
 except ImportError:
     try_agy_proxy = None
 
+# Global Configuration from Environment
+LITELLM_URL = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
+LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
+LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://127.0.0.1:3001")
+VALKEY_HOST = os.getenv("VALKEY_HOST", "127.0.0.1")
+VALKEY_PORT = int(os.getenv("VALKEY_PORT", "6379"))
+
 _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
@@ -53,8 +60,8 @@ def get_redis():
             return None
         _redis_last_init_attempt = now
         try:
-            host = os.getenv("VALKEY_HOST", "127.0.0.1")
-            port = int(os.getenv("VALKEY_PORT", "6379"))
+            host = VALKEY_HOST
+            port = VALKEY_PORT
             _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
             logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
@@ -177,7 +184,7 @@ def get_langfuse():
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-                host=os.getenv("LANGFUSE_HOST", "http://127.0.0.1:3001"),
+                host=LANGFUSE_URL,
                 release="llm-triage-router-v1",
             )
             logger.info("Langfuse client initialized")
@@ -242,7 +249,7 @@ host = config.get("server", {}).get("host", "0.0.0.0")
 port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
-router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
+router_api_base = router_model_conf.get("api_base", f"{LLAMA_SERVER_URL}/v1")
 router_api_key = router_model_conf.get("api_key", "local-token")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
@@ -410,7 +417,7 @@ async def sync_adaptive_router_roster(master_key: str):
         logger.warning("No LITELLM_MASTER_KEY — skipping roster sync")
         return
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
-    admin_url = "http://127.0.0.1:4000"
+    admin_url = LITELLM_URL
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get("https://openrouter.ai/api/v1/models")
@@ -567,7 +574,7 @@ async def _register_ollama_models_in_db(master_key: str):
         logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
         return
 
-    admin_url = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
+    admin_url = LITELLM_URL
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     ollama_models = []
@@ -680,10 +687,10 @@ async def lifespan(app: FastAPI):
     get_http_client()
     await sync_cooldowns_from_valkey()
 
-    litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
+    litellm_ready_url = f"{LITELLM_URL}/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     max_wait = 180
-    logger.info(f"⏳ Waiting for LiteLLM on :4000 (max {max_wait}s)...")
+    logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
     for i in range(max_wait):
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
@@ -1131,7 +1138,7 @@ async def get_llamacpp_metrics() -> dict:
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             # Fetch model list
-            r = await client.get("http://127.0.0.1:8080/v1/models")
+            r = await client.get(f"{LLAMA_SERVER_URL}/v1/models")
             if r.status_code == 200:
                 data = r.json()
                 for m in data.get("data", []):
@@ -1146,7 +1153,7 @@ async def get_llamacpp_metrics() -> dict:
                         "n_embd": meta.get("n_embd"),
                     })
             # Fetch props for build info
-            r2 = await client.get("http://127.0.0.1:8080/props")
+            r2 = await client.get(f"{LLAMA_SERVER_URL}/props")
             if r2.status_code == 200:
                 props = r2.json()
                 result["build"] = props.get("build_info", "unknown")
@@ -1154,7 +1161,7 @@ async def get_llamacpp_metrics() -> dict:
             loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
             slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
             if slot_model:
-                r3 = await client.get(f"http://127.0.0.1:8080/slots?model={slot_model}")
+                r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={slot_model}")
                 if r3.status_code == 200:
                     slots_data = r3.json()
                     for s in slots_data:
@@ -1330,8 +1337,8 @@ def get_pie_chart_gradient() -> str:
 
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
 async def proxy_memory(request: Request, path: str = ""):
-    """Proxies memory API calls to the LiteLLM gateway on port 4000."""
-    litellm_base = "http://127.0.0.1:4000/v1/memory"
+    """Proxies memory API calls to the LiteLLM gateway."""
+    litellm_base = f"{LITELLM_URL}/v1/memory"
     
     # Resolve the destination URL
     url = f"{litellm_base}{path}"
@@ -1384,7 +1391,7 @@ async def proxy_models():
         async with httpx.AsyncClient(timeout=10.0) as client:
             auth_header = "Bearer " + (litellm_key or "")
             r = await client.get(
-                "http://127.0.0.1:4000/v1/models",
+                f"{LITELLM_URL}/v1/models",
                 headers={"Authorization": auth_header}
             )
             data = r.json()
@@ -2131,10 +2138,10 @@ async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
     # 1. Run live health checks
-    valkey_status = await check_tcp_port("127.0.0.1", 6379)
-    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
-    llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
-    langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
+    valkey_status = await check_tcp_port(VALKEY_HOST, VALKEY_PORT)
+    litellm_status = await check_http_endpoint(f"{LITELLM_URL}/")
+    llama_server_status = await check_http_endpoint(f"{LLAMA_SERVER_URL}/health")
+    langfuse_status = await check_http_endpoint(LANGFUSE_URL)
 
     # 1c. Check Gemini OAuth token status
     oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
@@ -3012,7 +3019,7 @@ async def get_dashboard():
                     </div>
                     <div style="text-align: center; padding: 25px 20px;">
                         <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
-                        <a href="http://localhost:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
+                        <a href="{LANGFUSE_URL}" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
                     </div>
                 </div>
 
@@ -3077,7 +3084,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">LiteLLM Proxy</span>
-                            <span class="service-port">:4000</span>
+                            <span class="service-port">{':' + LITELLM_URL.split(':')[-1] if LITELLM_URL.count(':') > 1 else ''}</span>
                         </div>
                         <span class="badge {'badge-online' if litellm_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if litellm_status else 'Offline'}
@@ -3087,7 +3094,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Valkey Cache</span>
-                            <span class="service-port">:6379</span>
+                            <span class="service-port">:{VALKEY_PORT}</span>
                         </div>
                         <span class="badge {'badge-online' if valkey_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if valkey_status else 'Offline'}
@@ -3097,7 +3104,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Llama-Server</span>
-                            <span class="service-port">:8080</span>
+                            <span class="service-port">{':' + LLAMA_SERVER_URL.split(':')[-1] if LLAMA_SERVER_URL.count(':') > 1 else ''}</span>
                         </div>
                         <span class="badge {'badge-online' if llama_server_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if llama_server_status else 'Offline'}
@@ -3107,7 +3114,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:3001</span>
+                            <span class="service-port">{':' + LANGFUSE_URL.split(':')[-1] if LANGFUSE_URL.count(':') > 1 else ''}</span>
                         </div>
                         <span class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if langfuse_status else 'Offline'}
@@ -3144,15 +3151,15 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <a href="http://localhost:3001" target="_blank" class="btn">
+                        <a href="{LANGFUSE_URL}" target="_blank" class="btn">
                             <span>{src_badge('LANGFUSE', '#e879f9')} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:4000/ui" target="_blank" class="btn">
+                        <a href="{LITELLM_URL}/ui" target="_blank" class="btn">
                             <span>{src_badge('LITELLM', '#34d399')} Admin UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:8080" target="_blank" class="btn">
+                        <a href="{LLAMA_SERVER_URL}" target="_blank" class="btn">
                             <span>{src_badge('LLAMA.CPP', '#fb923c')} Server Router UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
