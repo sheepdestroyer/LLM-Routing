@@ -1,7 +1,3 @@
-## 2024-06-16 - Synchronous I/O in Async API Handlers
-**Learning:** `save_persisted_stats()` was being called synchronously on every API request, cache hit, and tool usage log, triggering blocking disk I/O in the main event loop.
-**Action:** Always throttle or batch background telemetry writes in async Python applications to prevent blocking the event loop under load.
-
-## 2026-06-24 - Async Offloading for SQLite I/O
-**Learning:** Synchronous blocking I/O (like SQLite queries) inside an async event loop handler can cause significant latency spikes and block other requests.
-**Action:** Use `asyncio.to_thread()` to offload synchronous database interactions to a worker thread, ensuring the main event loop remains responsive.
+## 2024-06-24 - [Test implementation of detect_active_tool]
+**Learning:** `router/main.py` requires configuration context (`CONFIG_PATH`) to be set, otherwise importing it for unit tests throws an error since it attempts to read config upon importing.
+**Action:** Always mock or provide required environment variables such as `CONFIG_PATH` before importing functions from `router/main.py`.
