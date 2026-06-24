@@ -1,5 +1,9 @@
 """Re-run gemma4 classifier (with grammar) on all dataset prompts via router."""
-import json, urllib.request, time, sys, os, tempfile
+import json
+import os
+import sys
+import tempfile
+import urllib.request
 from pathlib import Path
 from collections import Counter
 
@@ -30,7 +34,7 @@ def classify(prompt):
         data = json.loads(resp.read())
     choices = data.get('choices', [])
     if not choices:
-        return f"ERROR: empty response"
+        return "ERROR: empty response"
     return choices[0].get('message', {}).get('content', '').strip()
 
 # Load existing dataset (kanban/llm evals)
