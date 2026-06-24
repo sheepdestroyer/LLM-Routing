@@ -26,21 +26,16 @@ def test_make_key_local():
     category = "another_cat"
     data = "more_data"
 
-    before_ts = int(time.time() * 1000)
-    key = _make_key(category, False, data)
-    after_ts = int(time.time() * 1000)
+    from unittest.mock import patch
+    with patch("time.time", return_value=1700000000.123):
+        key = _make_key(category, False, data)
 
-    assert key.startswith(f"{PREFIX}:{SCOPE_LOCAL}:{category}::")
+    assert key.startswith(f"{PREFIX}:{SCOPE_LOCAL}:{category}::1700000000123:")
 
-    match = re.match(rf"^{PREFIX}:{SCOPE_LOCAL}:{category}::(\d+):([a-z0-9x]+)$", key)
-    assert match is not None, f"Key {key} does not match expected format"
-
-    ts = int(match.group(1))
-    h = match.group(2)
-
-    assert before_ts <= ts <= after_ts
+    # Extract and validate the hash part
+    h = key.split(":")[-1]
     assert len(h) <= 12
-
+    assert re.match(r"^[a-z0-9x]+$", h) is not None
 def test_make_key_determinism_and_uniqueness():
     """Test determinism for same inputs within same timestamp, and uniqueness across timestamps/data."""
     category = "test_cat"
