@@ -62,6 +62,9 @@ def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     assert parsed_written_data["token_type"] == "Bearer"
     assert "expiry_date" in parsed_written_data
 
+    captured = capsys.readouterr()
+    assert "✓ Success: Synced fresh token." in captured.out
+
 def test_secret_tool_failure(mock_subprocess, capsys):
     mock_result = MagicMock()
     mock_result.returncode = 1
