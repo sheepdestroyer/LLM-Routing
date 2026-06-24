@@ -2936,6 +2936,7 @@ async def get_dashboard():
                     const res = await fetch("/api/dashboard-stats");
                     if (!res.ok) throw new Error(`HTTP error! status: ${{res.status}}`);
                     const data = await res.json();
+                    if (!data) return;
 
                     // 1. Update infrastructure status indicators
                     const updateStatus = (id, isOnline) => {{
@@ -2945,57 +2946,80 @@ async def get_dashboard():
                             el.innerHTML = `<span class="pulse-dot"></span>${{isOnline ? "Online" : "Offline"}}`;
                         }}
                     }};
-                    updateStatus("litellm-status", data.litellm_status);
-                    updateStatus("valkey-status", data.valkey_status);
-                    updateStatus("llama-server-status", data.llama_server_status);
-                    updateStatus("langfuse-status", data.langfuse_status);
+                    updateStatus("litellm-status", !!data.litellm_status);
+                    updateStatus("valkey-status", !!data.valkey_status);
+                    updateStatus("llama-server-status", !!data.llama_server_status);
+                    updateStatus("langfuse-status", !!data.langfuse_status);
+
+                    // Helper to safely update text content
+                    const setElText = (id, val) => {{
+                        const el = document.getElementById(id);
+                        if (el) el.textContent = val !== undefined && val !== null ? val : "";
+                    }};
+
+                    // Helper to safely update inner HTML
+                    const setElHTML = (id, val) => {{
+                        const el = document.getElementById(id);
+                        if (el) el.innerHTML = val !== undefined && val !== null ? val : "";
+                    }};
 
                     // 2. Update metrics grid
-                    document.getElementById("total-requests").textContent = data.total_requests;
-                    document.getElementById("last-triage-decision").textContent = data.last_triage_decision;
-                    document.getElementById("avg-triage-latency").textContent = data.avg_triage_latency_ms.toFixed(1) + " ms";
-                    document.getElementById("avg-proxy-latency").textContent = data.avg_proxy_latency_ms.toFixed(1) + " ms";
-                    document.getElementById("cache-hits").textContent = data.cache_hits;
+                    setElText("total-requests", data.total_requests);
+                    setElText("last-triage-decision", data.last_triage_decision);
+                    setElText("avg-triage-latency", typeof data.avg_triage_latency_ms === "number" ? data.avg_triage_latency_ms.toFixed(1) + " ms" : "0.0 ms");
+                    setElText("avg-proxy-latency", typeof data.avg_proxy_latency_ms === "number" ? data.avg_proxy_latency_ms.toFixed(1) + " ms" : "0.0 ms");
+                    setElText("cache-hits", data.cache_hits);
 
                     // 3. Update token counts
-                    document.getElementById("p-tokens").textContent = data.p_tokens.toLocaleString();
-                    document.getElementById("c-tokens").textContent = data.c_tokens.toLocaleString();
-                    document.getElementById("t-tokens").textContent = data.t_tokens.toLocaleString();
+                    setElText("p-tokens", typeof data.p_tokens === "number" ? data.p_tokens.toLocaleString() : "0");
+                    setElText("c-tokens", typeof data.c_tokens === "number" ? data.c_tokens.toLocaleString() : "0");
+                    setElText("t-tokens", typeof data.t_tokens === "number" ? data.t_tokens.toLocaleString() : "0");
 
                     // 4. Update dynamic HTML blocks
-                    document.getElementById("oauth-banner-container").innerHTML = data.oauth_banner_html;
-                    document.getElementById("tier-table-container").innerHTML = data.tier_table_html;
-                    document.getElementById("pie-legend-container").innerHTML = data.pie_legend_html;
-                    document.getElementById("routing-legend-container").innerHTML = data.routing_legend_html || "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>";
-                    document.getElementById("tool-tokens-container").innerHTML = data.tool_tokens_html;
-                    document.getElementById("timeline-container").innerHTML = data.timeline_html;
-                    document.getElementById("goose-sessions-container").innerHTML = data.goose_html;
-                    document.getElementById("llamacpp-models-container").innerHTML = data.llamacpp_models_html;
-                    document.getElementById("llamacpp-slots-container").innerHTML = data.llamacpp_slots_html;
+                    setElHTML("oauth-banner-container", data.oauth_banner_html);
+                    setElHTML("tier-table-container", data.tier_table_html);
+                    setElHTML("pie-legend-container", data.pie_legend_html);
+                    setElHTML("routing-legend-container", data.routing_legend_html || "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>");
+                    setElHTML("tool-tokens-container", data.tool_tokens_html);
+                    setElHTML("timeline-container", data.timeline_html);
+                    setElHTML("goose-sessions-container", data.goose_html);
+                    setElHTML("llamacpp-models-container", data.llamacpp_models_html);
+                    setElHTML("llamacpp-slots-container", data.llamacpp_slots_html);
 
                     // 5. Update Frontier Free Model widget
                     const bestFreeModelContainer = document.getElementById("best-free-model-container");
-                    if (bestFreeModelContainer) {{
+                    if (bestFreeModelContainer && data.best_free_model) {{
                         const m = data.best_free_model;
                         const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
+                        const contextVal = (typeof m.context_length === "number" ? m.context_length : 0).toLocaleString();
+                        const scoreVal = (typeof m.score === "number" ? m.score : 0).toFixed(1);
                         bestFreeModelContainer.innerHTML = `
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="font-weight: 800; font-size: 16px; color: #fff;">${{m.name}}</span>
-                                <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${{m.score.toFixed(1)}}</span>
+                                <span style="font-weight: 800; font-size: 16px; color: #fff;">${{m.name || 'Unknown'}}</span>
+                                <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${{scoreVal}}</span>
                             </div>
                             <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
-                                ID: ${{m.id}}
+                                ID: ${{m.id || 'unknown'}}
                             </div>
                             <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                                <span>📐 context ${{m.context_length.toLocaleString()}} tok</span>
+                                <span>📐 context ${{contextVal}} tok</span>
                                 <span style="color: #34d399; font-weight: bold;">${{statusLabel}}</span>
                             </div>
                         `;
                     }}
 
                     // 6. Update pie chart gradients
-                    document.getElementById("tool-token-pie-chart").style.background = data.pie_gradient;
-                    document.getElementById("routing-path-pie-chart").style.background = data.routing_pie_gradient;
+                    const cleanGradient = (g) => g ? g.replace("background:", "").replace(";", "").trim() : "";
+                    
+                    const toolPie = document.getElementById("tool-token-pie-chart");
+                    if (toolPie && data.pie_gradient) {{
+                        toolPie.style.background = cleanGradient(data.pie_gradient);
+                    }}
+                    
+                    const routingPie = document.getElementById("routing-path-pie-chart");
+                    if (routingPie && data.routing_pie_gradient) {{
+                        routingPie.style.background = cleanGradient(data.routing_pie_gradient);
+                    }}
 
                 }} catch (e) {{
                     console.error("Dashboard fetch failed: ", e);
