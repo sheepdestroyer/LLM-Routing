@@ -2151,10 +2151,12 @@ async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
     # 1. Run live health checks
-    valkey_status = await check_tcp_port("127.0.0.1", 6379)
-    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
-    llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
-    langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
+    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+        check_tcp_port("127.0.0.1", 6379),
+        check_http_endpoint("http://127.0.0.1:4000/"),
+        check_http_endpoint("http://127.0.0.1:8080/health"),
+        check_http_endpoint("http://127.0.0.1:3001")
+    )
 
     # 1c. Check Gemini OAuth token status
     oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
