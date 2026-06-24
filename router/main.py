@@ -2109,6 +2109,11 @@ async def metrics():
     
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
+# Source badge helper: generates a colored inline source tag
+def src_badge(label, color):
+    """Generate inline HTML span styled as a colored status/category badge."""
+    return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
+
 async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
@@ -2371,11 +2376,6 @@ async def get_dashboard_data():
     c_tokens = stats.get("completion_tokens", 0)
     t_tokens = p_tokens + c_tokens
     
-    # Source badge helper: generates a colored inline source tag
-    def src_badge(label, color):
-        """Generate inline HTML span styled as a colored status/category badge."""
-        return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
-
     # 10. Pre-compute llama.cpp HTML cards
     llamacpp_models_html = ""
     if llamacpp["models"]:
@@ -2485,11 +2485,6 @@ async def get_dashboard():
     cache_hits = data["cache_hits"]
     total_requests = data["total_requests"]
     last_triage_decision = data["last_triage_decision"]
-
-    # Source badge helper: generates a colored inline source tag
-    def src_badge(label, color):
-        """Generate inline HTML span styled as a colored status/category badge."""
-        return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
 
     html_content = f"""
     <!DOCTYPE html>
