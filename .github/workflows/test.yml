@@ -30,4 +30,3 @@ jobs:
 
       - name: Run Integration Verification
         run: python3 test_a2_verify.py
-
