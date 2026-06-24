@@ -284,7 +284,7 @@ if __name__ == "__main__":
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
-    
+
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
     print("=" * 60)
