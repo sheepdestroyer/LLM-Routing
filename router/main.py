@@ -72,17 +72,17 @@ def estimate_prompt_tokens(body: dict) -> int:
     """
     tokens = 0
     messages = body.get("messages")
-    if type(messages) is list:
+    if isinstance(messages, list):
         for msg in messages:
-            if type(msg) is dict:
+            if isinstance(msg, dict):
                 content = msg.get("content")
-                if type(content) is str:
+                if isinstance(content, str):
                     tokens += len(content) // 4
-                elif type(content) is list:
+                elif isinstance(content, list):
                     for block in content:
-                        if type(block) is dict and block.get("type") == "text":
+                        if isinstance(block, dict) and block.get("type") == "text":
                             text = block.get("text")
-                            if type(text) is str:
+                            if isinstance(text, str):
                                 tokens += len(text) // 4
     # Include a flat estimate for system prompt / metadata overhead
     tokens += 50
