@@ -18,8 +18,15 @@ from contextlib import asynccontextmanager
 
 import yaml
 import httpx
-import asyncpg
-import langfuse
+try:
+    import asyncpg
+except ImportError:
+    asyncpg = None
+
+try:
+    import langfuse
+except ImportError:
+    langfuse = None
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -27,7 +34,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from circuit_breaker import get_breaker
-from agy_proxy import try_agy_proxy
+try:
+    from agy_proxy import try_agy_proxy
+except ImportError:
+    try_agy_proxy = None
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -162,6 +172,8 @@ def get_langfuse():
     global _langfuse_client
     if _langfuse_client is None:
         try:
+            if langfuse is None:
+                raise ImportError("langfuse is not installed")
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
@@ -381,6 +393,8 @@ classification_lock = asyncio.Lock()
 
 async def _purge_stale_deployments(db_url: str, pattern: str):
     """Purge stale deployments matching the pattern from LiteLLM's DB."""
+    if asyncpg is None:
+        raise ImportError("asyncpg is not installed")
     conn = await asyncpg.connect(db_url)
     try:
         await conn.execute(
@@ -1544,6 +1558,8 @@ async def chat_completions(request: Request):
     if should_try_agy:
         agy_span_obj = None
         try:
+            if try_agy_proxy is None:
+                raise ImportError("agy_proxy is not available")
             last_prompt = ""
             for msg in reversed(messages):
                 if not isinstance(msg, dict):
