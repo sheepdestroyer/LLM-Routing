@@ -15,6 +15,8 @@ Simulates consecutive quota failures and verifies:
 
 import sys
 import time
+import asyncio
+from unittest.mock import patch, AsyncMock
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -175,6 +177,24 @@ def test_full_cycle():
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
 
 
+def test_sync_from_valkey_exception_handling():
+    """Exception during Valkey sync is caught and logged."""
+    reset_breakers()
+    b = get_breaker()
+
+    mock_redis = AsyncMock()
+    mock_redis.hgetall.side_effect = Exception("Simulated connection error")
+
+    with patch("router.circuit_breaker.logger.warning") as mock_logger_warning:
+        asyncio.run(b.google.sync_from_valkey(mock_redis))
+
+        mock_redis.hgetall.assert_called_once_with("circuit_breaker:google")
+        mock_logger_warning.assert_called_once_with(
+            "Valkey circuit_breaker [google] sync failed: Simulated connection error"
+        )
+    print("✓ Valkey sync exception handling")
+
+
 if __name__ == "__main__":
     test_initial_state()
     test_first_failure_trips_to_tier1()
@@ -184,6 +204,7 @@ if __name__ == "__main__":
     test_success_resets()
     test_backward_compatibility()
     test_full_cycle()
+    test_sync_from_valkey_exception_handling()
     
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
