@@ -1,5 +1,5 @@
 """Retry the 94 failed prompts with 800-char truncation (safe for 4096-ctx model)."""
-import json, urllib.request, time, subprocess, tempfile, os
+import json, urllib.request, time, tempfile, os
 from pathlib import Path
 from collections import Counter
 
