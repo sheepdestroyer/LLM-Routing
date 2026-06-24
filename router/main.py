@@ -1366,7 +1366,7 @@ async def proxy_memory(request: Request, path: str = ""):
         # Exclude standard headers that FastAPI/uvicorn will manage
         for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
             response_headers.pop(h, None)
-
+            
         return Response(
             content=r.content,
             status_code=r.status_code,
