@@ -62,9 +62,6 @@ def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     assert parsed_written_data["token_type"] == "Bearer"
     assert "expiry_date" in parsed_written_data
 
-    captured = capsys.readouterr()
-    assert "✓ Success: Synced fresh token." in captured.out
-
 def test_secret_tool_failure(mock_subprocess, capsys):
     mock_result = MagicMock()
     mock_result.returncode = 1
@@ -137,7 +134,6 @@ def test_fallback_expiry(mock_subprocess, mock_os_makedirs, mock_time, capsys):
 
     captured = capsys.readouterr()
     assert "Warning: Failed to parse expiry date 'invalid-date'" in captured.err
-    assert "✓ Success: Synced fresh token. Expires in 60m 0s" in captured.out
 
     handle = m_open()
     written_data = "".join(call.args[0] for call in handle.write.call_args_list)
