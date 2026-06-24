@@ -19,6 +19,9 @@ from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
 
+LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+
 _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
@@ -43,13 +46,23 @@ def get_redis():
     return _redis_client
 
 
+# Connection pool limits configuration for the shared HTTP client
+HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
+HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
+
 _http_client = None
 
 def get_http_client():
-    """Return the shared global httpx.AsyncClient singleton."""
+    """Return the shared global httpx.AsyncClient singleton with configured limits."""
     global _http_client
     if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=3600.0)
+        limits = httpx.Limits(
+            max_connections=HTTP_MAX_CONNECTIONS,
+            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+        )
+        _http_client = httpx.AsyncClient(limits=limits, timeout=3600.0)
     return _http_client
 
 
@@ -390,12 +403,12 @@ async def sync_adaptive_router_roster(master_key: str):
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
     admin_url = "http://127.0.0.1:4000"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get("https://openrouter.ai/api/v1/models")
-            if r.status_code != 200:
-                logger.warning(f"OpenRouter models API returned {r.status_code}")
-                return
-            all_models = r.json().get("data", [])
+        client = get_http_client()
+        r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
+        if r.status_code != 200:
+            logger.warning(f"OpenRouter models API returned {r.status_code}")
+            return
+        all_models = r.json().get("data", [])
     except Exception as e:
         logger.warning(f"Failed to fetch OpenRouter models: {e}")
         return
@@ -487,51 +500,52 @@ async def sync_adaptive_router_roster(master_key: str):
     for tier_name, models in tier_assignments.items():
         if not models:
             tier_assignments[tier_name] = top_two[:]
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # Purge all existing agent-* deployments before re-registering.
-        # Without this, every roster sync accumulates stale deployments (4,591+
-        # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
-        # starts clean — delete all, then register only the current roster.
-        try:
-            db_url = os.getenv("DATABASE_URL")
-            if not db_url:
-                logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
-            else:
-                await _purge_stale_deployments(db_url, 'agent-%')
-                logger.info("🧹 Purged stale agent-* deployments before roster sync")
-        except Exception as e:
-            logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
-        registered = 0
-        failed = 0
-        for tier_name, model_ids in tier_assignments.items():
-            for mid in model_ids:
-                ctx_len = model_contexts.get(mid, 262144)
-                sp = model_supported_params.get(mid, [])
-                payload = {
-                    "model_name": tier_name,
-                    "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
-                    "model_info": {
-                        "supports_vision": "vision" in sp,
-                        "supports_reasoning": True,  # OpenRouter API has no "reasoning" param; assume all modern LLMs support it
-                        "supports_function_calling": "tools" in sp,
-                        "mode": "chat",
-                        "max_tokens": ctx_len,
-                        "max_input_tokens": ctx_len,
-                        "is_public_model_group": True
-                    }
+    client = get_http_client()
+    # Purge all existing agent-* deployments before re-registering.
+    # Without this, every roster sync accumulates stale deployments (4,591+
+    # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
+    # starts clean — delete all, then register only the current roster.
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
+        else:
+            await _purge_stale_deployments(db_url, 'agent-%')
+            logger.info("🧹 Purged stale agent-* deployments before roster sync")
+    except Exception as e:
+        logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
+
+    registered = 0
+    failed = 0
+    for tier_name, model_ids in tier_assignments.items():
+        for mid in model_ids:
+            ctx_len = model_contexts.get(mid, 262144)
+            sp = model_supported_params.get(mid, [])
+            payload = {
+                "model_name": tier_name,
+                "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
+                "model_info": {
+                    "supports_vision": "vision" in sp,
+                    "supports_reasoning": True,  # OpenRouter API has no "reasoning" param; assume all modern LLMs support it
+                    "supports_function_calling": "tools" in sp,
+                    "mode": "chat",
+                    "max_tokens": ctx_len,
+                    "max_input_tokens": ctx_len,
+                    "is_public_model_group": True
                 }
-                try:
-                    r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
-                    if r.status_code in (200, 201):
-                        registered += 1
-                    else:
-                        failed += 1
-                        logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
-                except Exception as e:
+            }
+            try:
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
+                if r.status_code in (200, 201):
+                    registered += 1
+                else:
                     failed += 1
-                    logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
-        logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
+                    logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
+            except Exception as e:
+                failed += 1
+                logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
+    logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
 
 async def _register_ollama_models_in_db(master_key: str):
     """Register static ollama models via /model/new so they become DB models.
@@ -634,21 +648,21 @@ async def _register_ollama_models_in_db(master_key: str):
     except Exception as e:
         logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        registered = 0
-        failed = 0
-        for payload in ollama_models:
-            try:
-                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload)
-                if r.status_code in (200, 201):
-                    registered += 1
-                else:
-                    failed += 1
-                    logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
-            except Exception as e:
+    client = get_http_client()
+    registered = 0
+    failed = 0
+    for payload in ollama_models:
+        try:
+            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
+            if r.status_code in (200, 201):
+                registered += 1
+            else:
                 failed += 1
-                logger.warning(f"Failed to register {payload['model_name']}: {e}")
-        logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
+                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Failed to register {payload['model_name']}: {e}")
+    logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
 @asynccontextmanager
@@ -658,17 +672,17 @@ async def lifespan(app: FastAPI):
     get_http_client()
     await sync_cooldowns_from_valkey()
 
-    litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
+    litellm_ready_url = f"{LITELLM_URL}/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     max_wait = 180
-    logger.info(f"⏳ Waiting for LiteLLM on :4000 (max {max_wait}s)...")
+    logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
+    client = get_http_client()
     for i in range(max_wait):
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                r = await client.get(litellm_ready_url)
-                if r.status_code == 200:
-                    logger.info(f"✅ LiteLLM ready after {i+1}s")
-                    break
+            r = await client.get(litellm_ready_url, timeout=2.0)
+            if r.status_code == 200:
+                logger.info(f"✅ LiteLLM ready after {i+1}s")
+                break
         except Exception:
             pass
         await asyncio.sleep(1)
@@ -740,9 +754,9 @@ async def check_tcp_port(ip: str, port: int) -> bool:
 async def check_http_endpoint(url: str) -> bool:
     """Verifies if an HTTP endpoint is responsive."""
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(url)
-            return r.status_code < 500
+        client = get_http_client()
+        r = await client.get(url, timeout=3.0)
+        return r.status_code < 500
     except Exception:
         return False
 
@@ -780,85 +794,86 @@ async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_tra
                 return cached_decision, 0.0, True, cached_decision
                 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                payload = {
-                    "model": router_model_name,
-                    "messages": [
-                        {"role": "user", "content": system_prompt + prompt}
-                    ],
-                    "temperature": 0.0,
-                    "max_tokens": 15,
-                }
-                headers = {"Authorization": f"Bearer {router_api_key}"}
-                
-                logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
+            client = get_http_client()
+            payload = {
+                "model": router_model_name,
+                "messages": [
+                    {"role": "user", "content": system_prompt + prompt}
+                ],
+                "temperature": 0.0,
+                "max_tokens": 15,
+            }
+            headers = {"Authorization": f"Bearer {router_api_key}"}
 
-                # --- Langfuse child span: classifier call ---
-                class_span_obj = None
-                if langfuse_trace_id:
-                    lf_cls = get_langfuse()
-                    if lf_cls:
-                        try:
-                            class_span_obj = lf_cls.start_observation(
-                                trace_context={"trace_id": langfuse_trace_id},
-                                name="classifier-qwen",
-                                input=prompt[:200],
-                                metadata={"model": router_model_name},
-                                level="DEFAULT",
-                            )
-                        except Exception:
-                            pass
+            logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
 
-                response = await client.post(
-                    f"{router_api_base}/chat/completions",
-                    json=payload,
-                    headers=headers
-                )
-                
-                latency = (time.time() - start_time) * 1000.0
-                
-                if response.status_code != 200:
-                    if class_span_obj:
-                        try:
-                            class_span_obj.end(
-                                output={"status": response.status_code, "error": "classification_failed"},
-                                metadata={"latency_ms": latency},
-                            )
-                        except Exception:
-                            pass
-                    logger.error(f"Classification failed with status {response.status_code}: {response.text}")
-                    return "agent-advanced-core", latency, False, "advanced (fallback)"
-                    
-                result = response.json()
-                message_obj = result["choices"][0]["message"]
-                content = message_obj.get("content") or ""
-                content_clean = content.strip()
-                raw_result = content_clean if content_clean else "advanced (empty)"
-                logger.info(f"Raw classifier response: '{raw_result}'")
-                
-                # 5-tier grammar parsing (was 3-tier, missed medium + advanced)
-                valid_tiers = {
-                    "agent-simple-core", "agent-medium-core", "agent-complex-core",
-                    "agent-reasoning-core", "agent-advanced-core"
-                }
-                if content_clean in valid_tiers:
-                    decision = content_clean
-                else:
-                    decision = "agent-advanced-core"
-                
-                # Finalize classifier child span
+            # --- Langfuse child span: classifier call ---
+            class_span_obj = None
+            if langfuse_trace_id:
+                lf_cls = get_langfuse()
+                if lf_cls:
+                    try:
+                        class_span_obj = lf_cls.start_observation(
+                            trace_context={"trace_id": langfuse_trace_id},
+                            name="classifier-qwen",
+                            input=prompt[:200],
+                            metadata={"model": router_model_name},
+                            level="DEFAULT",
+                        )
+                    except Exception:
+                        pass
+
+            response = await client.post(
+                f"{router_api_base}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=120.0
+            )
+
+            latency = (time.time() - start_time) * 1000.0
+
+            if response.status_code != 200:
                 if class_span_obj:
                     try:
                         class_span_obj.end(
-                            output={"tier": decision, "raw": raw_result},
+                            output={"status": response.status_code, "error": "classification_failed"},
                             metadata={"latency_ms": latency},
                         )
                     except Exception:
                         pass
-                    
-                # Store in cache
-                triage_cache[normalized_prompt] = (decision, time.time())
-                return decision, latency, False, raw_result
+                logger.error(f"Classification failed with status {response.status_code}: {response.text}")
+                return "agent-advanced-core", latency, False, "advanced (fallback)"
+
+            result = response.json()
+            message_obj = result["choices"][0]["message"]
+            content = message_obj.get("content") or ""
+            content_clean = content.strip()
+            raw_result = content_clean if content_clean else "advanced (empty)"
+            logger.info(f"Raw classifier response: '{raw_result}'")
+
+            # 5-tier grammar parsing (was 3-tier, missed medium + advanced)
+            valid_tiers = {
+                "agent-simple-core", "agent-medium-core", "agent-complex-core",
+                "agent-reasoning-core", "agent-advanced-core"
+            }
+            if content_clean in valid_tiers:
+                decision = content_clean
+            else:
+                decision = "agent-advanced-core"
+
+            # Finalize classifier child span
+            if class_span_obj:
+                try:
+                    class_span_obj.end(
+                        output={"tier": decision, "raw": raw_result},
+                        metadata={"latency_ms": latency},
+                    )
+                except Exception:
+                    pass
+
+            # Store in cache
+            triage_cache[normalized_prompt] = (decision, time.time())
+            return decision, latency, False, raw_result
                     
         except Exception as e:
             latency = (time.time() - start_time) * 1000.0
@@ -1108,46 +1123,46 @@ async def get_llamacpp_metrics() -> dict:
     """Fetches live model inventory and slot statistics from the local llama-server."""
     result = {"models": [], "slots": [], "build": "unknown"}
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            # Fetch model list
-            r = await client.get("http://127.0.0.1:8080/v1/models")
-            if r.status_code == 200:
-                data = r.json()
-                for m in data.get("data", []):
-                    meta = m.get("meta", {})
-                    status_obj = m.get("status", {})
-                    result["models"].append({
-                        "id": m.get("id", "?"),
-                        "status": status_obj.get("value", "unknown"),
-                        "n_params": meta.get("n_params"),
-                        "n_ctx": meta.get("n_ctx"),
-                        "size_bytes": meta.get("size"),
-                        "n_embd": meta.get("n_embd"),
+        client = get_http_client()
+        # Fetch model list
+        r = await client.get(f"{LLAMA_SERVER_URL}/v1/models", timeout=3.0)
+        if r.status_code == 200:
+            data = r.json()
+            for m in data.get("data", []):
+                meta = m.get("meta", {})
+                status_obj = m.get("status", {})
+                result["models"].append({
+                    "id": m.get("id", "?"),
+                    "status": status_obj.get("value", "unknown"),
+                    "n_params": meta.get("n_params"),
+                    "n_ctx": meta.get("n_ctx"),
+                    "size_bytes": meta.get("size"),
+                    "n_embd": meta.get("n_embd"),
+                })
+        # Fetch props for build info
+        r2 = await client.get(f"{LLAMA_SERVER_URL}/props", timeout=3.0)
+        if r2.status_code == 200:
+            props = r2.json()
+            result["build"] = props.get("build_info", "unknown")
+        # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
+        loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
+        slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
+        if slot_model:
+            r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0)
+            if r3.status_code == 200:
+                slots_data = r3.json()
+                for s in slots_data:
+                    next_tok = s.get("next_token", [{}])
+                    decoded = next_tok[0].get("n_decoded", 0) if next_tok else 0
+                    result["slots"].append({
+                        "id": s.get("id", 0),
+                        "is_processing": s.get("is_processing", False),
+                        "n_ctx": s.get("n_ctx", 0),
+                        "n_prompt_tokens": s.get("n_prompt_tokens", 0),
+                        "n_prompt_processed": s.get("n_prompt_tokens_processed", 0),
+                        "n_decoded": decoded,
+                        "speculative": s.get("speculative", False),
                     })
-            # Fetch props for build info
-            r2 = await client.get("http://127.0.0.1:8080/props")
-            if r2.status_code == 200:
-                props = r2.json()
-                result["build"] = props.get("build_info", "unknown")
-            # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
-            loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
-            slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
-            if slot_model:
-                r3 = await client.get(f"http://127.0.0.1:8080/slots?model={slot_model}")
-                if r3.status_code == 200:
-                    slots_data = r3.json()
-                    for s in slots_data:
-                        next_tok = s.get("next_token", [{}])
-                        decoded = next_tok[0].get("n_decoded", 0) if next_tok else 0
-                        result["slots"].append({
-                            "id": s.get("id", 0),
-                            "is_processing": s.get("is_processing", False),
-                            "n_ctx": s.get("n_ctx", 0),
-                            "n_prompt_tokens": s.get("n_prompt_tokens", 0),
-                            "n_prompt_processed": s.get("n_prompt_tokens_processed", 0),
-                            "n_decoded": decoded,
-                            "speculative": s.get("speculative", False),
-                        })
     except Exception as e:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
     return result
@@ -1233,49 +1248,49 @@ async def get_best_free_model() -> dict:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get("https://openrouter.ai/api/v1/models")
-            if r.status_code == 200:
-                data = r.json().get("data", [])
-                best_model = None
-                max_score = -1.0
-                all_free = []
+        client = get_http_client()
+        r = await client.get("https://openrouter.ai/api/v1/models", timeout=2.0)
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            best_model = None
+            max_score = -1.0
+            all_free = []
+
+            for m in data:
+                mid = m.get("id", "")
+                # Denylist: skip stale/unreliable free tier models
+                _denylist_prefixes = (
+                    "meta-llama/", "nousresearch/hermes-3-llama",
+                )
+                if any(mid.startswith(p) for p in _denylist_prefixes):
+                    continue
+                pricing = m.get("pricing", {})
+                # Standard pricing is string or float
+                p_prompt = pricing.get("prompt")
+                p_comp = pricing.get("completion")
                 
-                for m in data:
-                    mid = m.get("id", "")
-                    # Denylist: skip stale/unreliable free tier models
-                    _denylist_prefixes = (
-                        "meta-llama/", "nousresearch/hermes-3-llama",
-                    )
-                    if any(mid.startswith(p) for p in _denylist_prefixes):
-                        continue
-                    pricing = m.get("pricing", {})
-                    # Standard pricing is string or float
-                    p_prompt = pricing.get("prompt")
-                    p_comp = pricing.get("completion")
-                    
-                    # Verify if it is free
-                    if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
-                        score = compute_free_model_score(m)
-                        entry = {
-                            "id": mid,
-                            "name": m.get("name", mid),
-                            "score": score,
-                            "context_length": m.get("context_length", 0),
-                        }
-                        all_free.append(entry)
-                        if score > max_score:
-                            max_score = score
-                            best_model = {**entry, "is_fallback": False}
-                # Sort by score descending
-                all_free.sort(key=lambda x: x["score"], reverse=True)
-                _save_free_models_roster(all_free)
-                if best_model:
-                    free_model_cache["data"] = best_model
-                    free_model_cache["last_fetched"] = now
-                    logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
-                    _save_best_model_to_disk(best_model)
-                    return best_model
+                # Verify if it is free
+                if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
+                    score = compute_free_model_score(m)
+                    entry = {
+                        "id": mid,
+                        "name": m.get("name", mid),
+                        "score": score,
+                        "context_length": m.get("context_length", 0),
+                    }
+                    all_free.append(entry)
+                    if score > max_score:
+                        max_score = score
+                        best_model = {**entry, "is_fallback": False}
+            # Sort by score descending
+            all_free.sort(key=lambda x: x["score"], reverse=True)
+            _save_free_models_roster(all_free)
+            if best_model:
+                free_model_cache["data"] = best_model
+                free_model_cache["last_fetched"] = now
+                logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
+                _save_best_model_to_disk(best_model)
+                return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
     
@@ -1336,26 +1351,27 @@ async def proxy_memory(request: Request, path: str = ""):
     logger.info(f"Proxying memory request: {request.method} {url} with params {query_params}")
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.request(
-                method=request.method,
-                url=url,
-                params=query_params,
-                content=body,
-                headers=headers
-            )
+        client = get_http_client()
+        r = await client.request(
+            method=request.method,
+            url=url,
+            params=query_params,
+            content=body,
+            headers=headers,
+            timeout=30.0
+        )
             
-            # Return response matching status and headers
-            response_headers = dict(r.headers)
-            # Exclude standard headers that FastAPI/uvicorn will manage
-            for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
-                response_headers.pop(h, None)
-                
-            return Response(
-                content=r.content,
-                status_code=r.status_code,
-                headers=response_headers
-            )
+        # Return response matching status and headers
+        response_headers = dict(r.headers)
+        # Exclude standard headers that FastAPI/uvicorn will manage
+        for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
+            response_headers.pop(h, None)
+            
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            headers=response_headers
+        )
     except Exception as e:
         logger.error(f"Failed to proxy memory request: {e}")
         raise HTTPException(status_code=502, detail=f"Memory proxy failed: {e}")
@@ -1365,30 +1381,47 @@ async def proxy_models():
     """Proxy /v1/models to LiteLLM, injecting llm-routing-auto-free as the first entry."""
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            auth_header = "Bearer " + (litellm_key or "")
-            r = await client.get(
-                "http://127.0.0.1:4000/v1/models",
-                headers={"Authorization": auth_header}
-            )
-            data = r.json()
-            # Inject llm-routing-* models at the top of the list.
-            # Auto models (classifier pipeline) first, then direct models.
-            # Context lengths aligned with downstream model targets:
-            # - auto-free / auto-agy: 262144 (262K)
-            # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
-            # - llm-routing-agy: 1048576 (1M)
-            routing_models = [
-                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
-                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-            ]
-            for entry in reversed(routing_models):
-                data["data"].insert(0, entry)
-            return JSONResponse(content=data, status_code=r.status_code)
+        client = get_http_client()
+        auth_header = "Bearer " + (litellm_key or "")
+        r = await client.get(
+            f"{LITELLM_URL}/v1/models",
+            headers={"Authorization": auth_header},
+            timeout=10.0
+        )
+
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                if isinstance(data, dict) and "data" in data:
+                    # Inject llm-routing-* models at the top of the list.
+                    # Auto models (classifier pipeline) first, then direct models.
+                    # Context lengths aligned with downstream model targets:
+                    # - auto-free / auto-agy: 262144 (262K)
+                    # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
+                    # - llm-routing-agy: 1048576 (1M)
+                    routing_models = [
+                        {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                        {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                    ]
+                    for entry in reversed(routing_models):
+                        data["data"].insert(0, entry)
+                    return JSONResponse(content=data, status_code=200)
+            except Exception as parse_err:
+                logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
+
+        # If not 200, or parsing failed, return the raw response with appropriate headers
+        response_headers = dict(r.headers)
+        for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
+            response_headers.pop(h, None)
+        return Response(
+            content=r.content,
+            status_code=r.status_code,
+            headers=response_headers
+        )
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
         raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
