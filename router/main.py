@@ -962,10 +962,10 @@ def detect_active_tool(body: dict) -> str:
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
                                     if isinstance(tc, dict) and tc.get("id") == tool_call_id:
-                                    fn = tc.get("function")
-                                    if isinstance(fn, dict):
-                                        name = fn.get("name")
-                                    break
+                                        fn = tc.get("function")
+                                        if isinstance(fn, dict):
+                                            name = fn.get("name")
+                                        break
                         if name:
                             break
             name = name or "other"
