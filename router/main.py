@@ -2176,8 +2176,14 @@ async def get_dashboard():
     # 1b. Fetch top free model from OpenRouter
     best_free_model = await get_best_free_model()
 
-    # 2. Query Goose Sessions SQLite DB
-    goose_sessions = await asyncio.to_thread(get_goose_sessions)
+    # 2. Query Goose Sessions SQLite DB asynchronously.
+    # Note: get_goose_sessions creates and closes its sqlite3 connection entirely inside
+    # the function, making it thread-safe for background worker thread execution.
+    try:
+        goose_sessions = await asyncio.to_thread(get_goose_sessions)
+    except Exception as e:
+        logger.error(f"Failed to query goose sessions asynchronously: {e}")
+        goose_sessions = []
 
     # 2b. Fetch live llama.cpp metrics
     llamacpp = await get_llamacpp_metrics()
