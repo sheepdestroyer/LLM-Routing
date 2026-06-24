@@ -19,11 +19,9 @@ Fallback Tiers (same conversation, different model):
   Fallback: Existing LiteLLM chain (OpenRouter free → local Qwen)
 """
 
-import asyncio
 import json
 import logging
 import os
-import shlex
 import time
 import httpx
 from typing import Optional, Protocol, runtime_checkable
@@ -69,6 +67,8 @@ AGY_TOTAL_TIMEOUT_SECS = 300
 # agy_conversation_data = {"conversation_id": str, "current_tier_index": int}
 _session_store: dict = {}
 
+AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+
 
 def _get_last_conversation_id() -> Optional[str]:
     """Read the last conversation ID for our workspace from agy's cache file."""
@@ -91,7 +91,7 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
     """
     Forward the agy execution request to the host-side agy daemon.
     """
-    url = "http://127.0.0.1:5005/run"
+    url = f"{AGY_DAEMON_URL}/run"
     payload = {
         "prompt": prompt,
         "model_override": model_override,
@@ -299,7 +299,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
             
             if stream:
-                url = "http://127.0.0.1:5005/run"
+                url = f"{AGY_DAEMON_URL}/run"
                 payload = {
                     "prompt": proxy_prompt,
                     "model_override": tier["env_override"],
