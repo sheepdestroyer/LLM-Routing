@@ -43,8 +43,6 @@ from circuit_breaker import get_google_breaker, get_vendor_breaker
 
 logger = logging.getLogger("agy-proxy")
 
-AGY_DAEMON_URL = (os.getenv("AGY_DAEMON_URL") or "http://127.0.0.1:5005").rstrip("/")
-
 # In container: mounted from host /home/gpav/.local/bin/agy
 AGY_BINARY = os.environ.get("AGY_BINARY_PATH", "/usr/local/bin/agy")
 if not os.path.exists(AGY_BINARY):
@@ -93,7 +91,7 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
     """
     Forward the agy execution request to the host-side agy daemon.
     """
-    url = f"{AGY_DAEMON_URL}/run"
+    url = "http://127.0.0.1:5005/run"
     payload = {
         "prompt": prompt,
         "model_override": model_override,
@@ -301,7 +299,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
             tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
             
             if stream:
-                url = f"{AGY_DAEMON_URL}/run"
+                url = "http://127.0.0.1:5005/run"
                 payload = {
                     "prompt": proxy_prompt,
                     "model_override": tier["env_override"],
