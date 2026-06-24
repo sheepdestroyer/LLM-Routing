@@ -202,6 +202,7 @@ def test_sync_from_valkey_exception_handling():
     reset_breakers()
     b = get_breaker()
 
+
     mock_redis = AsyncMock()
     mock_redis.hgetall.side_effect = Exception("Simulated connection error")
 
@@ -215,7 +216,7 @@ def test_sync_from_valkey_exception_handling():
     print("✓ Valkey sync exception handling")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_to_valkey_success():
     """Verify state is correctly serialized and persisted to Valkey."""
     b = get_breaker()
@@ -246,7 +247,7 @@ async def test_save_to_valkey_success():
     print("✓ Valkey save succeeds with correct data and TTL")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_to_valkey_no_client():
     """Verify early return when redis client is None."""
     b = get_breaker()
@@ -256,7 +257,7 @@ async def test_save_to_valkey_no_client():
     print("✓ Valkey save handles None client safely")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_to_valkey_exception_handling():
     """Verify exceptions during Valkey save are caught and logged."""
     b = get_breaker()
