@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import patch, mock_open
-import time
 import router.agy_proxy
 from router.agy_proxy import _is_quota_exhausted
 
