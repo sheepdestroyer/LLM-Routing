@@ -1241,7 +1241,7 @@ async def get_best_free_model() -> dict:
     
     # Check if cache is still valid
     if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
-        _save_best_model_to_disk(free_model_cache["data"])
+        await asyncio.to_thread(_save_best_model_to_disk, free_model_cache["data"])
         return free_model_cache["data"]
         
     fallback_best = {
@@ -1289,17 +1289,17 @@ async def get_best_free_model() -> dict:
                         best_model = {**entry, "is_fallback": False}
             # Sort by score descending
             all_free.sort(key=lambda x: x["score"], reverse=True)
-            _save_free_models_roster(all_free)
+            await asyncio.to_thread(_save_free_models_roster, all_free)
             if best_model:
                 free_model_cache["data"] = best_model
                 free_model_cache["last_fetched"] = now
                 logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
-                _save_best_model_to_disk(best_model)
+                await asyncio.to_thread(_save_best_model_to_disk, best_model)
                 return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
     
-    _save_best_model_to_disk(fallback_best)
+    await asyncio.to_thread(_save_best_model_to_disk, fallback_best)
     return fallback_best
 
 def get_pie_chart_gradient() -> str:
