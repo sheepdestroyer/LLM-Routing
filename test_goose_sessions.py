@@ -61,7 +61,14 @@ def test_get_goose_sessions_success(temp_db):
 
 def test_get_goose_sessions_db_error():
     """Test handling of a database error gracefully."""
-    with mock.patch("os.path.exists", return_value=True):
+    real_exists = os.path.exists
+
+    def fake_exists(path):
+        if path == "/config/goose_sessions/sessions/sessions.db":
+            return True
+        return real_exists(path)
+
+    with mock.patch("os.path.exists", side_effect=fake_exists):
         with mock.patch("sqlite3.connect", side_effect=sqlite3.OperationalError("Database is locked")):
             result = get_goose_sessions()
             assert result == []
