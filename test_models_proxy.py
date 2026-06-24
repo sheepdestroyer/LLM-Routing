@@ -19,6 +19,7 @@ def test_http_client_limits():
     import httpx
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 
     original_init = httpx.Limits.__init__
     calls = []
@@ -27,6 +28,16 @@ def test_http_client_limits():
         calls.append((args, kwargs))
         original_init(self, *args, **kwargs)
 
+=======
+
+    original_init = httpx.Limits.__init__
+    calls = []
+
+    def spy_init(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        original_init(self, *args, **kwargs)
+
+>>>>>>> origin/master
 =======
 
     original_init = httpx.Limits.__init__

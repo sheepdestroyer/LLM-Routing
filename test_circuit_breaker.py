@@ -282,7 +282,11 @@ if __name__ == "__main__":
     test_sync_from_valkey_exception_handling()
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 
+=======
+
+>>>>>>> origin/master
 =======
 
 >>>>>>> origin/master
