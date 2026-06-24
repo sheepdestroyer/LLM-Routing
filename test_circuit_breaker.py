@@ -139,7 +139,6 @@ def test_backward_compatibility():
     print("✓ Master record_failure and record_success maintain compatibility")
 
 
-
 def test_dual_breaker_tier_max_logic():
     """Master breaker tier returns max of sub-breakers."""
     reset_breakers()
@@ -197,7 +196,6 @@ def test_full_cycle():
     assert sub.total_trips == 3
 
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
-
 
 def test_sync_from_valkey_exception_handling():
     """Exception during Valkey sync is caught and logged."""
@@ -270,8 +268,6 @@ async def test_save_to_valkey_exception_handling():
     with patch('router.circuit_breaker.logger') as mock_logger:
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
-
-
 if __name__ == "__main__":
     test_initial_state()
     test_first_failure_trips_to_tier1()
@@ -287,7 +283,7 @@ if __name__ == "__main__":
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
-
+    
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
     print("=" * 60)

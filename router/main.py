@@ -19,6 +19,7 @@ from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
 
+
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 
@@ -672,7 +673,7 @@ async def lifespan(app: FastAPI):
     get_http_client()
     await sync_cooldowns_from_valkey()
 
-    litellm_ready_url = f"{LITELLM_URL}/health/readiness"
+    litellm_ready_url = "http://127.0.0.1:4000/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     max_wait = 180
     logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
