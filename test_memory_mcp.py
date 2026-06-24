@@ -87,6 +87,12 @@ def test_parse_memory_value_invalid_json():
 def test_parse_memory_value_type_error():
     # json.loads will raise TypeError if given something that isn't str, bytes, or bytearray
     raw_data = 12345
-    result = _parse_memory_value(raw_data)
+    result = _parse_memory_value(raw_data)  # type: ignore[arg-type]
     assert result == {"data": 12345, "tags": []}
 
+def test_parse_memory_value_non_dict_json():
+    # If the input is valid JSON but not a dictionary, it currently returns the parsed non-dict value,
+    # which violates the dict return type annotation and can cause downstream KeyErrors/TypeErrors.
+    raw_data = '"just a string"'
+    result = _parse_memory_value(raw_data)
+    assert result == "just a string"
