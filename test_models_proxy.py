@@ -17,14 +17,14 @@ def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
     import main
     import httpx
-    
+
     original_init = httpx.Limits.__init__
     calls = []
-    
+
     def spy_init(self, *args, **kwargs):
         calls.append((args, kwargs))
         original_init(self, *args, **kwargs)
-        
+
     original_client = main._http_client
     main._http_client = None
     try:
