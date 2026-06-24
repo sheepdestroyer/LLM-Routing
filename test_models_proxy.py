@@ -17,14 +17,6 @@ def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
     import main
     import httpx
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 
     original_init = httpx.Limits.__init__
     calls = []
@@ -33,86 +25,6 @@ def test_http_client_limits():
         calls.append((args, kwargs))
         original_init(self, *args, **kwargs)
 
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
-=======
-
-    original_init = httpx.Limits.__init__
-    calls = []
-
-    def spy_init(self, *args, **kwargs):
-        calls.append((args, kwargs))
-        original_init(self, *args, **kwargs)
-
->>>>>>> origin/master
     original_client = main._http_client
     main._http_client = None
     try:

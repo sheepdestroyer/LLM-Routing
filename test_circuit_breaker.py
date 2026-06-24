@@ -280,43 +280,10 @@ if __name__ == "__main__":
     test_full_cycle()
     test_dual_breaker_tier_max_logic()
     test_sync_from_valkey_exception_handling()
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
-=======
-
->>>>>>> origin/master
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
-    
+
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
     print("=" * 60)
