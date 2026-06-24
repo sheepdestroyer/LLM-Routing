@@ -4,10 +4,6 @@ Tests for memory_mcp.py
 """
 
 import sys
-from pathlib import Path
-
-# Need to import memory_mcp from the router module
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from router.memory_mcp import _parse_key
 import pytest
