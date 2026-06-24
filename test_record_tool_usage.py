@@ -34,11 +34,22 @@ INITIAL_STATS = {
 
 @pytest.fixture
 def reset_stats():
-    """Fixture to reset the global stats dict before and after each test."""
+    """Fixture to reset the global stats dict, mock disk writes, and reset throttle timestamps."""
     original_stats = router_main.stats
     router_main.stats = copy.deepcopy(INITIAL_STATS)
-    yield
+    
+    # Reset throttle timestamps to prevent state leakage between tests
+    original_last_stats_save = getattr(router_main, "_last_stats_save", 0.0)
+    original_last_save = getattr(router_main.record_tool_usage, "_last_save", 0.0)
+    router_main._last_stats_save = 0.0
+    router_main.record_tool_usage._last_save = 0.0
+
+    with patch("router.main._atomic_write_json_sync") as mock_write:
+        yield mock_write
+
     router_main.stats = original_stats
+    router_main._last_stats_save = original_last_stats_save
+    router_main.record_tool_usage._last_save = original_last_save
 
 def test_record_tool_usage_basic_accumulation(reset_stats):
     """Test that tool and global token counts are updated correctly."""
