@@ -1,3 +1,4 @@
+import os
 """Re-run gemma4 classifier (with grammar) on all dataset prompts via router."""
 import json
 import os
@@ -29,7 +30,7 @@ def classify(prompt):
         'max_tokens': 15, 'temperature': 0,
         'grammar': 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
     }
-    req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization':'Bearer local-token'})
+    req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization': f'Bearer {os.environ.get("ROUTER_API_KEY", "local-token")}'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     choices = data.get('choices', [])
