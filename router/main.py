@@ -39,12 +39,33 @@ try:
 except ImportError:
     try_agy_proxy = None
 
+from urllib.parse import urlparse
+
 # Global Configuration from Environment
-LITELLM_URL = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000")
-LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080")
-LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://127.0.0.1:3001")
+LITELLM_URL = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000").rstrip("/")
+LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080").rstrip("/")
+LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://127.0.0.1:3001").rstrip("/")
 VALKEY_HOST = os.getenv("VALKEY_HOST", "127.0.0.1")
-VALKEY_PORT = int(os.getenv("VALKEY_PORT", "6379"))
+
+def _get_valkey_port() -> int:
+    try:
+        return int(os.getenv("VALKEY_PORT", "6379"))
+    except ValueError:
+        return 6379
+
+VALKEY_PORT = _get_valkey_port()
+
+def _get_port_suffix(url: str) -> str:
+    try:
+        port = urlparse(url).port
+        return f":{port}" if port else ""
+    except Exception:
+        return ""
+
+LITELLM_PORT = _get_port_suffix(LITELLM_URL)
+LLAMA_SERVER_PORT = _get_port_suffix(LLAMA_SERVER_URL)
+LANGFUSE_PORT = _get_port_suffix(LANGFUSE_URL)
+
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -2463,6 +2484,7 @@ async def get_dashboard_data():
         "t_tokens": t_tokens,
         "llamacpp_models_html": llamacpp_models_html,
         "llamacpp_slots_html": llamacpp_slots_html,
+        "llamacpp": llamacpp,
         "avg_triage_latency_ms": stats["avg_triage_latency_ms"],
         "avg_proxy_latency_ms": stats["avg_proxy_latency_ms"],
         "cache_hits": stats["cache_hits"],
@@ -2500,6 +2522,7 @@ async def get_dashboard():
     t_tokens = data["t_tokens"]
     llamacpp_models_html = data["llamacpp_models_html"]
     llamacpp_slots_html = data["llamacpp_slots_html"]
+    llamacpp = data["llamacpp"]
     avg_triage_latency_ms = data["avg_triage_latency_ms"]
     avg_proxy_latency_ms = data["avg_proxy_latency_ms"]
     cache_hits = data["cache_hits"]
@@ -3084,7 +3107,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">LiteLLM Proxy</span>
-                            <span class="service-port">{':' + LITELLM_URL.split(':')[-1] if LITELLM_URL.count(':') > 1 else ''}</span>
+                            <span class="service-port">{LITELLM_PORT}</span>
                         </div>
                         <span class="badge {'badge-online' if litellm_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if litellm_status else 'Offline'}
@@ -3104,7 +3127,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Llama-Server</span>
-                            <span class="service-port">{':' + LLAMA_SERVER_URL.split(':')[-1] if LLAMA_SERVER_URL.count(':') > 1 else ''}</span>
+                            <span class="service-port">{LLAMA_SERVER_PORT}</span>
                         </div>
                         <span class="badge {'badge-online' if llama_server_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if llama_server_status else 'Offline'}
@@ -3114,7 +3137,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">{':' + LANGFUSE_URL.split(':')[-1] if LANGFUSE_URL.count(':') > 1 else ''}</span>
+                            <span class="service-port">{LANGFUSE_PORT}</span>
                         </div>
                         <span class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
                             <span class="pulse-dot"></span>{'Online' if langfuse_status else 'Offline'}
