@@ -727,13 +727,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
 async def check_tcp_port(ip: str, port: int) -> bool:
-    """Verifies if a TCP port is open locally."""
+    """Verifies if a TCP port is open locally asynchronously."""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        return result == 0
+        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.5)
+        writer.close()
+        await writer.wait_closed()
+        return True
     except Exception:
         return False
 
