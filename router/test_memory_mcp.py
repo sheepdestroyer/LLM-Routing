@@ -31,8 +31,6 @@ def test_parse_memory_value_success():
 def test_parse_memory_value_invalid_json():
     """Test _parse_memory_value with invalid JSON."""
     result = _parse_memory_value("{invalid_json:")
-    # Looking at _parse_memory_value, let's see what it returns when an error occurs
-    # We should look at router/memory_mcp.py to verify its behavior for invalid JSON
     assert result == {"data": "{invalid_json:", "tags": []}
 
 def test_parse_memory_value_type_error():
