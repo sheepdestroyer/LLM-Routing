@@ -163,16 +163,14 @@ def test_record_tool_usage_no_event_loop(mock_get_running_loop, mock_atomic_writ
 
     assert mock_atomic_write_sync.call_count == 2 # one for stats, one for timeline
 
-@patch("router.main._atomic_write_json_sync")
 @patch("router.main.asyncio.get_running_loop")
-def test_record_tool_usage_no_event_loop_fallback_error(mock_get_running_loop, mock_atomic_write_sync, reset_stats):
+def test_record_tool_usage_no_event_loop_fallback_error(mock_get_running_loop, reset_stats):
     """Test fallback sync execution gracefully handles errors."""
     mock_get_running_loop.side_effect = RuntimeError("no running event loop")
+    mock_atomic_write_sync = reset_stats
     mock_atomic_write_sync.side_effect = Exception("write failed")
-
-    # Ensure stats throttle doesn't skip write
-    router_main._last_stats_save = 0.0
-    router_main.record_tool_usage._last_save = 0.0
 
     # Should not raise
     router_main.record_tool_usage("shell", 1, 1, "test", 10.0)
+
+    assert mock_atomic_write_sync.call_count == 2
