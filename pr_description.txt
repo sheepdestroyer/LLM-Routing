@@ -1,12 +1,9 @@
-🎯 **What:**
-The `estimate_prompt_tokens` function inside `router/main.py` computes token approximations for requests by parsing dictionary components (`messages`, `content`, `type: text`), however it lacked test coverage to ensure resilience across different JSON payload permutations (strings, list blocks, ignored variables, nested fields, empty fields).
+🎯 **What:** The `_memory_entry` helper function in `router/memory_mcp.py` was previously completely untested. This function is responsible for converting a raw dictionary representation of a memory entry from LiteLLM into a structured dictionary used by the MCP.
 
-📊 **Coverage:**
-- Evaluated empty payload handling and fallback to 50 overhead estimate.
-- String messages mapping (1 token per 4 chars).
-- Object list contents processing block arrays.
-- Graceful skipping of non-dictionary structures.
-- Bypassing non-existent text elements safely.
+📊 **Coverage:** The new `test_memory_mcp.py` file covers several scenarios for the `_memory_entry` dictionary translation helper:
+- **Happy Path:** Tests that valid and complete memory dictionaries are properly parsed, mapped, and typed.
+- **Invalid Key:** Verifies that if a memory has a key that does not start with `"memory:"`, the function properly returns `None`.
+- **Malformed/String Value:** Tests the graceful fallback when a memory value is a raw string instead of the expected JSON payload, ensuring it still parses the string into the `data` field and initializes an empty `tags` array without throwing a JSON decode error.
+- **Missing Fields:** Tests dictionary inputs that are missing either `"key"` or `"value"` or both to ensure graceful behavior, fallback values, and early exits without `KeyError`s.
 
-✨ **Result:**
-Significant testing footprint improvement verifying prompt token estimators act properly towards all valid and malformed data variations avoiding unpredictable token counts for request tracing.
+✨ **Result:** Increased code reliability and coverage for the core memory data transformation logic with pure, isolated dictionary tests ensuring zero runtime side effects.

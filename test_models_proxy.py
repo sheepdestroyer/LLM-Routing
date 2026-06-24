@@ -14,12 +14,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "router"))
 from main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
 
 def test_http_client_limits():
-    # Verify that get_http_client initializes with configured limits
-    client = get_http_client()
-    pool = client._transport._pool
-    assert pool._max_connections == HTTP_MAX_CONNECTIONS
-    assert pool._max_keepalive_connections == HTTP_MAX_KEEPALIVE_CONNECTIONS
-    assert pool._keepalive_expiry == HTTP_KEEPALIVE_EXPIRY
+    # Verify that get_http_client initializes with configured limits using public mocks
+    import main
+    import httpx
+
+    original_init = httpx.Limits.__init__
+    calls = []
+
+    def spy_init(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        original_init(self, *args, **kwargs)
+
+    original_client = main._http_client
+    main._http_client = None
+    try:
+        with patch.object(httpx.Limits, "__init__", new=spy_init):
+            main.get_http_client()
+            assert len(calls) == 1
+            args, kwargs = calls[0]
+            assert kwargs.get("max_connections") == main.HTTP_MAX_CONNECTIONS
+            assert kwargs.get("max_keepalive_connections") == main.HTTP_MAX_KEEPALIVE_CONNECTIONS
+            assert kwargs.get("keepalive_expiry") == main.HTTP_KEEPALIVE_EXPIRY
+    finally:
+        main._http_client = original_client
+
+
 
 @pytest.mark.anyio
 async def test_proxy_models_success():
