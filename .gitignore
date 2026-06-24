@@ -29,9 +29,10 @@ router/router_timeline.json
 router/best_free_model.json
 router/free_models_roster.json
 
-# Hermes agent artifacts
+# agent artifacts
 .hermes/
 workdirs/
+pr_description.txt
 
 # Dataset work in progress
 data/
