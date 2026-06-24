@@ -139,6 +139,40 @@ def test_backward_compatibility():
     print("✓ Master record_failure and record_success maintain compatibility")
 
 
+
+def test_dual_breaker_tier_max_logic():
+    """Master breaker tier returns max of sub-breakers."""
+    reset_breakers()
+    b = get_breaker()
+
+    # 0/0 -> 0
+    b.google.tier = 0
+    b.vendor.tier = 0
+    assert b.tier == 0
+
+    # 1/0 -> 1
+    b.google.tier = 1
+    b.vendor.tier = 0
+    assert b.tier == 1
+
+    # 0/2 -> 2
+    b.google.tier = 0
+    b.vendor.tier = 2
+    assert b.tier == 2
+
+    # 3/3 -> 3
+    b.google.tier = 3
+    b.vendor.tier = 3
+    assert b.tier == 3
+
+    # 3/1 -> 3
+    b.google.tier = 3
+    b.vendor.tier = 1
+    assert b.tier == 3
+
+    print("✓ Dual breaker tier correctly evaluates to max of sub-breakers")
+
+
 def test_full_cycle():
     """Complete cycle: success → 3 failures → probe success → reset."""
     reset_breakers()
@@ -242,6 +276,7 @@ if __name__ == "__main__":
     test_success_resets()
     test_backward_compatibility()
     test_full_cycle()
+    test_dual_breaker_tier_max_logic()
     
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
