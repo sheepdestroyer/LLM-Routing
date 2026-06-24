@@ -1,5 +1,5 @@
 """Gap-fill extraction: pull longer/older prompts targeting complex+ tiers."""
-import os, base64, json, urllib.request, time, re
+import base64, json, urllib.request, time, re
 from pathlib import Path
 
 env = {}

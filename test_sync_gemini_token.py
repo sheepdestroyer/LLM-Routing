@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
 import sys
@@ -49,7 +50,7 @@ def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
         text=True
     )
 
-    mock_os_makedirs.assert_called_once()
+    mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
     m_open.assert_called_once_with(sync_gemini_token.TARGET_PATH, "w")
 
     # Check the written file
@@ -136,6 +137,8 @@ def test_fallback_expiry(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     with patch('builtins.open', m_open):
         sync_gemini_token.main()
 
+    mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
+
     # Assert standard output/error messages using capsys
     captured = capsys.readouterr()
     assert "Warning: Failed to parse expiry date 'invalid-date'" in captured.err
@@ -169,6 +172,8 @@ def test_expired_token(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     m_open = mock_open()
     with patch('builtins.open', m_open):
         sync_gemini_token.main()
+
+    mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
 
     # Assert standard output message using capsys for expired token
     captured = capsys.readouterr()
