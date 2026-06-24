@@ -202,10 +202,10 @@ async def test_save_to_valkey_success():
         "last_trip_time": "1234567000.0",
     }
 
-    mock_redis.hset.assert_called_once_with("circuit_breaker:google", mapping=expected_state)
+    mock_redis.hset.assert_awaited_once_with("circuit_breaker:google", mapping=expected_state)
     # TTL logic: max(3600.0, cooldown_until - now + 3600.0)
     # max(3600.0, 1234567890.0 - 1234560000.0 + 3600.0) = max(3600.0, 7890.0 + 3600.0) = 11490
-    mock_redis.expire.assert_called_once_with("circuit_breaker:google", 11490)
+    mock_redis.expire.assert_awaited_once_with("circuit_breaker:google", 11490)
     print("✓ Valkey save succeeds with correct data and TTL")
 
 
