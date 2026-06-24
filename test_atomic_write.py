@@ -209,3 +209,8 @@ async def test_atomic_write_json_async_overwrite_dump_failure_keeps_original(tmp
     with open(target_file, "r", encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> origin/master
