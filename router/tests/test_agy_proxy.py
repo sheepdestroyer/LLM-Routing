@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch
 from router.agy_proxy import _wrap_response
 
