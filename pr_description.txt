@@ -1,9 +1,0 @@
-🎯 **What:** The `src_badge` string formatting function in `router/main.py` lacked direct unit testing. Because it dynamically generates UI-facing HTML based on label and color strings, tests are critical for protecting its styling against silent regressions.
-
-📊 **Coverage:** A new test suite (`test_src_badge.py`) was created, verifying:
-- Happy path output formatting.
-- Empty label injection handling.
-- Special character inclusion logic.
-- Exact full string match of generated HTML (verifying structural rules and styling components).
-
-✨ **Result:** Enhanced test coverage around the UI string generating utility. The function's deterministic string output is now thoroughly protected by test cases. No regressions were introduced into the remaining suite.
