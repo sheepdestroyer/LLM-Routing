@@ -1,5 +1,8 @@
 import os
-os.environ["CONFIG_PATH"] = "router/config.yaml"
+
+# Resolve the absolute path to the config file to ensure tests can run from any working directory
+base_dir = os.path.dirname(os.path.abspath(__file__))
+os.environ["CONFIG_PATH"] = os.path.join(base_dir, "router", "config.yaml")
 
 import pytest
 from router.main import detect_active_tool, map_tool_to_category
