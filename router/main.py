@@ -2109,9 +2109,13 @@ async def metrics():
     
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard():
-    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+# Source badge helper: generates a colored inline source tag
+def src_badge(label, color):
+    """Generate inline HTML span styled as a colored status/category badge."""
+    return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
+
+async def get_dashboard_data():
+    """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
     # 1. Run live health checks
     valkey_status = await check_tcp_port("127.0.0.1", 6379)
@@ -2372,11 +2376,6 @@ async def get_dashboard():
     c_tokens = stats.get("completion_tokens", 0)
     t_tokens = p_tokens + c_tokens
     
-    # Source badge helper: generates a colored inline source tag
-    def src_badge(label, color):
-        """Generate inline HTML span styled as a colored status/category badge."""
-        return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
-
     # 10. Pre-compute llama.cpp HTML cards
     llamacpp_models_html = ""
     if llamacpp["models"]:
@@ -2422,6 +2421,70 @@ async def get_dashboard():
             </div>
         </div>
         """
+
+    return {
+        "valkey_status": valkey_status,
+        "litellm_status": litellm_status,
+        "llama_server_status": llama_server_status,
+        "langfuse_status": langfuse_status,
+        "oauth_banner_html": oauth_banner_html,
+        "best_free_model": best_free_model,
+        "tier_table_html": tier_table_html,
+        "pie_gradient": pie_gradient,
+        "total_tool_tokens": total_tool_tokens,
+        "tool_tokens_html": tool_tokens_html,
+        "pie_legend_html": pie_legend_html,
+        "timeline_html": timeline_html,
+        "goose_html": goose_html,
+        "routing_pie_gradient": routing_pie_gradient,
+        "routing_legend_html": routing_legend_html,
+        "p_tokens": p_tokens,
+        "c_tokens": c_tokens,
+        "t_tokens": t_tokens,
+        "llamacpp_models_html": llamacpp_models_html,
+        "llamacpp_slots_html": llamacpp_slots_html,
+        "avg_triage_latency_ms": stats["avg_triage_latency_ms"],
+        "avg_proxy_latency_ms": stats["avg_proxy_latency_ms"],
+        "cache_hits": stats["cache_hits"],
+        "total_requests": stats["total_requests"],
+        "last_triage_decision": stats["last_triage_decision"]
+    }
+
+@app.get("/api/dashboard-stats")
+async def get_dashboard_stats():
+    """Return dashboard metrics and pre-computed HTML as JSON for asynchronous UI updates."""
+    return await get_dashboard_data()
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def get_dashboard():
+    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    data = await get_dashboard_data()
+
+    # Unpack data for the f-string template
+    valkey_status = data["valkey_status"]
+    litellm_status = data["litellm_status"]
+    llama_server_status = data["llama_server_status"]
+    langfuse_status = data["langfuse_status"]
+    oauth_banner_html = data["oauth_banner_html"]
+    best_free_model = data["best_free_model"]
+    tier_table_html = data["tier_table_html"]
+    pie_gradient = data["pie_gradient"]
+    tool_tokens_html = data["tool_tokens_html"]
+    pie_legend_html = data["pie_legend_html"]
+    timeline_html = data["timeline_html"]
+    goose_html = data["goose_html"]
+    routing_pie_gradient = data["routing_pie_gradient"]
+    routing_legend_html = data["routing_legend_html"]
+    p_tokens = data["p_tokens"]
+    c_tokens = data["c_tokens"]
+    t_tokens = data["t_tokens"]
+    llamacpp_models_html = data["llamacpp_models_html"]
+    llamacpp_slots_html = data["llamacpp_slots_html"]
+    avg_triage_latency_ms = data["avg_triage_latency_ms"]
+    avg_proxy_latency_ms = data["avg_proxy_latency_ms"]
+    cache_hits = data["cache_hits"]
+    total_requests = data["total_requests"]
+    last_triage_decision = data["last_triage_decision"]
 
     html_content = f"""
     <!DOCTYPE html>
@@ -2854,23 +2917,23 @@ async def get_dashboard():
 
                     <div class="metrics-grid">
                         <div class="metric-box">
-                            <span class="metric-value">{stats["total_requests"]}</span>
+                            <span class="metric-value">{total_requests}</span>
                             <span class="metric-label">Total API Calls</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{stats["last_triage_decision"]}</span>
+                            <span class="metric-value" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{last_triage_decision}</span>
                             <span class="metric-label">Last Triage Split</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value">{stats["avg_triage_latency_ms"]:.1f} ms</span>
+                            <span class="metric-value">{avg_triage_latency_ms:.1f} ms</span>
                             <span class="metric-label">Avg Triage Time</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value">{stats["avg_proxy_latency_ms"]:.1f} ms</span>
+                            <span class="metric-value">{avg_proxy_latency_ms:.1f} ms</span>
                             <span class="metric-label">Avg Proxy Time</span>
                         </div>
                         <div class="metric-box">
-                            <span class="metric-value" style="color: #34d399;">{stats["cache_hits"]}</span>
+                            <span class="metric-value" style="color: #34d399;">{cache_hits}</span>
                             <span class="metric-label">Triage Cache Hits</span>
                         </div>
                     </div>
