@@ -1376,22 +1376,23 @@ async def proxy_models():
             timeout=10.0
         )
         data = r.json()
-        # Inject llm-routing-* models at the top of the list.
-        # Auto models (classifier pipeline) first, then direct models.
-        # Context lengths aligned with downstream model targets:
-        # - auto-free / auto-agy: 262144 (262K)
-        # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
-        # - llm-routing-agy: 1048576 (1M)
-        routing_models = [
-            {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-            {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
-            {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-            {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-            {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
-            {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
-        ]
-        for entry in reversed(routing_models):
-            data["data"].insert(0, entry)
+        if r.status_code == 200 and isinstance(data, dict) and "data" in data:
+            # Inject llm-routing-* models at the top of the list.
+            # Auto models (classifier pipeline) first, then direct models.
+            # Context lengths aligned with downstream model targets:
+            # - auto-free / auto-agy: 262144 (262K)
+            # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
+            # - llm-routing-agy: 1048576 (1M)
+            routing_models = [
+                {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+            ]
+            for entry in reversed(routing_models):
+                data["data"].insert(0, entry)
         return JSONResponse(content=data, status_code=r.status_code)
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
