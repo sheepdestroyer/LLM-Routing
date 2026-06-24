@@ -43,7 +43,7 @@ from circuit_breaker import get_google_breaker, get_vendor_breaker
 
 logger = logging.getLogger("agy-proxy")
 
-AGY_DAEMON_URL = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005").rstrip("/")
+AGY_DAEMON_URL = (os.getenv("AGY_DAEMON_URL") or "http://127.0.0.1:5005").rstrip("/")
 
 # In container: mounted from host /home/gpav/.local/bin/agy
 AGY_BINARY = os.environ.get("AGY_BINARY_PATH", "/usr/local/bin/agy")

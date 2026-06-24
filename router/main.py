@@ -42,14 +42,17 @@ except ImportError:
 from urllib.parse import urlparse
 
 # Global Configuration from Environment
-LITELLM_URL = os.getenv("LITELLM_ADMIN_URL", "http://127.0.0.1:4000").rstrip("/")
-LLAMA_SERVER_URL = os.getenv("LLAMA_SERVER_URL", "http://127.0.0.1:8080").rstrip("/")
-LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://127.0.0.1:3001").rstrip("/")
-VALKEY_HOST = os.getenv("VALKEY_HOST", "127.0.0.1")
+LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+LANGFUSE_URL = (os.getenv("LANGFUSE_URL") or "http://127.0.0.1:3001").rstrip("/")
+VALKEY_HOST = os.getenv("VALKEY_HOST") or "127.0.0.1"
 
 def _get_valkey_port() -> int:
+    val = os.getenv("VALKEY_PORT")
+    if not val:
+        return 6379
     try:
-        return int(os.getenv("VALKEY_PORT", "6379"))
+        return int(val)
     except ValueError:
         return 6379
 
