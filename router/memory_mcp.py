@@ -16,6 +16,7 @@ import sys
 import json
 import time
 import httpx
+import hashlib
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -39,8 +40,8 @@ def _make_key(category: str, is_global: bool, data: str) -> str:
     """Build a unique key from memory attributes."""
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     ts = int(time.time() * 1000)
-    # Use first 12 chars of a basic hash for uniqueness within the same second
-    h = str(hash(data + str(ts)))[:12].replace("-", "x")
+    # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts
+    h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=6).hexdigest()
     return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
 
 

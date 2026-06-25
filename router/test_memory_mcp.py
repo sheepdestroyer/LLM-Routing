@@ -53,29 +53,16 @@ def test_make_key_local():
 
 
 def test_make_key_formatting_details(monkeypatch):
-    """Test the exact output formatting of _make_key, including handling of negative and short hashes."""
+    """Test the exact output formatting of _make_key using deterministic BLAKE2b."""
     # Mock time.time to return a predictable float so ts = 1620000000123
     monkeypatch.setattr(time, "time", lambda: 1620000000.123)
 
-    # Positive hash, long enough to be truncated
-    monkeypatch.setattr("builtins.hash", lambda _: 123456789012345)
+    # data="data", ts=1620000000123 -> blake2b("data1620000000123", digest_size=6) -> 4d283c1022d4
     key1 = _make_key("cat1", True, "data")
-    assert key1 == f"{PREFIX}:{SCOPE_GLOBAL}:cat1::1620000000123:123456789012"
+    assert key1 == f"{PREFIX}:{SCOPE_GLOBAL}:cat1::1620000000123:4d283c1022d4"
 
-    # Negative hash, should replace "-" with "x" and truncate
-    monkeypatch.setattr("builtins.hash", lambda _: -87654321098765)
     key2 = _make_key("cat2", False, "data")
-    assert key2 == f"{PREFIX}:{SCOPE_LOCAL}:cat2::1620000000123:x87654321098"
-
-    # Short positive hash
-    monkeypatch.setattr("builtins.hash", lambda _: 42)
-    key3 = _make_key("cat3", True, "data")
-    assert key3 == f"{PREFIX}:{SCOPE_GLOBAL}:cat3::1620000000123:42"
-
-    # Short negative hash
-    monkeypatch.setattr("builtins.hash", lambda _: -42)
-    key4 = _make_key("cat4", False, "data")
-    assert key4 == f"{PREFIX}:{SCOPE_LOCAL}:cat4::1620000000123:x42"
+    assert key2 == f"{PREFIX}:{SCOPE_LOCAL}:cat2::1620000000123:4d283c1022d4"
 
 
 def test_make_key_determinism_and_uniqueness():
