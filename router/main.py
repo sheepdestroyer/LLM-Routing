@@ -2153,17 +2153,39 @@ def src_badge(label, color):
 
 async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
-    await sync_cooldowns_from_valkey()
-    # 1. Run live health checks
-    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+    # Run ALL independent I/O concurrently with protective timeouts
+    (
+        _,  # sync_cooldowns_from_valkey
+        valkey_status,
+        litellm_status,
+        llama_server_status,
+        langfuse_status,
+        oauth_status,
+        best_free_model,
+        goose_sessions,
+        llamacpp,
+    ) = await asyncio.gather(
+        asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", 6379),
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
-        check_http_endpoint("http://127.0.0.1:3001")
+        check_http_endpoint("http://127.0.0.1:3001"),
+        asyncio.to_thread(get_gemini_oauth_status),
+        asyncio.wait_for(get_best_free_model(), timeout=5.0),
+        asyncio.to_thread(get_goose_sessions),
+        asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
+        return_exceptions=True
     )
 
-    # 1c. Check Gemini OAuth token status
-    oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
+    # Coerce exceptions to safe defaults if any task failed/timed out
+    valkey_status = valkey_status if isinstance(valkey_status, bool) else False
+    litellm_status = litellm_status if isinstance(litellm_status, bool) else False
+    llama_server_status = llama_server_status if isinstance(llama_server_status, bool) else False
+    langfuse_status = langfuse_status if isinstance(langfuse_status, bool) else False
+    oauth_status = oauth_status if isinstance(oauth_status, dict) else {"status": "error", "detail": "Check failed", "expiry_ms": 0}
+    best_free_model = best_free_model if isinstance(best_free_model, dict) else {"id": "error", "name": "Error fetching model", "score": 0.0}
+    goose_sessions = goose_sessions if isinstance(goose_sessions, list) else []
+    llamacpp = llamacpp if isinstance(llamacpp, dict) else {"models": [], "slots": [], "build": "unknown"}
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2215,21 +2237,6 @@ async def get_dashboard_data():
             </div>
         </div>
         """
-
-    # 1b. Fetch top free model from OpenRouter
-    best_free_model = await get_best_free_model()
-
-    # 2. Query Goose Sessions SQLite DB asynchronously.
-    # Note: get_goose_sessions creates and closes its sqlite3 connection entirely inside
-    # the function, making it thread-safe for background worker thread execution.
-    try:
-        goose_sessions = await asyncio.to_thread(get_goose_sessions)
-    except Exception as e:
-        logger.error(f"Failed to query goose sessions asynchronously: {e}")
-        goose_sessions = []
-
-    # 2b. Fetch live llama.cpp metrics
-    llamacpp = await get_llamacpp_metrics()
 
     # 3. Calculative metrics — 5-tier triage table
     tier_data = [
