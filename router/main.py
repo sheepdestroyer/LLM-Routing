@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -65,24 +66,40 @@ def get_http_client():
     return _http_client
 
 
+def _count_tokens_heuristic(text: str) -> float:
+    """Heuristically count tokens in a string using regex splitting and weighted categories."""
+    if not text:
+        return 0.0
+    total = 0.0
+    # Match sequences of alphanumeric characters OR single non-space characters
+    tokens = re.findall(r'[a-zA-Z0-9]+|[^\s]', text)
+    for t in tokens:
+        if t.isalnum() and t.isascii():
+            total += 1.2  # English word average tokens
+        elif any(ord(c) > 127 for c in t):
+            total += 0.35 # CJK/Emoji characters (multi-byte, so we discount length)
+        else:
+            total += 0.4  # Punctuation/Symbols
+    return total
+
+
 def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens by counting characters in message contents (1 token ~= 4 chars)
-    to avoid inflating metrics with large tool/schema declarations.
+    """Estimate prompt tokens using a regex-based heuristic that balances English words,
+    punctuation, and multi-byte characters.
     """
-    tokens = 0
+    total = 0.0
     for msg in body.get("messages", []):
         if not isinstance(msg, dict):
             continue
         content = msg.get("content") or ""
         if isinstance(content, str):
-            tokens += len(content) // 4
+            total += _count_tokens_heuristic(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    tokens += len(block.get("text") or "") // 4
+                    total += _count_tokens_heuristic(block.get("text") or "")
     # Include a flat estimate for system prompt / metadata overhead
-    tokens += 50
-    return max(1, tokens)
+    return max(1, int(total) + 50)
 
 
 async def sync_cooldowns_from_valkey() -> None:
