@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from circuit_breaker import get_breaker
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
@@ -3306,13 +3306,44 @@ async def get_visualizer():
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
 
+VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
     tier: Union[int, str, None] = None
-    note: str = ""
+    note: str = Field(default="", max_length=1000)
     ts: Optional[str] = None
 
-VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+    @field_validator("tier")
+    @classmethod
+    def validate_tier(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, int):
+            if v < 0 or v > 4:
+                raise ValueError(f"Invalid tier index {v}: must be between 0 and 4")
+        elif isinstance(v, str):
+            if v not in VALID_TIERS and v != "?":
+                raise ValueError(f"Invalid tier string '{v}'")
+        else:
+            raise ValueError("Tier must be int, str, or null")
+        return v
+
+class AnnotationPayload(RootModel):
+    root: Dict[str, AnnotationItem]
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "AnnotationPayload":
+        data = self.root
+        if len(data) > 1000:
+            raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
+        for k in data:
+            is_valid_key = k.isdigit() or (
+                k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
+            )
+            if not is_valid_key:
+                raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
+        return self
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests
 # across different workers can still race. Eventual consistency is maintained via
@@ -3324,51 +3355,10 @@ def _read_annotations_sync(path) -> dict:
         return json.load(f)
 
 @app.post("/dashboard/save-annotations")
-async def save_annotations(payload: Dict[str, AnnotationItem]):
+async def save_annotations(payload: AnnotationPayload):
     """Save human review annotations to disk."""
-    if len(payload) > 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
-        )
-    for k, item in payload.items():
-        # Allow numeric strings (dataset indexes) or stable hash keys starting with 'h' (hexadecimal)
-        is_valid_key = k.isdigit() or (
-            k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
-        )
-        if not is_valid_key:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
-            )
-        
-        t = item.tier
-        if t is not None:
-            if isinstance(t, int):
-                if t < 0 or t > 4:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid tier index {t} for index {k}: must be between 0 and 4."
-                    )
-            elif isinstance(t, str):
-                if t not in VALID_TIERS and t != "?":
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid tier string '{t}' for index {k}."
-                    )
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid tier type for index {k}: must be int, str, or null."
-                )
-        
-        if len(item.note) > 1000:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."
-            )
-
     try:
+        data = payload.root
         ann_path = DATA_DIR / "annotations.json"
         existing = {}
         async with annotations_lock:
@@ -3379,12 +3369,12 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
                     logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
             
             # Merge new annotations into existing
-            for k, item in payload.items():
-                existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+            for k, item in data.items():
+                existing[k] = item.model_dump()
                 
             await _atomic_write_json_async(str(ann_path), existing)
 
-        return JSONResponse({"status": "ok", "saved": len(payload)})
+        return JSONResponse({"status": "ok", "saved": len(data)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
         raise HTTPException(status_code=500, detail="Failed to save annotations")
