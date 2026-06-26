@@ -5,7 +5,7 @@ Tests for memory_mcp.py
 import sys
 import json
 import pytest
-from router.memory_mcp import _memory_entry, _parse_key, _parse_memory_value
+from router.memory_mcp import _memory_entry, _parse_key, _parse_memory_value, _is_memory_key
 
 def test_memory_entry_happy_path():
     """Test correctly formatted and complete memory entry."""
@@ -162,6 +162,21 @@ def test_parse_memory_value_non_dict_json():
     raw_data = '"just a string"'
     result = _parse_memory_value(raw_data)
     assert result == "just a string"
+
+
+def test_is_memory_key_valid():
+    """Test valid memory keys."""
+    assert _is_memory_key("memory:global:test::123:abc") is True
+    assert _is_memory_key("memory:local:test") is True
+    assert _is_memory_key("memory:") is True
+
+def test_is_memory_key_invalid():
+    """Test invalid memory keys."""
+    assert _is_memory_key("notmemory:global:test") is False
+    assert _is_memory_key("mem:global:test") is False
+    assert _is_memory_key("memory") is False
+    assert _is_memory_key("") is False
+    assert _is_memory_key(" memory:") is False
 
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))
