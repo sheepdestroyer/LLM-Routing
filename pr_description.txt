@@ -1,3 +1,0 @@
-🎯 What: Add a comprehensive test file for `sync_gemini_token.py`.
-📊 Coverage: Added tests covering the happy path (successful retrieval and parsing of credentials with nanosecond/offset handling), error conditions (secret-tool failure, empty output), edge cases for bad JSON (missing token key, missing access token), and exception handling (date parsing fallback, general exceptions).
-✨ Result: `sync_gemini_token.py` is now fully covered by tests, ensuring its logic handles all expected scenarios correctly.

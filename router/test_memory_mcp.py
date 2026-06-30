@@ -1,4 +1,3 @@
-import pytest
 import time
 import re
 import sys
@@ -22,15 +21,15 @@ def test_make_key_global():
     assert key.startswith(f"{PREFIX}:{SCOPE_GLOBAL}:{category}::")
 
     # Extract timestamp and hash part
-    # Format is memory:global:test_cat::1717612345:a1b2c3d4
-    match = re.match(rf"^{PREFIX}:{SCOPE_GLOBAL}:{category}::(\d+):([a-z0-9x]+)$", key)
+    # Format is memory:global:test_cat::1717612345:a1b2c3d4...
+    match = re.match(rf"^{PREFIX}:{SCOPE_GLOBAL}:{category}::(\d+):([a-f0-9]+)$", key)
     assert match is not None, f"Key {key} does not match expected format"
 
     ts = int(match.group(1))
     h = match.group(2)
 
     assert before_ts <= ts <= after_ts
-    assert len(h) <= 12
+    assert len(h) == 20
 
 def test_make_key_local():
     """Test generating a key for local scope."""
@@ -43,14 +42,28 @@ def test_make_key_local():
 
     assert key.startswith(f"{PREFIX}:{SCOPE_LOCAL}:{category}::")
 
-    match = re.match(rf"^{PREFIX}:{SCOPE_LOCAL}:{category}::(\d+):([a-z0-9x]+)$", key)
+    match = re.match(rf"^{PREFIX}:{SCOPE_LOCAL}:{category}::(\d+):([a-f0-9]+)$", key)
     assert match is not None, f"Key {key} does not match expected format"
 
     ts = int(match.group(1))
     h = match.group(2)
 
     assert before_ts <= ts <= after_ts
-    assert len(h) <= 12
+    assert len(h) == 20
+
+
+def test_make_key_formatting_details(monkeypatch):
+    """Test the exact output formatting of _make_key using deterministic BLAKE2b."""
+    # Mock time.time to return a predictable float so ts = 1620000000123
+    monkeypatch.setattr(time, "time", lambda: 1620000000.123)
+
+    # data="data", ts=1620000000123 -> blake2b("data1620000000123", digest_size=10) -> 5e5dad075ca7764bc51f
+    key1 = _make_key("cat1", True, "data")
+    assert key1 == f"{PREFIX}:{SCOPE_GLOBAL}:cat1::1620000000123:5e5dad075ca7764bc51f"
+
+    key2 = _make_key("cat2", False, "data")
+    assert key2 == f"{PREFIX}:{SCOPE_LOCAL}:cat2::1620000000123:5e5dad075ca7764bc51f"
+
 
 def test_make_key_determinism_and_uniqueness():
     """Test determinism for same inputs within same timestamp, and uniqueness across timestamps/data."""
@@ -111,3 +124,8 @@ def test_parse_memory_value_type_error():
     """Test _parse_memory_value with TypeError (e.g. passing None)."""
     result = _parse_memory_value(None)
     assert result == {"data": None, "tags": []}
+
+def test_parse_memory_value_invalid_json_string():
+    """Test _parse_memory_value with invalid JSON string."""
+    result = _parse_memory_value("this is not a valid json string")
+    assert result == {"data": "this is not a valid json string", "tags": []}
