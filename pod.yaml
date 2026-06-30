@@ -47,17 +47,21 @@ spec:
       value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
     image: ghcr.io/berriai/litellm:v1.89.4
     livenessProbe:
-      httpGet:
-        path: /ping
-        port: 4000
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:4000/ping')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: litellm-gateway
     readinessProbe:
-      httpGet:
-        path: /health/readiness
-        port: 4000
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -102,17 +106,21 @@ spec:
       value: info
     image: localhost/llm-triage-router:latest
     livenessProbe:
-      httpGet:
-        path: /metrics
-        port: 5000
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
     name: llm-triage-router
     readinessProbe:
-      httpGet:
-        path: /metrics
-        port: 5000
+      exec:
+        command:
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -151,15 +159,21 @@ spec:
       value: langfuse
     image: docker.io/pgvector/pgvector:pg18
     livenessProbe:
-      tcpSocket:
-        port: 5432
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
     name: postgres-db
     readinessProbe:
-      tcpSocket:
-        port: 5432
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
       initialDelaySeconds: 5
       periodSeconds: 5
       timeoutSeconds: 5
@@ -176,17 +190,25 @@ spec:
       value: clickhouse
     image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
-      httpGet:
-        path: /ping
-        port: 8123
+      exec:
+        command:
+        - clickhouse-client
+        - --user
+        - clickhouse
+        - --password
+        - clickhouse
+        - --query
+        - SELECT 1
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
     name: clickhouse-db
     readinessProbe:
-      httpGet:
-        path: /ping
-        port: 8123
+      exec:
+        command:
+        - clickhouse-client
+        - --query
+        - SELECT 1
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -284,17 +306,25 @@ spec:
       value: warn
     image: docker.io/langfuse/langfuse:3
     livenessProbe:
-      httpGet:
-        path: /api/health
-        port: 3001
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3001/api/health
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: langfuse-web
     readinessProbe:
-      httpGet:
-        path: /api/health
-        port: 3001
+      exec:
+        command:
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1:3001/api/health
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
