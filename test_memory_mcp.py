@@ -168,10 +168,10 @@ def test_is_memory_key_valid():
     """Test valid memory keys."""
     assert _is_memory_key("memory:global:test::123:abc") is True
     assert _is_memory_key("memory:local:test") is True
-    assert _is_memory_key("memory:") is True
 
 def test_is_memory_key_invalid():
     """Test invalid memory keys."""
+    assert _is_memory_key("memory:") is False
     assert _is_memory_key("notmemory:global:test") is False
     assert _is_memory_key("mem:global:test") is False
     assert _is_memory_key("memory") is False
