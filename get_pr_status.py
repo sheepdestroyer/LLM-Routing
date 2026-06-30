@@ -9,4 +9,3 @@ def run_cmd(argv: Sequence[str]) -> str:
     # 3. Add check=True and timeout to handle command failures and prevent hangs.
     result = subprocess.run(argv, shell=False, capture_output=True, text=True, check=True, timeout=30)
     return result.stdout.strip()
-
