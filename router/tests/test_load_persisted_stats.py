@@ -15,7 +15,7 @@ from main import load_persisted_stats
 
 @patch("main.logger.error")
 @patch("os.path.exists")
-@patch("builtins.open", new_callable=mock_open)
+@patch("main.open", new_callable=mock_open, create=True)
 @patch("json.load")
 def test_load_persisted_stats_error_path(mock_json_load, mock_open_file, mock_exists, mock_logger_error):
     # Setup mock to simulate that the file exists
