@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from circuit_breaker import get_breaker
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
@@ -235,10 +235,22 @@ port = config.get("server", {}).get("port", 5000)
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
 router_api_key = router_model_conf.get("api_key", "local-token")
+if router_api_key.startswith("os.environ/"):
+    env_var = router_api_key.split("/", 1)[1]
+    router_api_key = os.environ.get(env_var, "local-token")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
+
+# Default colors for tool visualization badges and charts
+TOOL_COLORS = {
+    "tree": "#34d399",   # Green
+    "shell": "#fbbf24",  # Amber/Orange
+    "write": "#a78bfa",  # Violet
+    "view": "#60a5fa",   # Blue
+    "other": "#f472b6",  # Pink
+}
 
 # Triage and Performance Metric Trackers
 stats = {
@@ -307,14 +319,6 @@ def load_persisted_stats():
                     else:
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
-            # Load timeline from disk (may be stale after pod restart, but better than empty)
-            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-            if os.path.exists(timeline_path):
-                try:
-                    with open(timeline_path, "r") as f:
-                        stats["timeline"] = json.load(f)
-                except Exception:
-                    pass  # stale/broken timeline file → start fresh
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
@@ -570,12 +574,15 @@ async def _register_ollama_models_in_db(master_key: str):
         "./litellm/config.yaml"
     ]
 
+    def _load_yaml(p):
+        with open(p, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
     loaded_from_config = False
     for path in config_paths_to_try:
-        if path and os.path.exists(path):
+        if path:
             try:
-                with open(path, "r") as f:
-                    litellm_config = yaml.safe_load(f)
+                litellm_config = await asyncio.to_thread(_load_yaml, path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
@@ -1310,19 +1317,11 @@ def get_pie_chart_gradient() -> str:
     current_angle = 0.0
     gradient_parts = []
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6"   # Pink
-    }
-    
     for tool, tokens in stats["tool_tokens"].items():
         if tokens > 0:
             pct = (tokens / total_tokens) * 100.0
             next_angle = current_angle + pct
-            color = tool_colors.get(tool, "#94a3b8")
+            color = TOOL_COLORS.get(tool, "#94a3b8")
             gradient_parts.append(f"{color} {current_angle:.1f}% {next_angle:.1f}%")
             current_angle = next_angle
             
@@ -2153,17 +2152,62 @@ def src_badge(label, color):
 
 async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
-    await sync_cooldowns_from_valkey()
-    # 1. Run live health checks
-    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+    # Run ALL independent I/O concurrently with protective timeouts
+    (
+        _,  # sync_cooldowns_from_valkey
+        valkey_status,
+        litellm_status,
+        llama_server_status,
+        langfuse_status,
+        oauth_status,
+        best_free_model,
+        goose_sessions,
+        llamacpp,
+    ) = await asyncio.gather(
+        asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", 6379),
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
-        check_http_endpoint("http://127.0.0.1:3001")
+        check_http_endpoint("http://127.0.0.1:3001"),
+        asyncio.to_thread(get_gemini_oauth_status),
+        asyncio.wait_for(get_best_free_model(), timeout=5.0),
+        asyncio.to_thread(get_goose_sessions),
+        asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
+        return_exceptions=True
     )
 
-    # 1c. Check Gemini OAuth token status
-    oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
+    # Coerce exceptions to safe defaults if any task failed/timed out, and log failures
+    if isinstance(valkey_status, Exception):
+        logger.warning(f"Valkey health check failed: {valkey_status}")
+        valkey_status = False
+
+    if isinstance(litellm_status, Exception):
+        logger.warning(f"LiteLLM health check failed: {litellm_status}")
+        litellm_status = False
+
+    if isinstance(llama_server_status, Exception):
+        logger.warning(f"Llama-server health check failed: {llama_server_status}")
+        llama_server_status = False
+
+    if isinstance(langfuse_status, Exception):
+        logger.warning(f"Langfuse health check failed: {langfuse_status}")
+        langfuse_status = False
+
+    if isinstance(oauth_status, Exception):
+        logger.warning(f"Gemini OAuth status check failed: {oauth_status}")
+        oauth_status = {"status": "error", "detail": "Check failed", "expiry_ms": 0}
+
+    if isinstance(best_free_model, Exception):
+        logger.warning(f"Best free model fetch failed: {best_free_model}")
+        best_free_model = {"id": "error", "name": "Error fetching model", "score": 0.0}
+
+    if isinstance(goose_sessions, Exception):
+        logger.error(f"Failed to query goose sessions asynchronously: {goose_sessions}")
+        goose_sessions = []
+
+    if isinstance(llamacpp, Exception):
+        logger.warning(f"Failed to fetch llama.cpp metrics: {llamacpp}")
+        llamacpp = {"models": [], "slots": [], "build": "unknown"}
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2216,21 +2260,6 @@ async def get_dashboard_data():
         </div>
         """
 
-    # 1b. Fetch top free model from OpenRouter
-    best_free_model = await get_best_free_model()
-
-    # 2. Query Goose Sessions SQLite DB asynchronously.
-    # Note: get_goose_sessions creates and closes its sqlite3 connection entirely inside
-    # the function, making it thread-safe for background worker thread execution.
-    try:
-        goose_sessions = await asyncio.to_thread(get_goose_sessions)
-    except Exception as e:
-        logger.error(f"Failed to query goose sessions asynchronously: {e}")
-        goose_sessions = []
-
-    # 2b. Fetch live llama.cpp metrics
-    llamacpp = await get_llamacpp_metrics()
-
     # 3. Calculative metrics — 5-tier triage table
     tier_data = [
         {"tier": "agent-simple-core",    "count": stats.get("simple_requests", 0),    "color": "#34d399"},
@@ -2278,18 +2307,10 @@ async def get_dashboard_data():
     pie_legend_html = ""
     max_tool_val = max(stats["tool_tokens"].values()) if max(stats["tool_tokens"].values()) > 0 else 1
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber/Orange
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6",  # Pink
-    }
-    
     for tool_name, token_count in stats["tool_tokens"].items():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
-        color = tool_colors.get(tool_name, "#94a3b8")
+        color = TOOL_COLORS.get(tool_name, "#94a3b8")
         
         # Horizontal meters
         tool_tokens_html += f"""
@@ -3306,13 +3327,46 @@ async def get_visualizer():
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
 
+VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
+    model_config = ConfigDict(extra="allow")
+
     tier: Union[int, str, None] = None
-    note: str = ""
+    note: Optional[str] = Field(default=None, max_length=1000)
     ts: Optional[str] = None
 
-VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+    @field_validator("tier")
+    @classmethod
+    def validate_tier(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, int):
+            if v < 0 or v > 4:
+                raise ValueError(f"Invalid tier index {v}: must be between 0 and 4")
+        elif isinstance(v, str):
+            if v not in VALID_TIERS and v != "?":
+                raise ValueError(f"Invalid tier string '{v}'")
+        else:
+            raise ValueError("Tier must be int, str, or null")
+        return v
+
+class AnnotationPayload(RootModel):
+    root: Dict[str, AnnotationItem]
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "AnnotationPayload":
+        data = self.root
+        if len(data) > 1000:
+            raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
+        for k in data:
+            is_valid_key = k.isdigit() or (
+                k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
+            )
+            if not is_valid_key:
+                raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
+        return self
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests
 # across different workers can still race. Eventual consistency is maintained via
@@ -3324,51 +3378,10 @@ def _read_annotations_sync(path) -> dict:
         return json.load(f)
 
 @app.post("/dashboard/save-annotations")
-async def save_annotations(payload: Dict[str, AnnotationItem]):
+async def save_annotations(payload: AnnotationPayload):
     """Save human review annotations to disk."""
-    if len(payload) > 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
-        )
-    for k, item in payload.items():
-        # Allow numeric strings (dataset indexes) or stable hash keys starting with 'h' (hexadecimal)
-        is_valid_key = k.isdigit() or (
-            k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
-        )
-        if not is_valid_key:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
-            )
-        
-        t = item.tier
-        if t is not None:
-            if isinstance(t, int):
-                if t < 0 or t > 4:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid tier index {t} for index {k}: must be between 0 and 4."
-                    )
-            elif isinstance(t, str):
-                if t not in VALID_TIERS and t != "?":
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid tier string '{t}' for index {k}."
-                    )
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid tier type for index {k}: must be int, str, or null."
-                )
-        
-        if len(item.note) > 1000:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."
-            )
-
     try:
+        data = payload.root
         ann_path = DATA_DIR / "annotations.json"
         existing = {}
         async with annotations_lock:
@@ -3379,12 +3392,17 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
                     logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
             
             # Merge new annotations into existing
-            for k, item in payload.items():
-                existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+            for k, item in data.items():
+                # For partial updates, merge only fields provided in the request
+                update_data = item.model_dump(exclude_unset=True)
+                if k in existing and isinstance(existing[k], dict):
+                    existing[k].update(update_data)
+                else:
+                    existing[k] = item.model_dump()
                 
             await _atomic_write_json_async(str(ann_path), existing)
 
-        return JSONResponse({"status": "ok", "saved": len(payload)})
+        return JSONResponse({"status": "ok", "saved": len(data)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
         raise HTTPException(status_code=500, detail="Failed to save annotations")

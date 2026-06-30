@@ -42,6 +42,13 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
     fi
 fi
 
+if [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "🔐 Generating secure POSTGRES_PASSWORD..."
+    POSTGRES_PASSWORD=$(openssl rand -hex 16)
+    echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\"" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+fi
+
 # 2. Sync Gemini OAuth token (skip if <15 min old)
 OAUTH_CREDS="$HOME/.gemini/oauth_creds.json"
 NEED_SYNC=true
@@ -298,7 +305,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys
 uid = os.getuid()
@@ -309,7 +316,8 @@ placeholders = [
     "/home/gpav/",
     "/run/user/1000",
     "sk-lit...33bf",
-    "postgres:***"
+    "postgres:***",
+    "postgres-password-***"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -319,7 +327,8 @@ text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("postgres:***", "postgres:postgres-local-pw-2026")
+text = text.replace("postgres:***", f"postgres:{os.environ['POSTGRES_PASSWORD']}")
+text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 sys.stdout.write(text)
 PY
 }
