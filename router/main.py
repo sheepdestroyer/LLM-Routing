@@ -18,16 +18,32 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
-from redis_client import get_redis, close_redis, reset_redis_on_failure
-import agy_proxy
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 
+_redis_client = None
+_redis_last_init_attempt = 0.0
+_REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
-# Connection pool limits configuration for the shared HTTP client
-HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
-HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
-HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
+def get_redis():
+    """Lazily initialize and return the async Redis/Valkey client.
+    Returns None if connection fails or is disabled (non-fatal fallback)."""
+    global _redis_client, _redis_last_init_attempt
+    if _redis_client is None:
+        now = time.monotonic()
+        if now - _redis_last_init_attempt < _REDIS_RETRY_INTERVAL_SECONDS:
+            return None
+        _redis_last_init_attempt = now
+        try:
+            host = os.getenv("VALKEY_HOST", "127.0.0.1")
+            port = int(os.getenv("VALKEY_PORT", "6379"))
+            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+            logger.info(f"Valkey client initialized at {host}:{port}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
+            _redis_client = None
+    return _redis_client
+
 
 # Connection pool limits configuration for the shared HTTP client
 HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
@@ -92,7 +108,9 @@ async def sync_cooldowns_from_valkey() -> None:
         await breaker.sync_from_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to sync cooldowns from Valkey: {e}")
-        reset_redis_on_failure()
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
 
 
 async def save_cooldowns_to_valkey() -> None:
@@ -115,7 +133,9 @@ async def save_cooldowns_to_valkey() -> None:
         await breaker.save_to_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to save cooldowns to Valkey: {e}")
-        reset_redis_on_failure()
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
 
 
 class ValkeyCooldownPersistence:
@@ -220,6 +240,15 @@ router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
 
+# Default colors for tool visualization badges and charts
+TOOL_COLORS = {
+    "tree": "#34d399",   # Green
+    "shell": "#fbbf24",  # Amber/Orange
+    "write": "#a78bfa",  # Violet
+    "view": "#60a5fa",   # Blue
+    "other": "#f472b6",  # Pink
+}
+
 # Triage and Performance Metric Trackers
 stats = {
     "total_requests": 0,
@@ -287,14 +316,6 @@ def load_persisted_stats():
                     else:
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
-            # Load timeline from disk (may be stale after pod restart, but better than empty)
-            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-            if os.path.exists(timeline_path):
-                try:
-                    with open(timeline_path, "r") as f:
-                        stats["timeline"] = json.load(f)
-                except Exception:
-                    pass  # stale/broken timeline file → start fresh
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
@@ -704,7 +725,10 @@ async def lifespan(app: FastAPI):
             _http_client = None
 
         # Close Redis client
-        await close_redis()
+        global _redis_client
+        if _redis_client is not None and _redis_client is not False:
+            await _redis_client.aclose()
+            _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
@@ -952,7 +976,7 @@ def detect_active_tool(body: dict) -> str:
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
                                     if isinstance(tc, dict) and tc.get("id") == tool_call_id:
-                                        fn = tc.get("function")  # Fix IndentationError
+                                        fn = tc.get("function")
                                         if isinstance(fn, dict):
                                             name = fn.get("name")
                                         break
@@ -1287,19 +1311,11 @@ def get_pie_chart_gradient() -> str:
     current_angle = 0.0
     gradient_parts = []
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6"   # Pink
-    }
-    
     for tool, tokens in stats["tool_tokens"].items():
         if tokens > 0:
             pct = (tokens / total_tokens) * 100.0
             next_angle = current_angle + pct
-            color = tool_colors.get(tool, "#94a3b8")
+            color = TOOL_COLORS.get(tool, "#94a3b8")
             gradient_parts.append(f"{color} {current_angle:.1f}% {next_angle:.1f}%")
             current_angle = next_angle
             
@@ -2111,11 +2127,6 @@ async def metrics():
     lines.append("# TYPE circuit_breaker_total_trips counter")
     lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
 
-    # agy proxy session metrics
-    lines.append("# HELP agy_proxy_sessions_total Total number of active agy proxy sessions")
-    lines.append("# TYPE agy_proxy_sessions_total gauge")
-    lines.append(f"agy_proxy_sessions_total {agy_proxy.get_session_count()}")
-
     # Ollama router-side cooldown metrics
     _now_mono = time.monotonic()
     _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
@@ -2159,14 +2170,38 @@ async def get_dashboard_data():
         return_exceptions=True
     )
 
-    # Log any exceptions caught during concurrent I/O\n    for task_name, res in [\n        ("sync_cooldowns", _),\n        ("valkey_status", valkey_status),\n        ("litellm_status", litellm_status),\n        ("llama_server_status", llama_server_status),\n        ("langfuse_status", langfuse_status),\n        ("oauth_status", oauth_status),\n        ("best_free_model", best_free_model),\n        ("goose_sessions", goose_sessions),\n        ("llamacpp", llamacpp),\n    ]:\n        if isinstance(res, Exception):\n            logger.warning(f"Dashboard background task '{task_name}' failed: {res}")\n\n    # Coerce exceptions to safe defaults if any task failed/timed out\n    valkey_status = valkey_status if isinstance(valkey_status, bool) else False
-    litellm_status = litellm_status if isinstance(litellm_status, bool) else False
-    llama_server_status = llama_server_status if isinstance(llama_server_status, bool) else False
-    langfuse_status = langfuse_status if isinstance(langfuse_status, bool) else False
-    oauth_status = oauth_status if isinstance(oauth_status, dict) else {"status": "error", "detail": "Check failed", "expiry_ms": 0}
-    best_free_model = best_free_model if isinstance(best_free_model, dict) else {"id": "error", "name": "Error fetching model", "score": 0.0}
-    goose_sessions = goose_sessions if isinstance(goose_sessions, list) else []
-    llamacpp = llamacpp if isinstance(llamacpp, dict) else {"models": [], "slots": [], "build": "unknown"}
+    # Coerce exceptions to safe defaults if any task failed/timed out, and log failures
+    if isinstance(valkey_status, Exception):
+        logger.warning(f"Valkey health check failed: {valkey_status}")
+        valkey_status = False
+
+    if isinstance(litellm_status, Exception):
+        logger.warning(f"LiteLLM health check failed: {litellm_status}")
+        litellm_status = False
+
+    if isinstance(llama_server_status, Exception):
+        logger.warning(f"Llama-server health check failed: {llama_server_status}")
+        llama_server_status = False
+
+    if isinstance(langfuse_status, Exception):
+        logger.warning(f"Langfuse health check failed: {langfuse_status}")
+        langfuse_status = False
+
+    if isinstance(oauth_status, Exception):
+        logger.warning(f"Gemini OAuth status check failed: {oauth_status}")
+        oauth_status = {"status": "error", "detail": "Check failed", "expiry_ms": 0}
+
+    if isinstance(best_free_model, Exception):
+        logger.warning(f"Best free model fetch failed: {best_free_model}")
+        best_free_model = {"id": "error", "name": "Error fetching model", "score": 0.0}
+
+    if isinstance(goose_sessions, Exception):
+        logger.error(f"Failed to query goose sessions asynchronously: {goose_sessions}")
+        goose_sessions = []
+
+    if isinstance(llamacpp, Exception):
+        logger.warning(f"Failed to fetch llama.cpp metrics: {llamacpp}")
+        llamacpp = {"models": [], "slots": [], "build": "unknown"}
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2266,18 +2301,10 @@ async def get_dashboard_data():
     pie_legend_html = ""
     max_tool_val = max(stats["tool_tokens"].values()) if max(stats["tool_tokens"].values()) > 0 else 1
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber/Orange
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6",  # Pink
-    }
-    
     for tool_name, token_count in stats["tool_tokens"].items():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
-        color = tool_colors.get(tool_name, "#94a3b8")
+        color = TOOL_COLORS.get(tool_name, "#94a3b8")
         
         # Horizontal meters
         tool_tokens_html += f"""
