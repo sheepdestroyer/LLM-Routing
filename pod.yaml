@@ -4,7 +4,7 @@ metadata:
   name: agent-router-pod
 spec:
   containers:
-  # Valkey Cache 9.1.0-alpine — LiteLLM response cache (exact-match & semantic)
+  # Valkey Cache — LiteLLM response cache (exact-match & semantic)
   - command:
     - valkey-server
     - --protected-mode
