@@ -56,6 +56,7 @@ def test_get_last_conversation_id_invalid_json(monkeypatch, tmp_path):
 
 def test_get_last_conversation_id_io_error(monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", "/fake/cache.json")
+    monkeypatch.setattr(host_agy_daemon.os.path, "exists", lambda x: True)
     def mock_open_err(*args, **kwargs):
         raise IOError("permission denied")
     monkeypatch.setattr("builtins.open", mock_open_err)
@@ -75,6 +76,8 @@ def test_daemon_post_stream_false(daemon_server, monkeypatch):
     )
 
     async def mock_exec(*args, **kwargs):
+        assert args == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_abc", "--print", "test prompt")
+        assert kwargs.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "gpt-4"
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -133,6 +136,8 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
     )
 
     async def mock_exec(*args, **kwargs):
+        assert args == (host_agy_daemon.AGY_BINARY, "--print", "test prompt")
+        assert kwargs.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "test-model"
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -253,6 +258,7 @@ def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
     )
 
     async def mock_exec(*args, **kwargs):
+        assert "CASCADE_DEFAULT_MODEL_OVERRIDE" not in kwargs.get("env", {})
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -409,7 +415,6 @@ def test_daemon_post_stream_false_file_read_error(daemon_server, monkeypatch):
         mock_proc.wait = AsyncMock()
 
         # Corrupt the temp files to cause read exceptions
-        import os
         os.unlink(kwargs["stdout"].name)
         os.unlink(kwargs["stderr"].name)
 
@@ -457,13 +462,14 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     )
 
     async def mock_exec(*args, **kwargs):
+        assert args == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_789", "--print", "test prompt")
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "conv_789")
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
 
     with urllib.request.urlopen(req) as resp:
@@ -471,3 +477,4 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
         lines = content.split("\n")
 
     assert len(lines) == 1
+    assert json.loads(lines[0]) == {"type": "status", "returncode": 0, "conversation_id": "conv_789"}
