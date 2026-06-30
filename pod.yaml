@@ -307,7 +307,7 @@ spec:
     - name: LANGFUSE_INIT_USER_EMAIL
       value: admin@local.dev
     - name: LANGFUSE_INIT_USER_PASSWORD
-      value: admin-local-pw-2026
+      value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
     image: docker.io/langfuse/langfuse:3

@@ -141,6 +141,13 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
     exit 1
 fi
 
+if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
+    LANGFUSE_INIT_USER_PASSWORD="$(openssl rand -hex 16)"
+    echo "LANGFUSE_INIT_USER_PASSWORD=\"$LANGFUSE_INIT_USER_PASSWORD\"" >> "$ENV_FILE"
+    echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
+fi
+
+
 if [ -z "$ROUTER_API_KEY" ]; then
     ROUTER_API_KEY="$(openssl rand -hex 32)"
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
@@ -356,7 +363,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse
 uid = os.getuid()
@@ -371,7 +378,8 @@ placeholders = [
     "NEXTAUTH_SECRET_PLACEHOLDER",
     "SALT_PLACEHOLDER",
     "ENCRYPTION_KEY_PLACEHOLDER",
-    "postgres-password-***"
+    "postgres-password-***",
+    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -388,6 +396,7 @@ text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
 text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
+text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", os.environ["LANGFUSE_INIT_USER_PASSWORD"])
 sys.stdout.write(text)
 PY
 }
