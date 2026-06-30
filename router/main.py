@@ -389,8 +389,13 @@ async def sync_adaptive_router_roster(master_key: str):
     free_models = []
     model_contexts = {}
     model_supported_params = {}
+    global _aa_scores_lock
     if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
+        if "_aa_scores_lock" not in globals():
+            _aa_scores_lock = asyncio.Lock()
+        async with _aa_scores_lock:
+            if not _AA_SCORES_LOADED:
+                await asyncio.to_thread(_load_aa_scores)
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
