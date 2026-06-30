@@ -11,7 +11,7 @@ spec:
     - 'no'
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: valkey/valkey:9.1.0-alpine
     livenessProbe:
       tcpSocket:
         port: 6379
@@ -157,7 +157,7 @@ spec:
       value: postgres-password-***
     - name: POSTGRES_DB
       value: langfuse
-    image: docker.io/pgvector/pgvector:pg18
+    image: pgvector/pgvector:0.8.2-pg18
     livenessProbe:
       exec:
         command:
@@ -188,7 +188,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: clickhouse
-    image: docker.io/clickhouse/clickhouse-server:26.5.1
+    image: clickhouse/clickhouse-server:26.5.1
     livenessProbe:
       exec:
         command:
@@ -227,7 +227,7 @@ spec:
     - noeviction
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: valkey/valkey:9.1.0-alpine
     livenessProbe:
       tcpSocket:
         port: 6380
@@ -310,7 +310,7 @@ spec:
       value: admin-local-pw-2026
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: docker.io/langfuse/langfuse:3
+    image: langfuse/langfuse:3.178.0
     livenessProbe:
       exec:
         command:
@@ -372,7 +372,7 @@ spec:
       value: minioadmin
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: docker.io/langfuse/langfuse-worker:3
+    image: langfuse/langfuse-worker:3.178.0
     livenessProbe:
       exec:
         command:
@@ -396,7 +396,7 @@ spec:
       value: minioadmin
     - name: MINIO_ROOT_PASSWORD
       value: minioadmin
-    image: docker.io/minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     livenessProbe:
       httpGet:
         path: /minio/health/live
