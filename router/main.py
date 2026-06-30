@@ -1027,8 +1027,8 @@ async def classify_request(
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 
-def get_live_gemini_oauth_token() -> str | None:
-    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
+def _get_live_gemini_oauth_token_sync() -> str | None:
+    """Synchronous internal helper to retrieve the current valid Gemini OAuth access token."""
     try:
         creds_path = "/config/gemini_auth/oauth_creds.json"
         if os.path.exists(creds_path):
@@ -1052,6 +1052,11 @@ def get_live_gemini_oauth_token() -> str | None:
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
+
+
+async def get_live_gemini_oauth_token() -> str | None:
+    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
+    return await asyncio.to_thread(_get_live_gemini_oauth_token_sync)
 
 
 def get_gemini_oauth_status() -> dict:
