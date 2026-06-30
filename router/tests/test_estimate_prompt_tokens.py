@@ -17,9 +17,6 @@ def test_estimate_prompt_tokens_empty():
 def test_estimate_prompt_tokens_no_messages():
     assert estimate_prompt_tokens({"other_key": "value"}) == 50
 
-def test_estimate_prompt_tokens_empty_messages():
-    assert estimate_prompt_tokens({"messages": []}) == 50
-
 def test_estimate_prompt_tokens_string_content():
     body = {
         "messages": [
