@@ -5,6 +5,7 @@ import json
 import sys
 import time
 import socket
+from datetime import datetime, timezone
 
 # Load .env into os.environ
 env_path = "/config/.env"
@@ -54,15 +55,21 @@ else:
     print(f"⚠️ Warning: PostgreSQL not ready after {max_wait}s — proceeding anyway")
 
 # Patch LiteLLM at runtime to support flexible date formats
-from datetime import datetime as original_datetime, timezone
-import litellm
-
-class RobustDatetime(original_datetime):
+class RobustDatetime(datetime):
     """A datetime subclass that handles flexible date format parsing in strptime."""
     @classmethod
-    def strptime(cls, date_str: str, fmt: str) -> original_datetime:
+    def strptime(cls, date_str: str, fmt: str) -> datetime:
+        if not isinstance(date_str, str):
+            return datetime.strptime(date_str, fmt)
+
+        # 1. Try the original format first to maintain compatibility (returning naive if expected)
+        try:
+            return datetime.strptime(date_str, fmt)
+        except (ValueError, TypeError):
+            pass
+
+        # 2. Try flexible fallbacks if the original format failed
         formats = [
-            fmt,
             "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
             "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
             "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
@@ -70,48 +77,43 @@ class RobustDatetime(original_datetime):
             "%Y-%m-%dT%H:%M:%S%z"
         ]
         for f in formats:
+            if f == fmt:
+                continue
             try:
-                dt = original_datetime.strptime(date_str, f)
+                dt = datetime.strptime(date_str, f)
+                # For fallbacks, ensure we return a UTC-aware datetime
                 if dt.tzinfo is not None:
                     return dt.astimezone(timezone.utc)
                 return dt.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
                 continue
+
         # Fallback to original behavior to raise expected ValueError if all formats fail
-        return original_datetime.strptime(date_str, fmt)
+        return datetime.strptime(date_str, fmt)
 
 def apply_runtime_patches():
-    print("🩹 Applying runtime patches for flexible date formats...")
-    try:
-        # Patch spend management endpoints
-        import litellm.proxy.spend_tracking.spend_management_endpoints as sme
-        sme.datetime = RobustDatetime
-        print("   ✓ Patched litellm.proxy.spend_tracking.spend_management_endpoints")
-
-        # Patch analytics endpoints
+    print("🩹 Applying localized runtime patches for flexible date formats...")
+    # Patch only specific modules to avoid global side effects (like naive/aware TypeErrors)
+    targets = [
+        "litellm.proxy.spend_tracking.spend_management_endpoints",
+        "litellm.proxy.analytics_endpoints.analytics_endpoints",
+        "litellm.proxy.auth.litellm_license"
+    ]
+    for target in targets:
         try:
-            import litellm.proxy.analytics_endpoints.analytics_endpoints as ae
-            ae.datetime = RobustDatetime
-            print("   ✓ Patched litellm.proxy.analytics_endpoints.analytics_endpoints")
-        except ImportError:
+            # We import the module and replace its 'datetime' reference
+            mod = __import__(target, fromlist=["datetime"])
+            if hasattr(mod, "datetime"):
+                mod.datetime = RobustDatetime
+                print(f"   ✓ Patched {target}")
+        except (ImportError, AttributeError):
             pass
-
-        # Patch license parsing
-        try:
-            import litellm.proxy.auth.litellm_license as ll
-            ll.datetime = RobustDatetime
-            print("   ✓ Patched litellm.proxy.auth.litellm_license")
-        except ImportError:
-            pass
-
-    except Exception as e:
-        print(f"❌ Failed to apply runtime patches: {e}")
     sys.stdout.flush()
 
 apply_runtime_patches()
 
 # Start LiteLLM Proxy
+import litellm
 from litellm.proxy.proxy_cli import run_server
 sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
 run_server()
-
