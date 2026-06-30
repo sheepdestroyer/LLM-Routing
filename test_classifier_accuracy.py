@@ -78,7 +78,7 @@ def query_model(prompt: str) -> tuple[str, float]:
     req = urllib.request.Request(
         LLAMA_SERVER_URL,
         data=data,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer local-token"}
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
     )
     
     start_time = time.time()

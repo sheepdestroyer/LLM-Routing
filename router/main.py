@@ -235,6 +235,9 @@ port = config.get("server", {}).get("port", 5000)
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
 router_api_key = router_model_conf.get("api_key", "local-token")
+if router_api_key.startswith("os.environ/"):
+    env_var = router_api_key.split("/", 1)[1]
+    router_api_key = os.environ.get(env_var, "local-token")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
@@ -571,12 +574,15 @@ async def _register_ollama_models_in_db(master_key: str):
         "./litellm/config.yaml"
     ]
 
+    def _load_yaml(p):
+        with open(p, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
     loaded_from_config = False
     for path in config_paths_to_try:
-        if path and os.path.exists(path):
+        if path:
             try:
-                with open(path, "r") as f:
-                    litellm_config = yaml.safe_load(f)
+                litellm_config = await asyncio.to_thread(_load_yaml, path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
