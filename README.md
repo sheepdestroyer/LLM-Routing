@@ -76,15 +76,15 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** (9.1.0-alpine) | `valkey-cli PING` every 10s | `valkey-cli PING` every 5s |
-| **litellm-gateway** | Python `urllib` GET `/health` (port 4000, accepts 200/401) every 15s | Same, every 10s |
-| **llm-triage-router** | Python `urllib` GET `/dashboard` (port 5000) every 15s | Same, every 10s |
+| **valkey-cache** (9.1.0-alpine) | `tcpSocket` on port 6379 every 10s | Same, every 5s |
+| **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
-| **valkey-lf** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
-| **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3001/` every 15s | Same, every 10s |
-| **langfuse-worker** | `pgrep -f langfuse-worker` every 15s | — |
-| **minio-s3** | TCP socket check on port 9002 every 15s | Same, every 10s |
+| **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
+| **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
+| **langfuse-worker** | `pgrep node` every 15s | — |
+| **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
 
 The pod-level `restartPolicy: Always` combined with these probes means Podman will restart any container that fails its health check or exits unexpectedly, enabling true self-healing for the entire stack.
 
@@ -583,11 +583,17 @@ Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials: `
 
 ### Health Check
 
-Minio's minimal Go image has no HTTP client tools. The probe uses a raw TCP socket check:
+MinIO's health is monitored using its native structured endpoints `/minio/health/live` (liveness) and `/minio/health/ready` (readiness) on port 9002:
 
 ```yaml
-exec:
-  command: [sh, -c, "exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok"]
+livenessProbe:
+  httpGet:
+    path: /minio/health/live
+    port: 9002
+readinessProbe:
+  httpGet:
+    path: /minio/health/ready
+    port: 9002
 ```
 
 ---
