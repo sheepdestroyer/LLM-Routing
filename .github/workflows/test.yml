@@ -15,12 +15,17 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi uvicorn python-multipart asyncpg langfuse redis
+
+      - name: Syntax Check
+        run: |
+          python3 -m compileall router/
+          PYTHONPATH=.:router CONFIG_PATH=router/config.yaml python3 -c "import router.main"
 
       - name: Run Unit Tests
         run: CONFIG_PATH=router/config.yaml PYTHONPATH=.:router pytest --ignore=test_agy_behavior.py --ignore=test_agy_tiers.py
