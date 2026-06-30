@@ -1447,8 +1447,8 @@ async def proxy_models():
                         {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
                         {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
                     ]
-                    for entry in reversed(routing_models):
-                        data["data"].insert(0, entry)
+                    data["data"] = routing_models + data["data"]
+
                     return JSONResponse(content=data, status_code=200)
             except Exception as parse_err:
                 logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
