@@ -2177,8 +2177,7 @@ async def get_dashboard_data():
         return_exceptions=True
     )
 
-    # Coerce exceptions to safe defaults if any task failed/timed out
-    valkey_status = valkey_status if isinstance(valkey_status, bool) else False
+    # Log any exceptions caught during concurrent I/O\n    for task_name, res in [\n        ("sync_cooldowns", _),\n        ("valkey_status", valkey_status),\n        ("litellm_status", litellm_status),\n        ("llama_server_status", llama_server_status),\n        ("langfuse_status", langfuse_status),\n        ("oauth_status", oauth_status),\n        ("best_free_model", best_free_model),\n        ("goose_sessions", goose_sessions),\n        ("llamacpp", llamacpp),\n    ]:\n        if isinstance(res, Exception):\n            logger.warning(f"Dashboard background task '{task_name}' failed: {res}")\n\n    # Coerce exceptions to safe defaults if any task failed/timed out\n    valkey_status = valkey_status if isinstance(valkey_status, bool) else False
     litellm_status = litellm_status if isinstance(litellm_status, bool) else False
     llama_server_status = llama_server_status if isinstance(llama_server_status, bool) else False
     langfuse_status = langfuse_status if isinstance(langfuse_status, bool) else False
