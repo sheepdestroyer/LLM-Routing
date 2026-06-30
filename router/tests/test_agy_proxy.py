@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch, MagicMock
 from router.agy_proxy import _wrap_response, _is_quota_exhausted
 
