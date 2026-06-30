@@ -6,6 +6,11 @@ from unittest.mock import patch, mock_open
 
 from router.main import get_gemini_oauth_status
 
+def setup_mock_time(offset_sec: int) -> tuple[int, int]:
+    current_ms = 1000000
+    expiry_ms = current_ms + offset_sec * 1000
+    return current_ms, expiry_ms
+
 def test_missing_file():
     with patch("os.path.exists", return_value=False):
         result = get_gemini_oauth_status()
@@ -22,82 +27,23 @@ def test_missing_access_token():
         assert result["detail"] == "No access token in file"
         assert result["expiry_ms"] == 0
 
-def test_valid_token_less_than_60s():
-    current_ms = 1000000
-    # diff_sec = 30 -> 30s
-    expiry_ms = current_ms + 30 * 1000
+@pytest.mark.parametrize("offset_sec, expected_status, expected_detail", [
+    (30, "valid", "Expires in 30s"),
+    (610, "valid", "Expires in 10m 10s"),
+    (7320, "valid", "Expires in 2h 2m"),
+    (-600, "expired", "Expired 10 minutes ago"),
+    (-7200, "expired", "Expired 2 hours ago"),
+    (-172800, "expired", "Expired 2 days ago")
+])
+def test_token_time_scenarios(offset_sec, expected_status, expected_detail):
+    current_ms, expiry_ms = setup_mock_time(offset_sec)
     mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=mock_data)), \
          patch("time.time", return_value=current_ms / 1000.0):
         result = get_gemini_oauth_status()
-        assert result["status"] == "valid"
-        assert result["detail"] == "Expires in 30s"
-        assert result["expiry_ms"] == expiry_ms
-
-def test_valid_token_less_than_3600s():
-    current_ms = 1000000
-    # diff_sec = 610 -> 10m 10s
-    expiry_ms = current_ms + 610 * 1000
-    mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=mock_data)), \
-         patch("time.time", return_value=current_ms / 1000.0):
-        result = get_gemini_oauth_status()
-        assert result["status"] == "valid"
-        assert result["detail"] == "Expires in 10m 10s"
-        assert result["expiry_ms"] == expiry_ms
-
-def test_valid_token_greater_than_3600s():
-    current_ms = 1000000
-    # diff_sec = 7320 -> 2h 2m
-    expiry_ms = current_ms + 7320 * 1000
-    mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=mock_data)), \
-         patch("time.time", return_value=current_ms / 1000.0):
-        result = get_gemini_oauth_status()
-        assert result["status"] == "valid"
-        assert result["detail"] == "Expires in 2h 2m"
-        assert result["expiry_ms"] == expiry_ms
-
-def test_expired_token_less_than_3600s():
-    current_ms = 1000000
-    # diff_sec = -600 -> 10 minutes ago
-    expiry_ms = current_ms - 600 * 1000
-    mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=mock_data)), \
-         patch("time.time", return_value=current_ms / 1000.0):
-        result = get_gemini_oauth_status()
-        assert result["status"] == "expired"
-        assert result["detail"] == "Expired 10 minutes ago"
-        assert result["expiry_ms"] == expiry_ms
-
-def test_expired_token_less_than_86400s():
-    current_ms = 1000000
-    # diff_sec = -7200 -> 2 hours ago
-    expiry_ms = current_ms - 7200 * 1000
-    mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=mock_data)), \
-         patch("time.time", return_value=current_ms / 1000.0):
-        result = get_gemini_oauth_status()
-        assert result["status"] == "expired"
-        assert result["detail"] == "Expired 2 hours ago"
-        assert result["expiry_ms"] == expiry_ms
-
-def test_expired_token_greater_than_86400s():
-    current_ms = 1000000
-    # diff_sec = -172800 -> 2 days ago
-    expiry_ms = current_ms - 172800 * 1000
-    mock_data = json.dumps({"access_token": "token", "expiry_date": expiry_ms})
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=mock_data)), \
-         patch("time.time", return_value=current_ms / 1000.0):
-        result = get_gemini_oauth_status()
-        assert result["status"] == "expired"
-        assert result["detail"] == "Expired 2 days ago"
+        assert result["status"] == expected_status
+        assert result["detail"] == expected_detail
         assert result["expiry_ms"] == expiry_ms
 
 def test_exception_handling():
