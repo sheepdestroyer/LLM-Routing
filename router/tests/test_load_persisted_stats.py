@@ -27,10 +27,9 @@ def test_load_persisted_stats_success():
     initial_stats = {"some_dict": {"c": 3}}
 
     def mock_exists(path):
-        path_str = str(path)
-        if path_str == main.STATS_JSON_PATH:
+        if path == main.STATS_JSON_PATH:
             return True
-        if path_str.endswith("router_timeline.json"):
+        if path.endswith("router_timeline.json"):
             return True
         return False
 
@@ -78,13 +77,13 @@ def test_load_persisted_stats_invalid_json():
     initial_stats = {"total_requests": 50}
 
     def mock_exists(path):
-        if str(path) == main.STATS_JSON_PATH:
+        if path == main.STATS_JSON_PATH:
             return True
         return False
 
     real_open = open
     def mock_open_file(file, mode="r", *args, **kwargs):
-        if str(file) == main.STATS_JSON_PATH:
+        if file == main.STATS_JSON_PATH:
             return mock_open(read_data="invalid json")()
         return real_open(file, mode, *args, **kwargs)
 
