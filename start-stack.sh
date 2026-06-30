@@ -141,6 +141,13 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
     exit 1
 fi
 
+if [ -z "$ROUTER_API_KEY" ]; then
+    ROUTER_API_KEY="local-token"
+    echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
+    echo "✓ Added ROUTER_API_KEY to $ENV_FILE"
+fi
+
+
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
 FULL_REBUILD=false
