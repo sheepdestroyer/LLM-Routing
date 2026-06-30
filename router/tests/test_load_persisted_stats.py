@@ -15,10 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import main
 
 @pytest.fixture
-def reset_stats():
+def reset_stats(monkeypatch):
     original_stats = copy.deepcopy(main.stats)
+    monkeypatch.setattr(main, 'stats', original_stats)
     yield
-    main.stats = original_stats
 
 def test_load_persisted_stats_exists_valid(reset_stats):
     mock_stats = {
@@ -50,7 +50,7 @@ def test_load_persisted_stats_exists_valid(reset_stats):
             main.load_persisted_stats()
 
     assert main.stats["total_requests"] == 999
-    assert main.stats["tool_tokens"]["tree"] == 50 # Merged existing nested dict
+    assert main.stats["tool_tokens"]["tree"] == 50
     assert main.stats["tool_tokens"]["other"] == 10
     assert main.stats["new_key"] == "new_value"
     assert main.stats["timeline"] == [{"event": "start"}]
@@ -73,7 +73,6 @@ def test_load_persisted_stats_invalid_json(reset_stats):
         with patch('builtins.open', mock_open(read_data="{invalid_json:")):
             main.load_persisted_stats()
 
-    # Stats should remain mostly unchanged since it crashed during json.load
     assert main.stats == original
 
 def test_load_persisted_stats_timeline_invalid(reset_stats):
