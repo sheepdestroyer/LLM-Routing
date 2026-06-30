@@ -22,6 +22,8 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
     env = os.environ.copy()
     if tier["override"]:
         env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = tier["override"]
+    else:
+        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
 
     cmd = [AGY]
     if conversation_id:
@@ -59,7 +61,7 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
         if "RESOURCE_EXHAUSTED" in stderr or "code 429" in stderr:
             print(f"❌ QUOTA EXHAUSTED ({elapsed:.1f}s)")
             print(f"     stderr: {stderr[:100]}")
-            return False, None, conv_id
+            return False, None, None
 
         if stdout:
             print(f"✅ OK ({elapsed:.1f}s, {len(stdout)} chars)")
@@ -68,10 +70,11 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
         else:
             print(f"⚠️  EMPTY RESPONSE ({elapsed:.1f}s)")
             print(f"     stderr: {stderr[:200]}")
-            return False, None, conv_id
+            return False, None, None
 
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.communicate()
         print(f"❌ TIMEOUT (30s)")
         return False, None, None
 

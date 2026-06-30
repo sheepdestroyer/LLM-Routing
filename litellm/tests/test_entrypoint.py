@@ -13,18 +13,38 @@ mock_litellm.__path__ = []  # Ensure litellm is treated as a package for sub-mod
 
 mock_proxy_cli = MagicMock()
 
-with patch('os.path.exists', return_value=False), \
-     patch('builtins.print'), \
-     patch('time.sleep'), \
-     patch('os.execvp'), \
-     patch('sys.stdout.flush'), \
-     patch('glob.glob', return_value=[]), \
-     patch('builtins.open'):
+# Mock socket instance for import-time check_tcp_port execution
+mock_socket_instance = MagicMock()
+mock_socket_instance.connect_ex.return_value = 0
 
-    sys.modules['litellm'] = mock_litellm
-    sys.modules['litellm.proxy'] = MagicMock()
-    sys.modules['litellm.proxy.proxy_cli'] = mock_proxy_cli
-    spec.loader.exec_module(entrypoint)
+# Save original modules to avoid leaking fake ones globally
+orig_modules = {
+    'litellm': sys.modules.get('litellm'),
+    'litellm.proxy': sys.modules.get('litellm.proxy'),
+    'litellm.proxy.proxy_cli': sys.modules.get('litellm.proxy.proxy_cli')
+}
+
+try:
+    with patch('os.path.exists', return_value=False), \
+         patch('builtins.print'), \
+         patch('time.sleep'), \
+         patch('os.execvp'), \
+         patch('sys.stdout.flush'), \
+         patch('glob.glob', return_value=[]), \
+         patch('socket.socket', return_value=mock_socket_instance), \
+         patch('builtins.open'):
+
+        sys.modules['litellm'] = mock_litellm
+        sys.modules['litellm.proxy'] = MagicMock()
+        sys.modules['litellm.proxy.proxy_cli'] = mock_proxy_cli
+        spec.loader.exec_module(entrypoint)
+finally:
+    # Restore original modules state
+    for k, v in orig_modules.items():
+        if v is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = v
 
 def test_check_tcp_port_success():
     with patch('socket.socket') as mock_socket_class:

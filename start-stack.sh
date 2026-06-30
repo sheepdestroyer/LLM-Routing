@@ -17,12 +17,27 @@ mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data m
 
 ENV_FILE="${WORKDIR}/.env"
 
+# Ensure the env file exists and has secure permissions (owner read/write only)
+if [ ! -f "$ENV_FILE" ]; then
+    touch "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+fi
+
 # 1. Load or prompt for OpenRouter API Key
 if [ -f "$ENV_FILE" ]; then
     set -a
     source "$ENV_FILE"
     set +a
 fi
+
+# Ensure openssl is installed if we need to generate passwords/keys
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ]; then
+    if ! command -v openssl &>/dev/null; then
+        echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
+        exit 1
+    fi
+fi
+
 
 if [ -z "$OPENROUTER_API_KEY" ]; then
     if [ -t 0 ]; then
@@ -31,7 +46,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
         read -rs OPENROUTER_API_KEY
         echo ""
         echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" > "$ENV_FILE"
-        chmod 644 "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
     else
         echo "❌ Error: OPENROUTER_API_KEY is not set in your environment or in $ENV_FILE"
@@ -336,7 +351,7 @@ fi
 render_pod_yaml() {
     export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
     python3 - "$WORKDIR/pod.yaml" <<'PY'
-import os, sys
+import os, sys, urllib.parse
 uid = os.getuid()
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     text = f.read()
@@ -359,7 +374,9 @@ text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("postgres:***", f"postgres:{os.environ['POSTGRES_PASSWORD']}")
+# URL-encode the postgres password for DSN insertion
+encoded_password = urllib.parse.quote_plus(os.environ['POSTGRES_PASSWORD'])
+text = text.replace("postgres:***", f"postgres:{encoded_password}")
 text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])

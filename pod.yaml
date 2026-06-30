@@ -236,8 +236,14 @@ spec:
       timeoutSeconds: 2
     name: valkey-lf
     readinessProbe:
-      tcpSocket:
-        port: 6380
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - "6380"
+        - -a
+        - langfuse-redis-2026
+        - ping
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2

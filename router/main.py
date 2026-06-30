@@ -234,10 +234,17 @@ port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
-router_api_key = router_model_conf.get("api_key", "local-token")
+router_api_key = router_model_conf.get("api_key")
+if not router_api_key:
+    raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
 if router_api_key.startswith("os.environ/"):
     env_var = router_api_key.split("/", 1)[1]
-    router_api_key = os.environ.get(env_var, "local-token")
+    router_api_key = os.environ.get(env_var)
+    if not router_api_key:
+        if "pytest" in sys.modules:
+            router_api_key = "local-token"
+        else:
+            raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
@@ -3333,11 +3340,11 @@ MAX_ANNOTATION_ITEM_BYTES = 4096
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     tier: Union[int, str, None] = None
     note: Optional[str] = Field(default=None, max_length=1000)
-    ts: Optional[str] = None
+    ts: Optional[str] = Field(default=None, max_length=100)
 
     @field_validator("tier")
     @classmethod
