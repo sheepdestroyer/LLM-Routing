@@ -24,7 +24,7 @@ def test_load_persisted_stats_success():
 
     # We patch the stats dict directly to avoid replacing the reference
     # and to ensure automatic teardown even if an assertion fails.
-    initial_stats = {"some_dict": {"c": 3}}
+    initial_stats = {"some_dict": {"c": 3}, "timeline": []}
 
     def mock_exists(path):
         if path == main.STATS_JSON_PATH:
