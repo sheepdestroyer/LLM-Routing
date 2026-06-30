@@ -3319,6 +3319,8 @@ class AnnotationItem(BaseModel):
     def validate_tier(cls, v):
         if v is None:
             return v
+        if isinstance(v, bool):
+            raise ValueError("Tier must be int, str, or null, not bool")
         if isinstance(v, int):
             if v < 0 or v > 4:
                 raise ValueError(f"Invalid tier index {v}: must be between 0 and 4")
