@@ -13,15 +13,19 @@ spec:
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
-      tcpSocket:
-        port: 6379
+      exec:
+        command:
+        - valkey-cli
+        - PING
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
     name: valkey-cache
     readinessProbe:
-      tcpSocket:
-        port: 6379
+      exec:
+        command:
+        - valkey-cli
+        - PING
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -51,7 +55,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/ping')
+        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -61,7 +65,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')
+        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -110,7 +114,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
@@ -120,7 +124,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -229,8 +233,14 @@ spec:
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
-      tcpSocket:
-        port: 6380
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - '6380'
+        - -a
+        - langfuse-redis-2026
+        - PING
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
@@ -240,10 +250,10 @@ spec:
         command:
         - valkey-cli
         - -p
-        - "6380"
+        - '6380'
         - -a
         - langfuse-redis-2026
-        - ping
+        - PING
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -255,13 +265,13 @@ spec:
     - name: DATABASE_URL
       value: postgresql://postgres:***@127.0.0.1:5432/langfuse
     - name: NEXTAUTH_SECRET
-      value: NEXTAUTH_SECRET_PLACEHOLDER
+      value: my-super-secret-nextauth-token-2026
     - name: NEXTAUTH_URL
       value: http://localhost:3001
     - name: SALT
-      value: SALT_PLACEHOLDER
+      value: my-super-strong-salt-token-2026-value-1234
     - name: ENCRYPTION_KEY
-      value: ENCRYPTION_KEY_PLACEHOLDER
+      value: 4c265d39d04389f069225db1e88726727a090e7fc6275e8c910b81aa4b763135
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
@@ -318,7 +328,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3001/api/health
+        - http://127.0.0.1:3001/
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -330,7 +340,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3001/api/health
+        - http://127.0.0.1:3001/
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
@@ -398,17 +408,21 @@ spec:
       value: minioadmin
     image: docker.io/minio/minio:latest
     livenessProbe:
-      httpGet:
-        path: /minio/health/live
-        port: 9002
+      exec:
+        command:
+        - sh
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
     name: minio-s3
     readinessProbe:
-      httpGet:
-        path: /minio/health/ready
-        port: 9002
+      exec:
+        command:
+        - sh
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 5

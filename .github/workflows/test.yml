@@ -5,9 +5,6 @@ on:
     branches: [ master ]
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,7 +20,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis
+        run: pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi uvicorn python-multipart asyncpg langfuse redis
 
       - name: Run Unit Tests
         run: CONFIG_PATH=router/config.yaml PYTHONPATH=.:router pytest --ignore=test_agy_behavior.py --ignore=test_agy_tiers.py

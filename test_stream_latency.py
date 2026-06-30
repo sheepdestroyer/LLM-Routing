@@ -70,7 +70,7 @@ async def main():
 
         end_time = time.time()
         elapsed = end_time - start_time
-        print("\n\nStream Finished!")
+        print(f"\n\nStream Finished!")
         print(f"Total time: {elapsed:.2f} s")
         print(f"Total chunks received: {chunks_received}")
         print(f"Story length: {len(''.join(full_response))} characters")

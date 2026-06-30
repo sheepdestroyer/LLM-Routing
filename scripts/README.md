@@ -50,10 +50,9 @@ A simple HTTP server that returns `429 Rate Limit Exceeded` to simulate rate lim
 
 ## 3. Classifier & Dataset Maintenance (`scripts/`)
 
-These tools are used to benchmark the prompt classifier, verify token estimation heuristics, and extract datasets from Langfuse traces:
+These tools are used to benchmark the prompt classifier and extract datasets from Langfuse traces:
 
 - **`benchmark_classifier.py`**: Benchmarks latency and precision metrics of the Ryzen PRO APU-offloaded classifier.
-- **`benchmark_tokens.py`**: Benchmarks and evaluates prompt token estimation heuristics against ground truth across representative content types (English prose, Python code, CJK text, whitespace-padded JSON, emojis) to prevent token metric regressions.
 - **`classify_direct.py`**: Takes a string prompt argument and prints the classification decision directly.
 - **`extract_prompts.py` / `extract_complex.py` / `extract_gapfill.py`**: Mines prompt datasets from Langfuse PG/ClickHouse database traces for fine-tuning.
 - **`reclassify_all.py`**: Re-evaluates prompt classifications against updated models.
