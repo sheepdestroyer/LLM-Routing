@@ -41,7 +41,7 @@ def _make_key(category: str, is_global: bool, data: str) -> str:
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     ts = int(time.time() * 1000)
     # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts
-    h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=6).hexdigest()
+    h = hashlib.blake2b(f"{data if data is not None else ''}{ts}".encode("utf-8"), digest_size=6).hexdigest()
     return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
 
 
