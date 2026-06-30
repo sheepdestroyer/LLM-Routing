@@ -9,6 +9,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
 import host_agy_daemon
 
 def find_free_port():

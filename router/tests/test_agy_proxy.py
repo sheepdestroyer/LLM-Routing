@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from unittest.mock import patch, MagicMock
 from router.agy_proxy import _wrap_response, _is_quota_exhausted
 

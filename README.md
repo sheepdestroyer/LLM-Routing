@@ -228,16 +228,26 @@ All configurations, automation scripts, and databases are self-contained within 
 │   ├── agy_proxy.py     # 3-tier agy fallback with session continuation
 │   ├── circuit_breaker.py # Exponential cooldown breaker for agy proxy
 │   └── memory_mcp.py    # MCP bridge server for Goose memory integration
-├── scripts/
-│   └── backup.sh        # Database backup with pg_isready retry logic
+├── scripts/             # Automation, maintenance, and verification scripts
+│   ├── backup.sh        # Database backup with pg_isready retry logic
+│   ├── host_agy_daemon.py # Real-time PTY-based streaming daemon for agy
+│   ├── sync_gemini_token.py # Extraction/sync script for keyring credentials
+│   ├── get_pr_status.py # PR state helper
+│   ├── watch_quota.sh   # Quota reset watcher
+│   ├── test_quota_reset.sh # Quota reset test simulator
+│   └── verification/    # Routing & cooldown verification tests
+│       ├── verify_breaker.py # Circuit breaker verification
+│       └── ...
+├── tests/               # Integration & unit test suite
+│   ├── test_agy_tiers.py # agy proxy model tier test suite
+│   ├── test_classifier_accuracy.py # Classifier accuracy benchmark
+│   └── ...
 ├── backups/             # Timestamped PostgreSQL dumps + config snapshots
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
 ├── valkey-lf-data/      # [Git Ignored] Persistent job queues for Langfuse v3
-├── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
-├── test_agy_tiers.py    # agy proxy model tier test suite
-└── test_classifier_accuracy.py # Classifier accuracy benchmark
+└── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
 ```
 
 ---
@@ -719,7 +729,7 @@ agy --print "First message"                    # creates conversation
 agy --conversation <id> --print "Follow-up"    # continues same session
 
 # Run the full tier test suite
-python3 test_agy_tiers.py
+python3 tests/test_agy_tiers.py
 ```
 
 ### 9b. Streaming & Concurrency Optimizations
@@ -727,7 +737,7 @@ python3 test_agy_tiers.py
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
 #### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
-To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
+To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `scripts/host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
 * Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
 * The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.

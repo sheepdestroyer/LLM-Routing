@@ -74,7 +74,7 @@ if [ -f "$OAUTH_CREDS" ]; then
     fi
 fi
 if $NEED_SYNC; then
-    python3 sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
+    python3 scripts/sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
 fi
 
 ACTIVE_OAUTH=""

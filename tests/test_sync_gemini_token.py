@@ -6,6 +6,9 @@ import sys
 import time
 
 # Import the module to test
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
 import sync_gemini_token
 
 @pytest.fixture
