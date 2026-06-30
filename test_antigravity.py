@@ -10,7 +10,7 @@ def test_antigravity_connection():
         return
 
     print("--- Testing antigravity-cli connection with current OAuth ---")
-    
+
     # Using the agentapi binary located at ~/.gemini/antigravity-cli/bin/agentapi
     agentapi_path = os.path.expanduser("~/.gemini/antigravity-cli/bin/agentapi")
     if not os.path.exists(agentapi_path):

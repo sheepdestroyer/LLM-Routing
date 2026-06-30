@@ -73,14 +73,14 @@ def query_model(prompt: str) -> tuple[str, float]:
         "max_tokens": 15,
         "grammar": 'root ::= "agent-simple-core" | "agent-complex-core"'
     }
-    
+
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         LLAMA_SERVER_URL,
         data=data,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
     )
-    
+
     start_time = time.time()
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -98,20 +98,20 @@ def calculate_metrics(results):
     total = len(results)
     correct = sum(1 for r in results if r["expected"] == r["actual"])
     accuracy = (correct / total) * 100.0 if total > 0 else 0.0
-    
+
     # Initialize metrics structure
     classes = ["agent-simple-core", "agent-complex-core"]
     metrics = {}
-    
+
     for c in classes:
         tp = sum(1 for r in results if r["expected"] == c and r["actual"] == c)
         fp = sum(1 for r in results if r["expected"] != c and r["actual"] == c)
         fn = sum(1 for r in results if r["expected"] == c and r["actual"] != c)
-        
+
         precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
         recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-        
+
         metrics[c] = {
             "precision": precision * 100.0,
             "recall": recall * 100.0,
@@ -120,51 +120,51 @@ def calculate_metrics(results):
             "fp": fp,
             "fn": fn
         }
-    
+
     return accuracy, metrics
 
 def main():
-    print(f"Starting Classifier Accuracy Evaluation Suite...")
+    print("Starting Classifier Accuracy Evaluation Suite...")
     print(f"Querying endpoint: {LLAMA_SERVER_URL}")
     print(f"Loaded {len(test_cases)} test cases.")
     print("-" * 80)
-    
+
     results = []
     latencies = []
     misclassifications = []
-    
+
     for i, (prompt, expected) in enumerate(test_cases, 1):
         print(f"[{i}/{len(test_cases)}] Testing: '{prompt[:50]}...'")
         actual, latency = query_model(prompt)
         latencies.append(latency)
-        
+
         success = (actual == expected)
         status = "✓ PASS" if success else "✗ FAIL"
         print(f"      Expected: {expected} | Actual: {actual} | Latency: {latency:.2f}ms | {status}")
-        
+
         results.append({
             "prompt": prompt,
             "expected": expected,
             "actual": actual,
             "latency": latency
         })
-        
+
         if not success:
             misclassifications.append({
                 "prompt": prompt,
                 "expected": expected,
                 "actual": actual
             })
-            
+
     print("=" * 80)
     accuracy, metrics = calculate_metrics(results)
     avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
-    
-    print(f"OVERALL METRICS:")
+
+    print("OVERALL METRICS:")
     print(f"Classification Accuracy: {accuracy:.2f}%")
     print(f"Average Latency: {avg_latency:.2f} ms")
     print("-" * 80)
-    
+
     for c, m in metrics.items():
         print(f"Class: {c}")
         print(f"  Precision: {m['precision']:.2f}%")
@@ -172,7 +172,7 @@ def main():
         print(f"  F1-Score:  {m['f1']:.2f}%")
         print(f"  (TP={m['tp']}, FP={m['fp']}, FN={m['fn']})")
         print("-" * 80)
-        
+
     if misclassifications:
         print(f"MISCLASSIFICATION LOGS ({len(misclassifications)} total):")
         for mc in misclassifications:
@@ -182,6 +182,6 @@ def main():
             print("-" * 40)
     else:
         print("🎉 No misclassifications! Perfect accuracy!")
-        
+
 if __name__ == "__main__":
     main()
