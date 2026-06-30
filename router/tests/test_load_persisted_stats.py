@@ -36,10 +36,13 @@ def test_load_persisted_stats_success(mock_stats):
             with patch("router.main.logger.info") as mock_logger:
                 load_persisted_stats()
 
-                # Assert nested_dict updated (b updated, c added, a unchanged)
+                # Assert simple value updated via else block
+                assert mock_stats["total_requests"] == 100
+                # Assert nested_dict updated via if block (b updated, c added, a unchanged)
                 assert mock_stats["nested_dict"] == {"a": 1, "b": 3, "c": 4}
-                # For this test update, removing assertions that check the "else: stats[k] = v" block to pass review
-                # We do assert that the existing_key is left alone
+                # Assert new_key added via else block
+                assert mock_stats["new_key"] == "new_value"
+                # Assert existing_key unchanged
                 assert mock_stats["existing_key"] == "value"
 
                 mock_logger.assert_called_once_with("✓ Successfully loaded persisted gateway statistics from disk.")
