@@ -213,7 +213,7 @@ All configurations, automation scripts, and databases are self-contained within 
 
 ```
 /home/gpav/Vrac/LAB/AI/LLM-Routing/
-├── .env                 # Environment file for OpenRouter API Key (ignored by git)
+├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
 ├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
@@ -379,7 +379,7 @@ Run the startup script from the root of the repository:
                               #   health probes, env vars, containers — no rebuild)
 ./start-stack.sh --full-rebuild  # Full reset: rebuild image + recreate pod
 ```
-*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`).*
+*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
 
 ### 2. Verify Container Status
 Check that all **10 containers** inside `agent-router-pod` are up and running:

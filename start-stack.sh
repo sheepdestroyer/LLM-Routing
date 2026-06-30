@@ -45,7 +45,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
         echo -n "Please enter your OpenRouter API Key (input will be hidden): "
         read -rs OPENROUTER_API_KEY
         echo ""
-        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" > "$ENV_FILE"
+        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
     else
@@ -101,7 +101,7 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ]; then
+if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -119,7 +119,7 @@ if [ -z "$NEXTAUTH_SECRET" ]; then
 fi
 
 if [ -z "$SALT" ]; then
-    SALT="$(openssl rand -hex 16)"
+    SALT="$(openssl rand -hex 32)"
     echo "SALT=\"$SALT\"" >> "$ENV_FILE"
     echo "✓ Generated new SALT and saved to $ENV_FILE"
 fi
@@ -140,6 +140,13 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
     echo "❌ Error: LITELLM_MASTER_KEY is not set and could not be generated."
     exit 1
 fi
+
+if [ -z "$ROUTER_API_KEY" ]; then
+    ROUTER_API_KEY="$(openssl rand -hex 32)"
+    echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
+    echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
+fi
+
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 

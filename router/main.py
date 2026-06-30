@@ -8,7 +8,9 @@ import copy
 import tempfile
 import yaml
 import httpx
+import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
