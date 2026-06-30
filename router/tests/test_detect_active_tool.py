@@ -50,38 +50,22 @@ def test_detect_active_tool_role_assistant_with_tool_calls():
     }
     assert detect_active_tool(body) == "write"
 
-def test_detect_active_tool_fallback_user_keyword():
-    # Tests matching "tree"
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("show me the tree", "tree"),
+        ("run this in shell", "shell"),
+        ("create file test.py", "write"),
+        ("cat main.py", "view"),
+    ],
+)
+def test_detect_active_tool_fallback_user_keyword(content, expected):
     body = {
         "messages": [
-            {"role": "user", "content": "show me the tree"}
+            {"role": "user", "content": content}
         ]
     }
-    assert detect_active_tool(body) == "tree"
-
-    # Tests matching "shell"
-    body = {
-        "messages": [
-            {"role": "user", "content": "run this in shell"}
-        ]
-    }
-    assert detect_active_tool(body) == "shell"
-
-    # Tests matching "write"
-    body = {
-        "messages": [
-            {"role": "user", "content": "create file test.py"}
-        ]
-    }
-    assert detect_active_tool(body) == "write"
-
-    # Tests matching "view"
-    body = {
-        "messages": [
-            {"role": "user", "content": "cat main.py"}
-        ]
-    }
-    assert detect_active_tool(body) == "view"
+    assert detect_active_tool(body) == expected
 
 def test_detect_active_tool_ignores_invalid_message_formats():
     body = {
