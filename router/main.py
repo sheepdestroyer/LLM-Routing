@@ -1320,8 +1320,7 @@ def get_goose_sessions() -> list:
             ORDER BY updated_at DESC 
             LIMIT 5
         """)
-        for row in cursor.fetchall():
-            sessions_list.append(dict(row))
+        sessions_list = [dict(row) for row in cursor.fetchall()]
         conn.close()
     except Exception as e:
         logger.error(f"Failed to query goose sessions SQLite DB: {e}")
