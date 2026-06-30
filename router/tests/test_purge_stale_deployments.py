@@ -17,12 +17,12 @@ async def test_purge_stale_deployments_success():
         await _purge_stale_deployments(db_url, pattern)
 
         # Assertions
-        mock_asyncpg.connect.assert_called_once_with(db_url)
-        mock_conn.execute.assert_called_once_with(
+        mock_asyncpg.connect.assert_awaited_once_with(db_url)
+        mock_conn.execute.assert_awaited_once_with(
             'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
             pattern
         )
-        mock_conn.close.assert_called_once()
+        mock_conn.close.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_purge_stale_deployments_execute_exception():
