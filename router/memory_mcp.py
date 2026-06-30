@@ -15,6 +15,7 @@ Tool names match the built-in Memory MCP exactly:
 import sys
 import json
 import time
+import hashlib
 import httpx
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
@@ -33,14 +34,16 @@ SERVER_VERSION = "2.0.0"
 SCOPE_GLOBAL = "global"
 SCOPE_LOCAL = "local"
 PREFIX = "memory"
+HASH_DIGEST_SIZE = 10  # 10 bytes = 20-character hex suffix
 
 
 def _make_key(category: str, is_global: bool, data: str) -> str:
     """Build a unique key from memory attributes."""
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     ts = int(time.time() * 1000)
-    # Use first 12 chars of a basic hash for uniqueness within the same second
-    h = str(hash(data + str(ts)))[:12].replace("-", "x")
+    # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts.
+    # Provides uniqueness within the same millisecond.
+    h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=HASH_DIGEST_SIZE).hexdigest()
     return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
 
 
@@ -97,7 +100,7 @@ async def _list_all_memories(client: httpx.AsyncClient) -> list[dict]:
 
 def _memory_entry(lmem: dict) -> dict | None:
     """Convert a LiteLLM memory entry into a structured MCP memory object.
-    
+
     Returns None if the key isn't a 'memory:' key.
     """
     key = lmem.get("key", "")
@@ -124,7 +127,7 @@ async def handle_remember_memory(args: dict) -> str:
     data = args.get("data", "")
     tags = args.get("tags")
     is_global = args.get("is_global", False)
-    
+
     key = _make_key(category, is_global, data)
     value = _memory_value(data, tags)
     
@@ -147,15 +150,15 @@ async def handle_remember_memory(args: dict) -> str:
 
 async def handle_retrieve_memories(args: dict) -> str:
     """retrieve_memories(category, is_global)
-    
+
     Use category="*" to retrieve all memories.
     """
     category = args.get("category", "*")
     is_global = args.get("is_global", False)
-    
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
-    
+
     # Filter
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     results = []
@@ -170,37 +173,37 @@ async def handle_retrieve_memories(args: dict) -> str:
         if category != "*" and entry["category"] != category:
             continue
         results.append(entry)
-    
+
     if not results:
         scope_label = "global" if is_global else "local"
         return f"No memories found for category '{category}' ({scope_label})."
-    
+
     # Group by category for display
     by_category = {}
     for r in results:
         by_category.setdefault(r["category"], []).append(r)
-    
+
     lines = []
     for cat, entries in sorted(by_category.items()):
         lines.append(f"\nCategory: {cat}")
         for e in entries:
             tag_str = f" [{', '.join(e['tags'])}]" if e.get("tags") else ""
             lines.append(f"  - {e['data']}{tag_str}")
-    
+
     return "\n".join(lines).strip()
 
 
 async def handle_remove_memory_category(args: dict) -> str:
     """remove_memory_category(category, is_global)
-    
+
     Use category="*" to remove all memories in the scope.
     """
     category = args.get("category", "*")
     is_global = args.get("is_global", False)
-    
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
-    
+
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     to_delete = []
     for m in all_memories:
@@ -211,16 +214,16 @@ async def handle_remove_memory_category(args: dict) -> str:
             continue
         if category == "*" or entry["category"] == category:
             to_delete.append(entry)
-    
+
     if not to_delete:
         scope_label = "global" if is_global else "local"
         return f"No memories found to remove in category '{category}' ({scope_label})."
-    
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in to_delete:
             key = entry["key"]
             await client.delete(f"{API_URL}/{key}", timeout=5.0)
-    
+
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"
     return f"Removed {len(to_delete)} memory(ies) from {cat_label} ({scope_label})."
@@ -231,13 +234,13 @@ async def handle_remove_specific_memory(args: dict) -> str:
     category = args.get("category", "")
     memory_content = args.get("memory_content", "")
     is_global = args.get("is_global", False)
-    
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
-    
+
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     target = None
-    
+
     for m in all_memories:
         entry = _memory_entry(m)
         if entry is None:
@@ -249,14 +252,14 @@ async def handle_remove_specific_memory(args: dict) -> str:
         if entry["data"] == memory_content or memory_content in entry["data"]:
             target = entry
             break
-    
+
     if not target:
         scope_label = "global" if is_global else "local"
         return (
             f"No matching memory found in category '{category}' ({scope_label}) "
             f"with content matching '{memory_content[:50]}...'."
         )
-    
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.delete(f"{API_URL}/{target['key']}", timeout=5.0)
         if r.status_code == 200:
@@ -277,7 +280,7 @@ def log(msg: str):
 async def handle_request(req: dict) -> dict | None:
     method = req.get("method")
     params = req.get("params", {})
-    
+
     if method == "initialize":
         return {
             "protocolVersion": PROTOCOL_VERSION,
@@ -289,7 +292,7 @@ async def handle_request(req: dict) -> dict | None:
                 "version": SERVER_VERSION
             }
         }
-    
+
     elif method == "tools/list":
         return {
             "tools": [
@@ -392,13 +395,13 @@ async def handle_request(req: dict) -> dict | None:
                 }
             ]
         }
-    
+
     elif method == "tools/call":
         tool_name = params.get("name")
         args = params.get("arguments", {})
-        
+
         log(f"Calling tool: {tool_name}")
-        
+
         try:
             if tool_name == "remember_memory":
                 text = await handle_remember_memory(args)
@@ -413,7 +416,7 @@ async def handle_request(req: dict) -> dict | None:
                     "isError": True,
                     "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]
                 }
-            
+
             return {
                 "content": [{"type": "text", "text": text}]
             }
@@ -423,7 +426,7 @@ async def handle_request(req: dict) -> dict | None:
                 "isError": True,
                 "content": [{"type": "text", "text": f"Error: {e}"}]
             }
-    
+
     return None
 
 
@@ -440,11 +443,11 @@ async def main_loop():
         try:
             req = json.loads(line)
             req_id = req.get("id")
-            
+
             # Notifications have no ID — skip response
             if req_id is None:
                 continue
-            
+
             result = await handle_request(req)
             if result is not None:
                 response = {
