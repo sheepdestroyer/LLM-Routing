@@ -947,7 +947,7 @@ def detect_active_tool(body: dict) -> str:
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
                                     if isinstance(tc, dict) and tc.get("id") == tool_call_id:
-                                        fn = tc.get("function")
+                                        fn = tc.get("function")  # Fix IndentationError
                                         if isinstance(fn, dict):
                                             name = fn.get("name")
                                         break
