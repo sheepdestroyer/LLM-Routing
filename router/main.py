@@ -18,32 +18,16 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
+from redis_client import get_redis, close_redis, reset_redis_on_failure
+import agy_proxy
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 
-_redis_client = None
-_redis_last_init_attempt = 0.0
-_REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
-def get_redis():
-    """Lazily initialize and return the async Redis/Valkey client.
-    Returns None if connection fails or is disabled (non-fatal fallback)."""
-    global _redis_client, _redis_last_init_attempt
-    if _redis_client is None:
-        now = time.monotonic()
-        if now - _redis_last_init_attempt < _REDIS_RETRY_INTERVAL_SECONDS:
-            return None
-        _redis_last_init_attempt = now
-        try:
-            host = os.getenv("VALKEY_HOST", "127.0.0.1")
-            port = int(os.getenv("VALKEY_PORT", "6379"))
-            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
-            logger.info(f"Valkey client initialized at {host}:{port}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
-            _redis_client = None
-    return _redis_client
-
+# Connection pool limits configuration for the shared HTTP client
+HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
+HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
 
 # Connection pool limits configuration for the shared HTTP client
 HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
@@ -108,9 +92,7 @@ async def sync_cooldowns_from_valkey() -> None:
         await breaker.sync_from_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to sync cooldowns from Valkey: {e}")
-        global _redis_client, _redis_last_init_attempt
-        _redis_client = None
-        _redis_last_init_attempt = time.monotonic()
+        reset_redis_on_failure()
 
 
 async def save_cooldowns_to_valkey() -> None:
@@ -133,9 +115,7 @@ async def save_cooldowns_to_valkey() -> None:
         await breaker.save_to_valkey(redis)
     except Exception as e:
         logger.warning(f"Failed to save cooldowns to Valkey: {e}")
-        global _redis_client, _redis_last_init_attempt
-        _redis_client = None
-        _redis_last_init_attempt = time.monotonic()
+        reset_redis_on_failure()
 
 
 class ValkeyCooldownPersistence:
@@ -724,10 +704,7 @@ async def lifespan(app: FastAPI):
             _http_client = None
 
         # Close Redis client
-        global _redis_client
-        if _redis_client is not None and _redis_client is not False:
-            await _redis_client.aclose()
-            _redis_client = None
+        await close_redis()
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
@@ -975,7 +952,7 @@ def detect_active_tool(body: dict) -> str:
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
                                     if isinstance(tc, dict) and tc.get("id") == tool_call_id:
-                                        fn = tc.get("function")
+                                        fn = tc.get("function")  # Fix IndentationError
                                         if isinstance(fn, dict):
                                             name = fn.get("name")
                                         break
@@ -2133,6 +2110,11 @@ async def metrics():
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
     lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
+
+    # agy proxy session metrics
+    lines.append("# HELP agy_proxy_sessions_total Total number of active agy proxy sessions")
+    lines.append("# TYPE agy_proxy_sessions_total gauge")
+    lines.append(f"agy_proxy_sessions_total {agy_proxy.get_session_count()}")
 
     # Ollama router-side cooldown metrics
     _now_mono = time.monotonic()
