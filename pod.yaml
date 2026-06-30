@@ -13,19 +13,15 @@ spec:
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
-      exec:
-        command:
-        - valkey-cli
-        - PING
+      tcpSocket:
+        port: 6379
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
     name: valkey-cache
     readinessProbe:
-      exec:
-        command:
-        - valkey-cli
-        - PING
+      tcpSocket:
+        port: 6379
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -51,21 +47,17 @@ spec:
       value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
     image: ghcr.io/berriai/litellm:v1.89.4
     livenessProbe:
-      exec:
-        command:
-        - python3
-        - -c
-        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
+      httpGet:
+        path: /health/readiness
+        port: 4000
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: litellm-gateway
     readinessProbe:
-      exec:
-        command:
-        - python3
-        - -c
-        - import urllib.request as u; r=u.urlopen("http://localhost:4000/health/readiness"); exit(0 if r.status==200 else 1)
+      httpGet:
+        path: /health/readiness
+        port: 4000
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -110,21 +102,17 @@ spec:
       value: info
     image: localhost/llm-triage-router:latest
     livenessProbe:
-      exec:
-        command:
-        - python3
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
+      httpGet:
+        path: /dashboard
+        port: 5000
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
     name: llm-triage-router
     readinessProbe:
-      exec:
-        command:
-        - python3
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/dashboard')
+      httpGet:
+        path: /dashboard
+        port: 5000
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -163,21 +151,15 @@ spec:
       value: langfuse
     image: docker.io/pgvector/pgvector:pg18
     livenessProbe:
-      exec:
-        command:
-        - pg_isready
-        - -U
-        - postgres
+      tcpSocket:
+        port: 5432
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
     name: postgres-db
     readinessProbe:
-      exec:
-        command:
-        - pg_isready
-        - -U
-        - postgres
+      tcpSocket:
+        port: 5432
       initialDelaySeconds: 5
       periodSeconds: 5
       timeoutSeconds: 5
@@ -194,25 +176,17 @@ spec:
       value: clickhouse
     image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
-      exec:
-        command:
-        - clickhouse-client
-        - --user
-        - clickhouse
-        - --password
-        - clickhouse
-        - --query
-        - SELECT 1
+      httpGet:
+        path: /ping
+        port: 8123
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
     name: clickhouse-db
     readinessProbe:
-      exec:
-        command:
-        - clickhouse-client
-        - --query
-        - SELECT 1
+      httpGet:
+        path: /ping
+        port: 8123
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -233,27 +207,15 @@ spec:
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
-      exec:
-        command:
-        - valkey-cli
-        - -p
-        - '6380'
-        - -a
-        - langfuse-redis-2026
-        - PING
+      tcpSocket:
+        port: 6380
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
     name: valkey-lf
     readinessProbe:
-      exec:
-        command:
-        - valkey-cli
-        - -p
-        - '6380'
-        - -a
-        - langfuse-redis-2026
-        - PING
+      tcpSocket:
+        port: 6380
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -322,25 +284,17 @@ spec:
       value: warn
     image: docker.io/langfuse/langfuse:3
     livenessProbe:
-      exec:
-        command:
-        - wget
-        - -q
-        - -O
-        - /dev/null
-        - http://127.0.0.1:3001/
+      httpGet:
+        path: /
+        port: 3001
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: langfuse-web
     readinessProbe:
-      exec:
-        command:
-        - wget
-        - -q
-        - -O
-        - /dev/null
-        - http://127.0.0.1:3001/
+      httpGet:
+        path: /
+        port: 3001
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
@@ -384,10 +338,8 @@ spec:
       value: warn
     image: docker.io/langfuse/langfuse-worker:3
     livenessProbe:
-      exec:
-        command:
-        - pgrep
-        - node
+      tcpSocket:
+        port: 3030
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -408,21 +360,15 @@ spec:
       value: minioadmin
     image: docker.io/minio/minio:latest
     livenessProbe:
-      exec:
-        command:
-        - sh
-        - -c
-        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
+      tcpSocket:
+        port: 9002
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
     name: minio-s3
     readinessProbe:
-      exec:
-        command:
-        - sh
-        - -c
-        - exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok
+      tcpSocket:
+        port: 9002
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 5
