@@ -1215,8 +1215,13 @@ async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
 
+    global _aa_scores_lock
     if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
+        if "_aa_scores_lock" not in globals():
+            _aa_scores_lock = asyncio.Lock()
+        async with _aa_scores_lock:
+            if not _AA_SCORES_LOADED:
+                await asyncio.to_thread(_load_aa_scores)
 
     now = time.time()
     
