@@ -327,7 +327,8 @@ text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("postgres:***", f"postgres:{os.environ['POSTGRES_PASSWORD']}")
+import urllib.parse
+text = text.replace("postgres:***", f"postgres:{urllib.parse.quote_plus(os.environ['POSTGRES_PASSWORD'])}")
 text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 sys.stdout.write(text)
 PY
