@@ -2,10 +2,12 @@ import sys
 import os
 from pathlib import Path
 
-# Set CONFIG_PATH for import
+# Set CONFIG_PATH and ROUTER_API_KEY for import
 os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "router" / "config.yaml")
-# Add the parent directory to the path so we can import from router
+os.environ["ROUTER_API_KEY"] = "local-token"
+# Add the parent directory and the router directory to the path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "router"))
 
 from router.main import estimate_prompt_tokens
 

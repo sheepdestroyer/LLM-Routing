@@ -66,27 +66,36 @@ def get_http_client():
     return _http_client
 
 
+# Compiled regular expressions for token estimation heuristics
+WORD_RE = re.compile(r'[a-zA-Z0-9]+')
+NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
+PUNC_RE = re.compile(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]')
+
+
 def _count_tokens_heuristic(text: str) -> float:
     """Heuristically estimate token count using weighted categories and optimized regex splitting.
 
     This replaces the naive character-count logic with a more granular approach that
     balances English words, technical identifiers, punctuation, and multi-byte characters.
+
+    Returns a float to prevent intermediate rounding errors when summing across multiple
+    message blocks. Callers should round the total sum to convert it to an integer.
     """
     if not text:
         return 0.0
 
     # 1. Alphanumeric runs (Words/Identifiers/Hashes/Base64)
     # Use a length-aware heuristic to avoid under-counting technical content.
-    word_matches = re.findall(r'[a-zA-Z0-9]+', text)
+    word_matches = WORD_RE.findall(text)
     word_total = sum(1.2 if len(w) <= 8 else len(w) / 4.0 for w in word_matches)
 
     # 2. Non-ASCII characters (CJK/Emoji)
     # Each character is weighted at 0.35 tokens.
-    non_ascii_count = len(re.findall(r'[^\s\x00-\x7F]', text))
+    non_ascii_count = len(NON_ASCII_RE.findall(text))
 
     # 3. ASCII Punctuation/Symbols
     # Characters that are ASCII but not alphanumeric or whitespace.
-    punc_count = len(re.findall(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]', text))
+    punc_count = len(PUNC_RE.findall(text))
 
     return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
 
@@ -104,7 +113,9 @@ def estimate_prompt_tokens(body: dict) -> int:
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    total += _count_tokens_heuristic(block.get("text") or "")
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        total += _count_tokens_heuristic(text)
 
     # Include a flat estimate for system prompt / metadata overhead.
     # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
