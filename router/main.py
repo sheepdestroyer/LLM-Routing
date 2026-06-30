@@ -13,6 +13,7 @@ import yaml
 import httpx
 import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1059,36 +1060,47 @@ def detect_active_tool(body: dict) -> str:
                 return "view"
     return "none"
 
-def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float, route: str = "litellm_fallback"):
+
+@dataclass
+class ToolUsageRecord:
+    tool_name: str
+    prompt_tokens: int
+    completion_tokens: int
+    model: str
+    latency_ms: float
+    route: str = "litellm_fallback"
+
+
+def record_tool_usage(usage: ToolUsageRecord):
     """Accumulates token counts in memory for active tools and tracks request timelines.
 
     File writes are offloaded to a thread pool executor to avoid blocking the
     event loop. The 2-second throttle is checked synchronously before
     dispatching.
     """
-    if tool_name == "none":
-        tool_name = "other"
+    if usage.tool_name == "none":
+        usage.tool_name = "other"
 
-    total = prompt_tokens + completion_tokens
-    stats["tool_tokens"][tool_name] = stats["tool_tokens"].get(tool_name, 0) + total
+    total = usage.prompt_tokens + usage.completion_tokens
+    stats["tool_tokens"][usage.tool_name] = stats["tool_tokens"].get(usage.tool_name, 0) + total
 
     # Save global prompt/completion metrics
-    stats["prompt_tokens"] = stats.get("prompt_tokens", 0) + prompt_tokens
-    stats["completion_tokens"] = stats.get("completion_tokens", 0) + completion_tokens
+    stats["prompt_tokens"] = stats.get("prompt_tokens", 0) + usage.prompt_tokens
+    stats["completion_tokens"] = stats.get("completion_tokens", 0) + usage.completion_tokens
 
     # Track routing path distribution
     if "routing_paths" not in stats:
         stats["routing_paths"] = {"google_oauth_direct": 0, "litellm_fallback": 0}
-    stats["routing_paths"][route] = stats["routing_paths"].get(route, 0) + 1
+    stats["routing_paths"][usage.route] = stats["routing_paths"].get(usage.route, 0) + 1
 
     # Append to timeline event stack (in-memory ring buffer + persistent disk backup)
     event = {
         "timestamp": time.strftime("%H:%M:%S"),
-        "tool": tool_name,
-        "model": model,
-        "route": route,
+        "tool": usage.tool_name,
+        "model": usage.model,
+        "route": usage.route,
         "tokens": total,
-        "latency_ms": int(latency_ms)
+        "latency_ms": int(usage.latency_ms),
     }
     stats["timeline"].append(event)
     if len(stats["timeline"]) > 15:
@@ -1717,11 +1729,17 @@ async def chat_completions(request: Request):
                                 latency_ms = (time.time() - start_time) * 1000.0
                                 approx_prompt_tokens = estimate_prompt_tokens(body)
 
-                                record_tool_usage(
-                                    active_tool, approx_prompt_tokens, token_count,
-                                    model_name, latency_ms, route="google_oauth_direct"
+                                record_tool_usage(ToolUsageRecord(
+                                    active_tool,
+                                    approx_prompt_tokens,
+                                    token_count,
+                                    model_name,
+                                    latency_ms,
+                                    route="google_oauth_direct",
+                                ))
+                                logger.info(
+                                    f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms"
                                 )
-                                logger.info(f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms")
                                 if agy_span_obj:
                                     try:
                                         agy_span_obj.end(
@@ -1747,11 +1765,17 @@ async def chat_completions(request: Request):
                         usage = agy_response.get("usage") or {}
                         prompt_tokens = usage.get("prompt_tokens") or 0
                         completion_tokens = usage.get("completion_tokens") or 0
-                        record_tool_usage(
-                            active_tool, prompt_tokens, completion_tokens,
-                            model_name, latency_ms, route="google_oauth_direct"
+                        record_tool_usage(ToolUsageRecord(
+                            active_tool,
+                            prompt_tokens,
+                            completion_tokens,
+                            model_name,
+                            latency_ms,
+                            route="google_oauth_direct",
+                        ))
+                        logger.info(
+                            f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms"
                         )
-                        logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
 
                         # Finalize agy span
                         if agy_span_obj:
@@ -1966,8 +1990,17 @@ async def chat_completions(request: Request):
                                     pass
                             proxy_latency = (time.time() - proxy_start) * 1000.0
                             stats["total_proxy_time_ms"] += proxy_latency
-                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
-                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
+                            stats["avg_proxy_latency_ms"] = (
+                                stats["total_proxy_time_ms"] / stats["total_requests"]
+                            )
+                            record_tool_usage(ToolUsageRecord(
+                                active_tool,
+                                request_tokens,
+                                completion_chars // 4,
+                                model_name,
+                                proxy_latency,
+                                route="litellm_fallback",
+                            ))
                             # Finalize LiteLLM span (streaming path)
                             if litellm_span_obj:
                                 try:
@@ -2013,8 +2046,17 @@ async def chat_completions(request: Request):
                         msg = choices[0].get("message")
                         if isinstance(msg, dict):
                             fallback_completion = len(msg.get("content") or "") // 4
-                    completion_tokens = usage.get("completion_tokens") or fallback_completion
-                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
+                    completion_tokens = (
+                        usage.get("completion_tokens") or fallback_completion
+                    )
+                    record_tool_usage(ToolUsageRecord(
+                        active_tool,
+                        prompt_tokens,
+                        completion_tokens,
+                        model_name,
+                        proxy_latency,
+                        route="litellm_fallback",
+                    ))
                     # Finalize LiteLLM span (non-streaming path)
                     if litellm_span_obj:
                         try:
