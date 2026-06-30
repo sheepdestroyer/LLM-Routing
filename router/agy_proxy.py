@@ -83,7 +83,9 @@ class BoundedSessionStore:
                 self.delete(key)
         return None
 
-    def set(self, key: str, value: Dict[str, Any]):
+    def set(self, key: str, value: Dict[str, Any], ttl: Optional[int] = None):
+        if self.maxsize <= 0:
+            return
         now = time.time()
         current_size = len(self._data)
 
@@ -93,13 +95,13 @@ class BoundedSessionStore:
         elif current_size < self.warn_threshold:
             self._has_warned = False
 
-        if current_size >= self.maxsize and key not in self._data:
+        if current_size >= self.maxsize and key not in self._data and self._data:
             # Evict oldest by first key in dict (Python 3.7+ dict is ordered)
             oldest_key = next(iter(self._data))
             self.delete(oldest_key)
 
         self._data[key] = value
-        self._expiry[key] = now + self.ttl
+        self._expiry[key] = now + (ttl if ttl is not None else self.ttl)
 
     def delete(self, key: str):
         self._data.pop(key, None)
