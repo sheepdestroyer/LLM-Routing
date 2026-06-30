@@ -1,6 +1,6 @@
 import pytest
 import copy
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import router.main
 
