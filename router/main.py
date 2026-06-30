@@ -1,7 +1,9 @@
 import os
+import re
 import sys
 import json
 import time
+import socket
 import asyncio
 import logging
 import copy
@@ -10,27 +12,15 @@ import yaml
 import httpx
 import redis.asyncio as aioredis
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
+from pydantic import BaseModel
 from typing import Dict, Optional, Union
-
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
-    "/"
-)
-
-
-_redis_client = None
-_redis_last_init_attempt = 0.0
-_REDIS_RETRY_INTERVAL_SECONDS = 5.0
-
-
-
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -63,13 +53,10 @@ def get_redis():
 
 # Connection pool limits configuration for the shared HTTP client
 HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
-HTTP_MAX_KEEPALIVE_CONNECTIONS = int(
-    os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500"
-)
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
 HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
 
 _http_client = None
-
 
 def get_http_client():
     """Return the shared global httpx.AsyncClient singleton with configured limits."""
@@ -84,24 +71,60 @@ def get_http_client():
     return _http_client
 
 
-def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens by counting characters in message contents (1 token ~= 4 chars)
-    to avoid inflating metrics with large tool/schema declarations.
+# Compiled regular expressions for token estimation heuristics
+WORD_RE = re.compile(r'[a-zA-Z0-9]+')
+NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
+PUNC_RE = re.compile(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]')
+
+
+def _count_tokens_heuristic(text: str) -> float:
+    """Heuristically estimate token count using weighted categories and optimized regex splitting.
+
+    This replaces the naive character-count logic with a more granular approach that
+    balances English words, technical identifiers, punctuation, and multi-byte characters.
+
+    Returns a float to prevent intermediate rounding errors when summing across multiple
+    message blocks. Callers should round the total sum to convert it to an integer.
     """
-    tokens = 0
+    if not text:
+        return 0.0
+
+    # 1. Alphanumeric runs (Words/Identifiers/Hashes/Base64)
+    # Use a length-aware heuristic to avoid under-counting technical content.
+    word_matches = WORD_RE.findall(text)
+    word_total = sum(1.2 if len(w) <= 8 else len(w) / 4.0 for w in word_matches)
+
+    # 2. Non-ASCII characters (CJK/Emoji)
+    # Each character is weighted at 0.35 tokens.
+    non_ascii_count = len(NON_ASCII_RE.findall(text))
+
+    # 3. ASCII Punctuation/Symbols
+    # Characters that are ASCII but not alphanumeric or whitespace.
+    punc_count = len(PUNC_RE.findall(text))
+
+    return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
+
+
+def estimate_prompt_tokens(body: dict) -> int:
+    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
+    """
+    total = 0.0
     for msg in body.get("messages", []):
         if not isinstance(msg, dict):
             continue
         content = msg.get("content") or ""
         if isinstance(content, str):
-            tokens += len(content) // 4
+            total += _count_tokens_heuristic(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    tokens += len(block.get("text") or "") // 4
-    # Include a flat estimate for system prompt / metadata overhead
-    tokens += 50
-    return max(1, tokens)
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        total += _count_tokens_heuristic(text)
+
+    # Include a flat estimate for system prompt / metadata overhead.
+    # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
+    return max(1, int(round(total)) + 50)
 
 
 async def sync_cooldowns_from_valkey() -> None:
@@ -159,12 +182,12 @@ async def save_cooldowns_to_valkey() -> None:
 
 class ValkeyCooldownPersistence:
     """Persistence provider mapping Valkey/Redis client synchronization to the global handlers."""
-
     async def sync(self) -> None:
         await sync_cooldowns_from_valkey()
 
     async def save(self) -> None:
         await save_cooldowns_to_valkey()
+
 
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
@@ -177,7 +200,6 @@ logger.info(f"Log level set to {_log_level_str} (from LOG_LEVEL env var)")
 # Langfuse observability — per-request traces + aggregate score pushes
 _langfuse_client = None
 
-
 def get_langfuse():
     """Return the Langfuse client singleton, lazily initialized.
     Returns None if Langfuse is unreachable (non-fatal)."""
@@ -185,7 +207,6 @@ def get_langfuse():
     if _langfuse_client is None:
         try:
             import langfuse
-
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
@@ -194,12 +215,9 @@ def get_langfuse():
             )
             logger.info("Langfuse client initialized")
         except (ImportError, ValueError, TypeError) as e:
-            logger.warning(
-                f"Langfuse client initialization failed: {e} — traces disabled"
-            )
+            logger.warning(f"Langfuse client initialization failed: {e} — traces disabled")
             _langfuse_client = False  # sentinel to avoid retry
     return _langfuse_client if _langfuse_client is not False else None
-
 
 async def push_aggregate_scores():
     """Push aggregate KPIs as Langfuse scores every 5 minutes."""
@@ -214,53 +232,18 @@ async def push_aggregate_scores():
                 continue
             router = get_breaker()
             scores = [
-                {
-                    "name": "simple_ratio_pct",
-                    "value": stats.get("simple_requests", 0) / total * 100,
-                },
-                {
-                    "name": "medium_ratio_pct",
-                    "value": stats.get("medium_requests", 0) / total * 100,
-                },
-                {
-                    "name": "complex_ratio_pct",
-                    "value": stats.get("complex_requests", 0) / total * 100,
-                },
-                {
-                    "name": "reasoning_ratio_pct",
-                    "value": stats.get("reasoning_requests", 0) / total * 100,
-                },
-                {
-                    "name": "advanced_ratio_pct",
-                    "value": stats.get("advanced_requests", 0) / total * 100,
-                },
-                {
-                    "name": "cache_hit_rate_pct",
-                    "value": stats["cache_hits"] / total * 100,
-                },
-                {
-                    "name": "avg_triage_latency_ms",
-                    "value": stats["avg_triage_latency_ms"],
-                },
-                {
-                    "name": "avg_proxy_latency_ms",
-                    "value": stats["avg_proxy_latency_ms"],
-                },
+                {"name": "simple_ratio_pct", "value": stats.get("simple_requests", 0) / total * 100},
+                {"name": "medium_ratio_pct", "value": stats.get("medium_requests", 0) / total * 100},
+                {"name": "complex_ratio_pct", "value": stats.get("complex_requests", 0) / total * 100},
+                {"name": "reasoning_ratio_pct", "value": stats.get("reasoning_requests", 0) / total * 100},
+                {"name": "advanced_ratio_pct", "value": stats.get("advanced_requests", 0) / total * 100},
+                {"name": "cache_hit_rate_pct", "value": stats["cache_hits"] / total * 100},
+                {"name": "avg_triage_latency_ms", "value": stats["avg_triage_latency_ms"]},
+                {"name": "avg_proxy_latency_ms", "value": stats["avg_proxy_latency_ms"]},
                 {"name": "total_requests", "value": float(total)},
-                {
-                    "name": "circuit_breaker_google_tier",
-                    "value": float(router.google.tier),
-                },
-                {
-                    "name": "circuit_breaker_vendor_tier",
-                    "value": float(router.vendor.tier),
-                },
-                {
-                    "name": "google_oauth_direct_ratio_pct",
-                    "value": stats["routing_paths"]["google_oauth_direct"]
-                    / total
-                    * 100,
-                },
+                {"name": "circuit_breaker_google_tier", "value": float(router.google.tier)},
+                {"name": "circuit_breaker_vendor_tier", "value": float(router.vendor.tier)},
+                {"name": "google_oauth_direct_ratio_pct", "value": stats["routing_paths"]["google_oauth_direct"] / total * 100},
             ]
             trace_id = lf.create_trace_id(seed=f"aggregate_scores_{int(time.time())}")
             lf.start_observation(
@@ -269,14 +252,15 @@ async def push_aggregate_scores():
                 level="DEFAULT",
             )
             for s in scores:
-                lf.create_score(name=s["name"], value=s["value"], trace_id=trace_id)
+                lf.create_score(
+                    name=s["name"],
+                    value=s["value"],
+                    trace_id=trace_id
+                )
             lf.flush()
-            logger.info(
-                f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})"
-            )
+            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})")
         except Exception as e:
             logger.warning(f"Langfuse score push failed (non-fatal): {e}")
-
 
 # Load configuration
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/config/config.yaml")
@@ -292,17 +276,10 @@ port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
-router_api_key = router_model_conf.get("api_key")
-if not router_api_key:
-    raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
+router_api_key = router_model_conf.get("api_key", "local-token")
 if router_api_key.startswith("os.environ/"):
     env_var = router_api_key.split("/", 1)[1]
-    router_api_key = os.environ.get(env_var)
-    if not router_api_key:
-        if "pytest" in sys.modules:
-            router_api_key = "local-token"
-        else:
-            raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
+    router_api_key = os.environ.get(env_var, "local-token")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
@@ -333,9 +310,18 @@ stats = {
     "total_proxy_time_ms": 0.0,
     "prompt_tokens": 0,
     "completion_tokens": 0,
-    "tool_tokens": {"tree": 0, "shell": 0, "write": 0, "view": 0, "other": 0},
-    "routing_paths": {"google_oauth_direct": 0, "litellm_fallback": 0},
-    "timeline": [],
+    "tool_tokens": {
+        "tree": 0,
+        "shell": 0,
+        "write": 0,
+        "view": 0,
+        "other": 0
+    },
+    "routing_paths": {
+        "google_oauth_direct": 0,
+        "litellm_fallback": 0
+    },
+    "timeline": []
 }
 
 # ---------------------------------------------------------------------------
@@ -346,11 +332,9 @@ stats = {
 # triage router tracks Ollama failures itself and returns 429 immediately
 # during the cooldown window, skipping the LiteLLM call entirely.
 # ---------------------------------------------------------------------------
-_ollama_cooldown_until: float = 0.0  # monotonic timestamp when cooldown expires
+_ollama_cooldown_until: float = 0.0      # monotonic timestamp when cooldown expires
 try:
-    OLLAMA_COOLDOWN_SECONDS: int = int(
-        os.getenv("OLLAMA_COOLDOWN_SECONDS", "300")
-    )  # 5 min default
+    OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
     if OLLAMA_COOLDOWN_SECONDS <= 0:
         raise ValueError("OLLAMA_COOLDOWN_SECONDS must be positive")
 except (TypeError, ValueError) as e:
@@ -362,7 +346,6 @@ STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 # Module-level set to hold references to fire-and-forget background tasks,
 # preventing premature garbage collection before the task completes (Ruff RUF006).
 _background_tasks: set = set()
-
 
 def load_persisted_stats():
     """Loads persisted statistics from disk on startup to prevent resets on pod redeployment."""
@@ -378,19 +361,8 @@ def load_persisted_stats():
                     else:
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
-            # Load timeline from disk (may be stale after pod restart, but better than empty)
-            timeline_path = os.path.join(
-                os.path.dirname(CONFIG_PATH), "router_timeline.json"
-            )
-            if os.path.exists(timeline_path):
-                try:
-                    with open(timeline_path, "r") as f:
-                        stats["timeline"] = json.load(f)
-                except Exception:
-                    pass  # stale/broken timeline file → start fresh
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
-
 
 def _atomic_write_json_sync(path: str, data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
@@ -427,7 +399,6 @@ async def _atomic_write_json_async(path: str, data) -> None:
 
 _last_stats_save = 0.0
 
-
 async def save_persisted_stats(force=False):
     """Persists current statistics in-memory structure to disk securely (non-blocking).
 
@@ -449,7 +420,6 @@ async def save_persisted_stats(force=False):
         _last_stats_save = 0.0  # Reset on failure to allow immediate retry
         logger.error(f"Failed to persist stats to disk: {e}")
 
-
 # Load initial stats from persistent storage
 load_persisted_stats()
 
@@ -458,19 +428,17 @@ triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 classification_lock = asyncio.Lock()
 
-
 async def _purge_stale_deployments(db_url: str, pattern: str):
     """Purge stale deployments matching the pattern from LiteLLM's DB."""
     import asyncpg
-
     conn = await asyncpg.connect(db_url)
     try:
         await conn.execute(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', pattern
+            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
+            pattern
         )
     finally:
         await conn.close()
-
 
 async def sync_adaptive_router_roster(master_key: str):
     """Fetch free OpenRouter models and register them as deployments in LiteLLM."""
@@ -499,8 +467,8 @@ async def sync_adaptive_router_roster(master_key: str):
             continue
 
         # 1. Enforce Tool/Function Calling Support
-        supported_params = m.get("supported_parameters") or []
-        if "tools" not in supported_params:
+        supported_params = m.get('supported_parameters') or []
+        if 'tools' not in supported_params:
             logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
             continue
 
@@ -508,19 +476,14 @@ async def sync_adaptive_router_roster(master_key: str):
         # llama-3.3-70b reports 131K ctx but actual endpoint enforces 65K → context_limit errors.
         # All meta-llama and llama-derived models are too old and unreliable on free tier.
         _denylist_prefixes = (
-            "meta-llama/",
-            "nousresearch/hermes-3-llama",
+            "meta-llama/", "nousresearch/hermes-3-llama",
         )
         if any(mid.startswith(p) for p in _denylist_prefixes):
-            logger.info(
-                f"🚫 Skipping {mid} — denylisted (stale/unreliable free tier model)"
-            )
+            logger.info(f"🚫 Skipping {mid} — denylisted (stale/unreliable free tier model)")
             continue
 
         pricing = m.get("pricing", {})
-        if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get(
-            "completion"
-        ) in ("0", 0, "0.0", 0.0):
+        if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
             try:
                 score = compute_free_model_score(m)
             except Exception:
@@ -533,10 +496,8 @@ async def sync_adaptive_router_roster(master_key: str):
         logger.warning("No free models found — skipping roster sync")
         return
     tier_assignments = {
-        "agent-simple-core": [],
-        "agent-medium-core": [],
-        "agent-complex-core": [],
-        "agent-reasoning-core": [],
+        "agent-simple-core": [], "agent-medium-core": [],
+        "agent-complex-core": [], "agent-reasoning-core": [],
         "agent-advanced-core": [],
     }
     # Normalize scores to 0-100 scale based on the actual max score in this roster.
@@ -548,28 +509,16 @@ async def sync_adaptive_router_roster(master_key: str):
     max_score = max(raw_scores) if raw_scores else 55.0
     if max_score < 1.0:
         max_score = 55.0  # safety floor
-
     def norm(s: float) -> float:
         """Helper to scale raw model index score against max score in roster to 0-100 range."""
         return (s / max_score) * 100.0
-
-    for (
-        score,
-        mid,
-    ) in (
-        free_models
-    ):  # include all models — top 2 are also assigned to their correct tier
+    for score, mid in free_models:  # include all models — top 2 are also assigned to their correct tier
         n = norm(score)
-        if n >= 80:
-            tier_assignments["agent-advanced-core"].append(mid)
-        elif n >= 75:
-            tier_assignments["agent-reasoning-core"].append(mid)
-        elif n >= 68:
-            tier_assignments["agent-complex-core"].append(mid)
-        elif n >= 60:
-            tier_assignments["agent-medium-core"].append(mid)
-        else:
-            tier_assignments["agent-simple-core"].append(mid)
+        if n >= 80: tier_assignments["agent-advanced-core"].append(mid)
+        elif n >= 75: tier_assignments["agent-reasoning-core"].append(mid)
+        elif n >= 68: tier_assignments["agent-complex-core"].append(mid)
+        elif n >= 60: tier_assignments["agent-medium-core"].append(mid)
+        else: tier_assignments["agent-simple-core"].append(mid)
     # Cascading: models capable of higher tiers also serve lower tiers.
     # A model that qualifies for advanced should be available for reasoning,
     # complex, and medium requests too — not just advanced. Without this,
@@ -605,11 +554,9 @@ async def sync_adaptive_router_roster(master_key: str):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale agent-* deployments"
-            )
+            logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
         else:
-            await _purge_stale_deployments(db_url, "agent-%")
+            await _purge_stale_deployments(db_url, 'agent-%')
             logger.info("🧹 Purged stale agent-* deployments before roster sync")
     except Exception as e:
         logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
@@ -630,30 +577,20 @@ async def sync_adaptive_router_roster(master_key: str):
                     "mode": "chat",
                     "max_tokens": ctx_len,
                     "max_input_tokens": ctx_len,
-                    "is_public_model_group": True,
-                },
+                    "is_public_model_group": True
+                }
             }
             try:
-                r = await client.post(
-                    f"{admin_url}/model/new",
-                    headers=headers,
-                    json=payload,
-                    timeout=10.0,
-                )
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
                 if r.status_code in (200, 201):
                     registered += 1
                 else:
                     failed += 1
-                    logger.warning(
-                        f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}"
-                    )
+                    logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
             except Exception as e:
                 failed += 1
                 logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
-    logger.info(
-        f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted"
-    )
-
+    logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted")
 
 async def _register_ollama_models_in_db(master_key: str):
     """Register static ollama models via /model/new so they become DB models.
@@ -664,23 +601,19 @@ async def _register_ollama_models_in_db(master_key: str):
     as null/false.  Registering them as DB models ensures our model_info wins.
     """
     if not master_key:
-        logger.warning(
-            "No LiteLLM master key provided — skipping Ollama DB registration"
-        )
+        logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
         return
 
     admin_url = LITELLM_URL
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     ollama_models = []
-    litellm_config_path = os.getenv(
-        "LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml"
-    )
+    litellm_config_path = os.getenv("LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml")
 
     config_paths_to_try = [
         litellm_config_path,
         str(Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"),
-        "./litellm/config.yaml",
+        "./litellm/config.yaml"
     ]
 
     def _load_yaml(p):
@@ -696,24 +629,18 @@ async def _register_ollama_models_in_db(master_key: str):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
-                            if isinstance(model_name, str) and model_name.startswith(
-                                "ollama-deepseek-"
-                            ):
+                            if isinstance(model_name, str) and model_name.startswith("ollama-deepseek-"):
                                 # Create a clean deep copy to avoid mutating configuration structures
                                 ollama_models.append(copy.deepcopy(item))
                     if ollama_models:
-                        logger.info(
-                            f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}"
-                        )
+                        logger.info(f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}")
                         loaded_from_config = True
                         break
             except Exception as e:
                 logger.warning(f"Failed to load/parse LiteLLM config at {path}: {e}")
 
     if not loaded_from_config:
-        logger.warning(
-            "Could not load Ollama models from config.yaml, falling back to static definitions"
-        )
+        logger.warning("Could not load Ollama models from config.yaml, falling back to static definitions")
         ollama_models = [
             {
                 "model_name": "ollama-deepseek-v4-pro",
@@ -762,14 +689,10 @@ async def _register_ollama_models_in_db(master_key: str):
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries"
-            )
+            logger.warning("DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries")
         else:
-            await _purge_stale_deployments(db_url, "ollama-deepseek-%")
-            logger.info(
-                "🧹 Purged stale ollama-deepseek-* DB entries before registration"
-            )
+            await _purge_stale_deployments(db_url, 'ollama-deepseek-%')
+            logger.info("🧹 Purged stale ollama-deepseek-* DB entries before registration")
     except Exception as e:
         logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
 
@@ -778,16 +701,12 @@ async def _register_ollama_models_in_db(master_key: str):
     failed = 0
     for payload in ollama_models:
         try:
-            r = await client.post(
-                f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
-            )
+            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
             if r.status_code in (200, 201):
                 registered += 1
             else:
                 failed += 1
-                logger.warning(
-                    f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}"
-                )
+                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
         except Exception as e:
             failed += 1
             logger.warning(f"Failed to register {payload['model_name']}: {e}")
@@ -810,15 +729,13 @@ async def lifespan(app: FastAPI):
         try:
             r = await client.get(litellm_ready_url, timeout=2.0)
             if r.status_code == 200:
-                logger.info(f"✅ LiteLLM ready after {i + 1}s")
+                logger.info(f"✅ LiteLLM ready after {i+1}s")
                 break
         except Exception:
             pass
         await asyncio.sleep(1)
     else:
-        logger.warning(
-            "⚠️  LiteLLM not ready within timeout — proceeding without roster sync"
-        )
+        logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
 
     # Sync free-model roster into LiteLLM (non-fatal if it fails)
     if litellm_master_key:
@@ -864,16 +781,12 @@ async def lifespan(app: FastAPI):
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
         try:
-            timeline_path = os.path.join(
-                os.path.dirname(CONFIG_PATH), "router_timeline.json"
-            )
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
             await _atomic_write_json_async(timeline_path, stats["timeline"])
         except Exception as e:
             logger.warning(f"Failed to persist timeline on shutdown: {e}")
 
-
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
-
 
 async def check_tcp_port(ip: str, port: int) -> bool:
     """Verifies if a TCP port is open locally asynchronously."""
@@ -885,7 +798,6 @@ async def check_tcp_port(ip: str, port: int) -> bool:
     except Exception:
         return False
 
-
 async def check_http_endpoint(url: str) -> bool:
     """Verifies if an HTTP endpoint is responsive."""
     try:
@@ -895,10 +807,7 @@ async def check_http_endpoint(url: str) -> bool:
     except Exception:
         return False
 
-
-async def classify_request(
-    prompt: str, bypass_cache: bool = False, langfuse_trace_id: str | None = None
-) -> tuple[str, float, bool, str]:
+async def classify_request(prompt: str, bypass_cache: bool = False, langfuse_trace_id: str | None = None) -> tuple[str, float, bool, str]:
     """Queries the local fast Qwen instance to classify request complexity with TTL caching.
 
     When langfuse_trace_id is provided, the classifier HTTP call is wrapped in a child
@@ -913,9 +822,7 @@ async def classify_request(
     if not bypass_cache and normalized_prompt in triage_cache:
         cached_decision, cached_time = triage_cache[normalized_prompt]
         if time.time() - cached_time < CACHE_TTL_SECONDS:
-            logger.info(
-                f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'"
-            )
+            logger.info(f"⚡ Triage Cache Hit for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
             stats["cache_hits"] = stats.get("cache_hits", 0) + 1
             await save_persisted_stats()
             return cached_decision, 0.0, True, cached_decision  # was_cache_hit=True
@@ -928,9 +835,7 @@ async def classify_request(
         if not bypass_cache and normalized_prompt in triage_cache:
             cached_decision, cached_time = triage_cache[normalized_prompt]
             if time.time() - cached_time < CACHE_TTL_SECONDS:
-                logger.info(
-                    f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'"
-                )
+                logger.info(f"⚡ Triage Cache Hit (post-queue) for prompt: '{normalized_prompt[:50]}...' -> routed to '{cached_decision}'")
                 stats["cache_hits"] = stats.get("cache_hits", 0) + 1
                 await save_persisted_stats()
                 return cached_decision, 0.0, True, cached_decision
@@ -939,15 +844,15 @@ async def classify_request(
             client = get_http_client()
             payload = {
                 "model": router_model_name,
-                "messages": [{"role": "user", "content": system_prompt + prompt}],
+                "messages": [
+                    {"role": "user", "content": system_prompt + prompt}
+                ],
                 "temperature": 0.0,
                 "max_tokens": 15,
             }
             headers = {"Authorization": f"Bearer {router_api_key}"}
 
-            logger.info(
-                f"Classifying intent via {router_api_base} using model {router_model_name}..."
-            )
+            logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
 
             # --- Langfuse child span: classifier call ---
             class_span_obj = None
@@ -969,7 +874,7 @@ async def classify_request(
                 f"{router_api_base}/chat/completions",
                 json=payload,
                 headers=headers,
-                timeout=120.0,
+                timeout=120.0
             )
 
             latency = (time.time() - start_time) * 1000.0
@@ -978,17 +883,12 @@ async def classify_request(
                 if class_span_obj:
                     try:
                         class_span_obj.end(
-                            output={
-                                "status": response.status_code,
-                                "error": "classification_failed",
-                            },
+                            output={"status": response.status_code, "error": "classification_failed"},
                             metadata={"latency_ms": latency},
                         )
                     except Exception:
                         pass
-                logger.error(
-                    f"Classification failed with status {response.status_code}: {response.text}"
-                )
+                logger.error(f"Classification failed with status {response.status_code}: {response.text}")
                 return "agent-advanced-core", latency, False, "advanced (fallback)"
 
             result = response.json()
@@ -1000,11 +900,8 @@ async def classify_request(
 
             # 5-tier grammar parsing (was 3-tier, missed medium + advanced)
             valid_tiers = {
-                "agent-simple-core",
-                "agent-medium-core",
-                "agent-complex-core",
-                "agent-reasoning-core",
-                "agent-advanced-core",
+                "agent-simple-core", "agent-medium-core", "agent-complex-core",
+                "agent-reasoning-core", "agent-advanced-core"
             }
             if content_clean in valid_tiers:
                 decision = content_clean
@@ -1030,7 +927,6 @@ async def classify_request(
             logger.error(f"Exception during classification: {e}")
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
-
 def get_live_gemini_oauth_token() -> str | None:
     """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
@@ -1043,42 +939,29 @@ def get_live_gemini_oauth_token() -> str | None:
                 # Convert current time to milliseconds
                 current_ms = int(time.time() * 1000)
                 if access_token and current_ms < expiry_ms:
-                    logger.info(
-                        "🔑 Found valid, unexpired Gemini OAuth token from host!"
-                    )
+                    logger.info("🔑 Found valid, unexpired Gemini OAuth token from host!")
                     return access_token
                 else:
                     # agy CLI uses the OS system keyring (GNOME Keyring), not this
                     # stale disk file. The file being expired is expected — don't warn.
-                    logger.debug(
-                        "Gemini OAuth token on disk is expired — agy uses system keyring instead."
-                    )
+                    logger.debug("Gemini OAuth token on disk is expired — agy uses system keyring instead.")
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
-
 
 def get_gemini_oauth_status() -> dict:
     """Returns structured OAuth status for the dashboard banner."""
     creds_path = "/config/gemini_auth/oauth_creds.json"
     try:
         if not os.path.exists(creds_path):
-            return {
-                "status": "missing",
-                "detail": "No oauth_creds.json found",
-                "expiry_ms": 0,
-            }
+            return {"status": "missing", "detail": "No oauth_creds.json found", "expiry_ms": 0}
         with open(creds_path, "r") as f:
             data = json.load(f)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)
         if not access_token:
-            return {
-                "status": "missing",
-                "detail": "No access token in file",
-                "expiry_ms": 0,
-            }
+            return {"status": "missing", "detail": "No access token in file", "expiry_ms": 0}
         diff_sec = (expiry_ms - current_ms) / 1000.0
         if diff_sec > 0:
             # Token is valid — compute human-readable remaining time
@@ -1088,11 +971,7 @@ def get_gemini_oauth_status() -> dict:
                 remaining = f"{int(diff_sec // 60)}m {int(diff_sec % 60)}s"
             else:
                 remaining = f"{int(diff_sec // 3600)}h {int((diff_sec % 3600) // 60)}m"
-            return {
-                "status": "valid",
-                "detail": f"Expires in {remaining}",
-                "expiry_ms": expiry_ms,
-            }
+            return {"status": "valid", "detail": f"Expires in {remaining}", "expiry_ms": expiry_ms}
         else:
             # Token is expired — compute human-readable elapsed time
             elapsed = abs(diff_sec)
@@ -1102,14 +981,9 @@ def get_gemini_oauth_status() -> dict:
                 ago = f"{int(elapsed // 3600)} hours ago"
             else:
                 ago = f"{int(elapsed // 86400)} days ago"
-            return {
-                "status": "expired",
-                "detail": f"Expired {ago}",
-                "expiry_ms": expiry_ms,
-            }
+            return {"status": "expired", "detail": f"Expired {ago}", "expiry_ms": expiry_ms}
     except Exception as e:
         return {"status": "error", "detail": str(e), "expiry_ms": 0}
-
 
 def map_tool_to_category(tool_name: str) -> str:
     """Groups low-level developer tool names into the five high-level dashboard metrics."""
@@ -1119,34 +993,13 @@ def map_tool_to_category(tool_name: str) -> str:
 
     if "tree" in name or "list_dir" in name or "list-dir" in name:
         return "tree"
-    elif (
-        "shell" in name
-        or "command" in name
-        or "cmd" in name
-        or "execute" in name
-        or "run" in name
-    ):
+    elif "shell" in name or "command" in name or "cmd" in name or "execute" in name or "run" in name:
         return "shell"
-    elif (
-        "write" in name
-        or "edit" in name
-        or "create" in name
-        or "patch" in name
-        or "replace" in name
-        or "save" in name
-    ):
+    elif "write" in name or "edit" in name or "create" in name or "patch" in name or "replace" in name or "save" in name:
         return "write"
-    elif (
-        "view" in name
-        or "read" in name
-        or "cat" in name
-        or "grep" in name
-        or "search" in name
-        or "find" in name
-    ):
+    elif "view" in name or "read" in name or "cat" in name or "grep" in name or "search" in name or "find" in name:
         return "view"
     return "other"
-
 
 def detect_active_tool(body: dict) -> str:
     """Inspects request payload messages to identify which developer tool is currently being invoked."""
@@ -1170,15 +1023,8 @@ def detect_active_tool(body: dict) -> str:
                             tcalls = prev_msg.get("tool_calls") or []
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
-
-
-                                    if (
-                                        isinstance(tc, dict)
-                                        and tc.get("id") == tool_call_id
-                                    ):
+                                    if isinstance(tc, dict) and tc.get("id") == tool_call_id:
                                         fn = tc.get("function")
-
-
                                         if isinstance(fn, dict):
                                             name = fn.get("name")
                                         break
@@ -1193,9 +1039,7 @@ def detect_active_tool(body: dict) -> str:
                 for tc in tool_calls:
                     if isinstance(tc, dict):
                         fn = tc.get("function")
-                        name = (
-                            fn.get("name") if isinstance(fn, dict) else None
-                        ) or "other"
+                        name = (fn.get("name") if isinstance(fn, dict) else None) or "other"
                         return map_tool_to_category(name)
 
     # Fallback to keyphrase scanning in the user message
@@ -1214,15 +1058,7 @@ def detect_active_tool(body: dict) -> str:
                 return "view"
     return "none"
 
-
-def record_tool_usage(
-    tool_name: str,
-    prompt_tokens: int,
-    completion_tokens: int,
-    model: str,
-    latency_ms: float,
-    route: str = "litellm_fallback",
-):
+def record_tool_usage(tool_name: str, prompt_tokens: int, completion_tokens: int, model: str, latency_ms: float, route: str = "litellm_fallback"):
     """Accumulates token counts in memory for active tools and tracks request timelines.
 
     File writes are offloaded to a thread pool executor to avoid blocking the
@@ -1251,7 +1087,7 @@ def record_tool_usage(
         "model": model,
         "route": route,
         "tokens": total,
-        "latency_ms": int(latency_ms),
+        "latency_ms": int(latency_ms)
     }
     stats["timeline"].append(event)
     if len(stats["timeline"]) > 15:
@@ -1284,7 +1120,7 @@ def record_tool_usage(
                 None,
                 _atomic_write_json_sync,
                 timeline_path,
-                copy.deepcopy(list(stats["timeline"])),
+                copy.deepcopy(list(stats["timeline"]))
             )
             record_tool_usage._last_save = now
 
@@ -1306,7 +1142,6 @@ def record_tool_usage(
         except Exception as e:
             logger.warning(f"Failed to persist timeline: {e}")
 
-
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
     sessions_list = []
@@ -1315,7 +1150,6 @@ def get_goose_sessions() -> list:
         return []
     try:
         import sqlite3
-
         conn = sqlite3.connect(db_path, timeout=1.0)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -1332,7 +1166,6 @@ def get_goose_sessions() -> list:
         logger.error(f"Failed to query goose sessions SQLite DB: {e}")
     return sessions_list
 
-
 async def get_llamacpp_metrics() -> dict:
     """Fetches live model inventory and slot statistics from the local llama-server."""
     result = {"models": [], "slots": [], "build": "unknown"}
@@ -1345,16 +1178,14 @@ async def get_llamacpp_metrics() -> dict:
             for m in data.get("data", []):
                 meta = m.get("meta", {})
                 status_obj = m.get("status", {})
-                result["models"].append(
-                    {
-                        "id": m.get("id", "?"),
-                        "status": status_obj.get("value", "unknown"),
-                        "n_params": meta.get("n_params"),
-                        "n_ctx": meta.get("n_ctx"),
-                        "size_bytes": meta.get("size"),
-                        "n_embd": meta.get("n_embd"),
-                    }
-                )
+                result["models"].append({
+                    "id": m.get("id", "?"),
+                    "status": status_obj.get("value", "unknown"),
+                    "n_params": meta.get("n_params"),
+                    "n_ctx": meta.get("n_ctx"),
+                    "size_bytes": meta.get("size"),
+                    "n_embd": meta.get("n_embd"),
+                })
         # Fetch props for build info
         r2 = await client.get(f"{LLAMA_SERVER_URL}/props", timeout=3.0)
         if r2.status_code == 200:
@@ -1362,15 +1193,9 @@ async def get_llamacpp_metrics() -> dict:
             result["build"] = props.get("build_info", "unknown")
         # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
         loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
-        slot_model = (
-            loaded[0]
-            if loaded
-            else (result["models"][0]["id"] if result["models"] else None)
-        )
+        slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
         if slot_model:
-            r3 = await client.get(
-                f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0
-            )
+            r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0)
             if r3.status_code == 200:
                 slots_data = r3.json()
                 for s in slots_data:
@@ -1395,15 +1220,16 @@ async def get_llamacpp_metrics() -> dict:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
     return result
 
-
 # In-Memory Cache for OpenRouter Free Model list to prevent slow page renders
-free_model_cache = {"data": None, "last_fetched": 0.0}
+free_model_cache = {
+    "data": None,
+    "last_fetched": 0.0
+}
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
 # --- Artificial Analysis Agentic Index scores cache ---
 _AA_SCORES_CACHE: dict[str, float] = {}
 _AA_SCORES_LOADED = False
-
 
 def _load_aa_scores():
     """Load the Artificial Analysis agentic scores cache from local config."""
@@ -1412,26 +1238,21 @@ def _load_aa_scores():
         return
     try:
         import json
-
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
             data = json.load(f)
             _AA_SCORES_CACHE = data.get("scores", {})
             _AA_SCORES_LOADED = True
-            logger.info(
-                f"📊 Loaded {len(_AA_SCORES_CACHE)} AA agentic index scores from {scores_path}"
-            )
+            logger.info(f"📊 Loaded {len(_AA_SCORES_CACHE)} AA agentic index scores from {scores_path}")
     except Exception as e:
         logger.warning(f"Could not load AA scores cache: {e}")
         _AA_SCORES_LOADED = True  # don't retry
-
 
 def compute_free_model_score(m: dict) -> float:
     """Return AA agentic index score, or a low default for unknown models."""
     _load_aa_scores()
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
-
 
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
@@ -1449,7 +1270,7 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
         pass
 
 
-async def _save_best_model_to_disk(best_model: dict) -> None:
+def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
     import datetime as _dt
@@ -1476,7 +1297,7 @@ async def get_best_free_model() -> dict:
         "name": "MoonshotAI: Kimi K2.6 (free)",
         "score": 82.5,
         "context_length": 131072,
-        "is_fallback": True,
+        "is_fallback": True
     }
 
     try:
@@ -1492,8 +1313,7 @@ async def get_best_free_model() -> dict:
                 mid = m.get("id", "")
                 # Denylist: skip stale/unreliable free tier models
                 _denylist_prefixes = (
-                    "meta-llama/",
-                    "nousresearch/hermes-3-llama",
+                    "meta-llama/", "nousresearch/hermes-3-llama",
                 )
                 if any(mid.startswith(p) for p in _denylist_prefixes):
                     continue
@@ -1530,7 +1350,6 @@ async def get_best_free_model() -> dict:
     await asyncio.to_thread(_save_best_model_to_disk, fallback_best)
     return fallback_best
 
-
 def get_pie_chart_gradient() -> str:
     """Computes a CSS conic-gradient representing the dynamic token distribution across developer tools."""
     total_tokens = sum(stats["tool_tokens"].values())
@@ -1553,7 +1372,6 @@ def get_pie_chart_gradient() -> str:
 
     return f"background: conic-gradient({', '.join(gradient_parts)});"
 
-
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
@@ -1572,12 +1390,10 @@ async def proxy_memory(request: Request, path: str = ""):
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
     headers = {
         "Authorization": f"Bearer {litellm_key}",
-        "Content-Type": request.headers.get("content-type", "application/json"),
+        "Content-Type": request.headers.get("content-type", "application/json")
     }
 
-    logger.info(
-        f"Proxying memory request: {request.method} {url} with params {query_params}"
-    )
+    logger.info(f"Proxying memory request: {request.method} {url} with params {query_params}")
 
     try:
         client = get_http_client()
@@ -1587,27 +1403,23 @@ async def proxy_memory(request: Request, path: str = ""):
             params=query_params,
             content=body,
             headers=headers,
-            timeout=30.0,
+            timeout=30.0
         )
 
         # Return response matching status and headers
         response_headers = dict(r.headers)
         # Exclude standard headers that FastAPI/uvicorn will manage
-        for h in [
-            "content-encoding",
-            "content-length",
-            "transfer-encoding",
-            "connection",
-        ]:
+        for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
             response_headers.pop(h, None)
 
         return Response(
-            content=r.content, status_code=r.status_code, headers=response_headers
+            content=r.content,
+            status_code=r.status_code,
+            headers=response_headers
         )
     except Exception as e:
         logger.error(f"Failed to proxy memory request: {e}")
-        raise HTTPException(status_code=502, detail="Memory proxy failed")
-
+        raise HTTPException(status_code=502, detail=f"Memory proxy failed: {e}")
 
 @app.get("/v1/models")
 async def proxy_models():
@@ -1619,7 +1431,7 @@ async def proxy_models():
         r = await client.get(
             f"{LITELLM_URL}/v1/models",
             headers={"Authorization": auth_header},
-            timeout=10.0,
+            timeout=10.0
         )
 
         if r.status_code == 200:
@@ -1633,73 +1445,31 @@ async def proxy_models():
                     # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
                     # - llm-routing-agy: 1048576 (1M)
                     routing_models = [
-                        {
-                            "id": "llm-routing-auto-free",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 262144,
-                        },
-                        {
-                            "id": "llm-routing-auto-agy",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 262144,
-                        },
-                        {
-                            "id": "llm-routing-auto-ollama",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 524288,
-                        },
-                        {
-                            "id": "llm-routing-auto-agy-ollama",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 524288,
-                        },
-                        {
-                            "id": "llm-routing-agy",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 1048576,
-                        },
-                        {
-                            "id": "llm-routing-ollama",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 524288,
-                        },
+                        {"id": "llm-routing-auto-free",         "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-agy",          "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 262144},
+                        {"id": "llm-routing-auto-ollama",       "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-auto-agy-ollama",   "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
+                        {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
+                        {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
                     ]
                     data["data"] = routing_models + data["data"]
 
                     return JSONResponse(content=data, status_code=200)
             except Exception as parse_err:
-                logger.warning(
-                    f"Failed to parse /v1/models JSON despite status 200: {parse_err}"
-                )
+                logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
 
         # If not 200, or parsing failed, return the raw response with appropriate headers
         response_headers = dict(r.headers)
-        for h in [
-            "content-encoding",
-            "content-length",
-            "transfer-encoding",
-            "connection",
-        ]:
+        for h in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
             response_headers.pop(h, None)
         return Response(
-            content=r.content, status_code=r.status_code, headers=response_headers
+            content=r.content,
+            status_code=r.status_code,
+            headers=response_headers
         )
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
-        raise HTTPException(status_code=502, detail="Model proxy failed")
-
+        raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -1729,29 +1499,21 @@ async def chat_completions(request: Request):
         if msg.get("role") == "user":
             content = msg.get("content") or ""
             if isinstance(content, list):
-                content = "".join(
-                    block.get("text") or ""
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
+                content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
             last_user_message = str(content)
             break
 
     # Known tier names that can be routed directly (bypass classifier)
     DIRECT_TIERS = {
-        "agent-simple-core",
-        "agent-medium-core",
-        "agent-complex-core",
-        "agent-reasoning-core",
+        "agent-simple-core", "agent-medium-core",
+        "agent-complex-core", "agent-reasoning-core",
         "agent-advanced-core",
         "llm-routing-agy",
     }
 
     AUTO_MODELS = {
-        "llm-routing-auto-free",
-        "llm-routing-auto-agy",
-        "llm-routing-auto-ollama",
-        "llm-routing-auto-agy-ollama",
+        "llm-routing-auto-free", "llm-routing-auto-agy",
+        "llm-routing-auto-ollama", "llm-routing-auto-agy-ollama",
     }
 
     client_model = body.get("model", "llm-routing-auto-free")
@@ -1762,9 +1524,7 @@ async def chat_completions(request: Request):
     lf = get_langfuse()
     if lf:
         try:
-            langfuse_trace_id = lf.create_trace_id(
-                seed=f"triage_{stats['total_requests']}"
-            )
+            langfuse_trace_id = lf.create_trace_id(seed=f"triage_{stats['total_requests']}")
             parent_obs = lf.start_observation(
                 trace_context={"trace_id": langfuse_trace_id},
                 name=f"triage-{client_model}",
@@ -1779,15 +1539,8 @@ async def chat_completions(request: Request):
     if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
         bypass_cache = request.headers.get("x-bypass-cache") == "true"
-        (
-            target_model,
-            triage_latency,
-            was_cache_hit,
-            raw_classification,
-        ) = await classify_request(
-            last_user_message,
-            bypass_cache=bypass_cache,
-            langfuse_trace_id=langfuse_trace_id,
+        target_model, triage_latency, was_cache_hit, raw_classification = await classify_request(
+            last_user_message, bypass_cache=bypass_cache, langfuse_trace_id=langfuse_trace_id
         )
         logger.info(f"Triage decision (auto/gated): Routing to -> '{target_model}'")
     elif client_model in DIRECT_TIERS:
@@ -1796,23 +1549,19 @@ async def chat_completions(request: Request):
         triage_latency = 0.0
         was_cache_hit = False
         raw_classification = f"direct ({client_model})"
-        logger.info(
-            f"Direct routing: Client requested '{client_model}', skipping classifier"
-        )
+        logger.info(f"Direct routing: Client requested '{client_model}', skipping classifier")
     else:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
-            f"or one of: {', '.join(sorted(DIRECT_TIERS))}",
+                    f"or one of: {', '.join(sorted(DIRECT_TIERS))}"
         )
 
     # Update in-memory statistics
     stats["total_requests"] += 1
     stats["last_triage_decision"] = target_model
     stats["total_triage_time_ms"] += triage_latency
-    stats["avg_triage_latency_ms"] = (
-        stats["total_triage_time_ms"] / stats["total_requests"]
-    )
+    stats["avg_triage_latency_ms"] = stats["total_triage_time_ms"] / stats["total_requests"]
 
     if target_model == "agent-simple-core":
         stats["simple_requests"] = stats.get("simple_requests", 0) + 1
@@ -1860,19 +1609,11 @@ async def chat_completions(request: Request):
 
     should_try_agy = (
         client_model == "llm-routing-agy"  # direct — always try
-        or (
-            client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
-            and target_model in ("agent-advanced-core", "agent-reasoning-core")
-        )
+        or (client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core"))
     )
     should_try_ollama = (
-        client_model
-        == "llm-routing-ollama"  # always try (will map to flash for complex/below)
-        or (
-            client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama")
-            and target_model
-            in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core")
-        )
+        client_model == "llm-routing-ollama"  # always try (will map to flash for complex/below)
+        or (client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama") and target_model in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core"))
     )
 
     # --- AGY PROXY ---
@@ -1888,11 +1629,7 @@ async def chat_completions(request: Request):
                 if msg.get("role") == "user":
                     content = msg.get("content") or ""
                     if isinstance(content, list):
-                        content = "".join(
-                            block.get("text") or ""
-                            for block in content
-                            if isinstance(block, dict) and block.get("type") == "text"
-                        )
+                        content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
                     last_prompt = str(content)
                     break
 
@@ -1929,7 +1666,7 @@ async def chat_completions(request: Request):
                     stream=is_stream_requested,
                     target_tier=target_model,
                     client=get_http_client(),
-                    cooldown_persistence=ValkeyCooldownPersistence(),
+                    cooldown_persistence=ValkeyCooldownPersistence()
                 )
                 if agy_response:
                     model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
@@ -1939,7 +1676,6 @@ async def chat_completions(request: Request):
                         async def native_agy_stream_generator(stream_gen, model_name):
                             """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
                             import uuid
-
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                             token_count = 0
@@ -1953,17 +1689,13 @@ async def chat_completions(request: Request):
                                         "object": "chat.completion.chunk",
                                         "created": created_time,
                                         "model": model_name,
-                                        "choices": [
-                                            {
-                                                "index": 0,
-                                                "delta": {"content": token},
-                                                "finish_reason": None,
-                                            }
-                                        ],
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": token},
+                                            "finish_reason": None
+                                        }]
                                     }
-                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode(
-                                        "utf-8"
-                                    )
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
 
                                 # End of stream chunk
                                 finish_data = {
@@ -1971,17 +1703,13 @@ async def chat_completions(request: Request):
                                     "object": "chat.completion.chunk",
                                     "created": created_time,
                                     "model": model_name,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {},
-                                            "finish_reason": "stop",
-                                        }
-                                    ],
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop"
+                                    }]
                                 }
-                                yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                    "utf-8"
-                                )
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
                                 yield b"data: [DONE]\n\n"
 
                                 # Success telemetry
@@ -1989,114 +1717,74 @@ async def chat_completions(request: Request):
                                 approx_prompt_tokens = estimate_prompt_tokens(body)
 
                                 record_tool_usage(
-                                    active_tool,
-                                    approx_prompt_tokens,
-                                    token_count,
-                                    model_name,
-                                    latency_ms,
-                                    route="google_oauth_direct",
+                                    active_tool, approx_prompt_tokens, token_count,
+                                    model_name, latency_ms, route="google_oauth_direct"
                                 )
-                                logger.info(
-                                    f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms"
-                                )
+                                logger.info(f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms")
                                 if agy_span_obj:
                                     try:
                                         agy_span_obj.end(
-                                            output={
-                                                "model": model_name,
-                                                "tokens": token_count,
-                                            },
-                                            metadata={
-                                                "latency_ms": latency_ms,
-                                                "tier": target_model,
-                                            },
+                                            output={"model": model_name, "tokens": token_count},
+                                            metadata={"latency_ms": latency_ms, "tier": target_model},
                                         )
                                     except Exception:
                                         pass
                             except Exception as stream_err:
-                                logger.error(
-                                    f"Error during native agy stream generation: {type(stream_err).__name__}"
-                                )
+                                logger.error(f"Error during native agy stream generation: {stream_err}")
                                 if agy_span_obj:
                                     try:
                                         agy_span_obj.end(
-                                            output={"error": type(stream_err).__name__},
+                                            output={"error": str(stream_err)[:200]},
                                             metadata={"status": "failed"},
                                         )
                                     except Exception:
                                         pass
                                 raise
-
-                        return StreamingResponse(
-                            native_agy_stream_generator(
-                                agy_response["stream"], model_name
-                            ),
-                            media_type="text/event-stream",
-                        )
+                        return StreamingResponse(native_agy_stream_generator(agy_response["stream"], model_name), media_type="text/event-stream")
                     else:
                         latency_ms = (time.time() - start_time) * 1000.0
                         usage = agy_response.get("usage") or {}
                         prompt_tokens = usage.get("prompt_tokens") or 0
                         completion_tokens = usage.get("completion_tokens") or 0
                         record_tool_usage(
-                            active_tool,
-                            prompt_tokens,
-                            completion_tokens,
-                            model_name,
-                            latency_ms,
-                            route="google_oauth_direct",
+                            active_tool, prompt_tokens, completion_tokens,
+                            model_name, latency_ms, route="google_oauth_direct"
                         )
-                        logger.info(
-                            f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms"
-                        )
+                        logger.info(f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms")
 
                         # Finalize agy span
                         if agy_span_obj:
                             try:
                                 agy_span_obj.end(
-                                    output={
-                                        "model": model_name,
-                                        "tokens": completion_tokens,
-                                    },
-                                    metadata={
-                                        "latency_ms": latency_ms,
-                                        "tier": target_model,
-                                    },
+                                    output={"model": model_name, "tokens": completion_tokens},
+                                    metadata={"latency_ms": latency_ms, "tier": target_model},
                                 )
                             except Exception:
                                 pass
 
                         if is_stream_requested:
                             # Robust fallback: simulate stream if we requested stream but got buffered response
-                            content = (agy_response.get("choices") or [{}])[0].get(
-                                "message", {}
-                            ).get("content") or ""
-
+                            content = (agy_response.get("choices") or [{}])[0].get("message", {}).get("content") or ""
                             async def agy_stream_generator():
                                 """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
                                 import uuid
-
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 chunk_size = 40
                                 for i in range(0, len(content), chunk_size):
-                                    chunk_text = content[i : i + chunk_size]
+                                    chunk_text = content[i:i+chunk_size]
                                     chunk_data = {
                                         "id": chunk_id,
                                         "object": "chat.completion.chunk",
                                         "created": created_time,
                                         "model": model_name,
-                                        "choices": [
-                                            {
-                                                "index": 0,
-                                                "delta": {"content": chunk_text},
-                                                "finish_reason": None,
-                                            }
-                                        ],
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"content": chunk_text},
+                                            "finish_reason": None
+                                        }]
                                     }
-                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode(
-                                        "utf-8"
-                                    )
+                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
                                     await asyncio.sleep(0.005)
 
                                 finish_data = {
@@ -2104,22 +1792,15 @@ async def chat_completions(request: Request):
                                     "object": "chat.completion.chunk",
                                     "created": created_time,
                                     "model": model_name,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {},
-                                            "finish_reason": "stop",
-                                        }
-                                    ],
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop"
+                                    }]
                                 }
-                                yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                    "utf-8"
-                                )
+                                yield f"data: {json.dumps(finish_data)}\n\n".encode("utf-8")
                                 yield b"data: [DONE]\n\n"
-
-                            return StreamingResponse(
-                                agy_stream_generator(), media_type="text/event-stream"
-                            )
+                            return StreamingResponse(agy_stream_generator(), media_type="text/event-stream")
                         else:
                             return agy_response
         except ImportError:
@@ -2136,12 +1817,12 @@ async def chat_completions(request: Request):
             if agy_span_obj:
                 try:
                     agy_span_obj.end(
-                        output={"error": type(e).__name__},
+                        output={"error": str(e)[:200]},
                         metadata={"status": "failed"},
                     )
                 except Exception:
                     pass
-            logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
+            logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
 
     original_target_model = target_model
 
@@ -2173,9 +1854,7 @@ async def chat_completions(request: Request):
         backend_conf = backends.get(model_name)
         if not backend_conf:
             logger.error(f"Backend '{model_name}' not found in configuration backends.")
-            raise HTTPException(
-                status_code=500, detail=f"Backend {model_name} misconfigured"
-            )
+            raise HTTPException(status_code=500, detail=f"Backend {model_name} misconfigured")
 
         backend_api_base = backend_conf["api_base"]
         backend_api_key = backend_conf["api_key"]
@@ -2230,7 +1909,7 @@ async def chat_completions(request: Request):
                 if _safe_max < 1024:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Context window exceeded. Estimated input tokens ({_est_input}) plus safety margin (2048) exceeds model context limit ({_min_ctx}).",
+                        detail=f"Context window exceeded. Estimated input tokens ({_est_input}) plus safety margin (2048) exceeds model context limit ({_min_ctx})."
                     )
                 if requested_max_tokens > _safe_max:
                     logger.warning(
@@ -2244,27 +1923,18 @@ async def chat_completions(request: Request):
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
                 body_to_send = body.copy()
                 body_to_send["model"] = model_name
-            if "metadata" not in body_to_send or not isinstance(
-                body_to_send["metadata"], dict
-            ):
+            if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
                 body_to_send["metadata"] = {}
             body_to_send["metadata"]["trace_name"] = "agent-completion"
 
             if body.get("stream", False):
                 logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
-                req = client.build_request(
-                    "POST",
-                    f"{backend_api_base}/chat/completions",
-                    json=body_to_send,
-                    headers=headers,
-                )
+                req = client.build_request("POST", f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
                 r = await client.send(req, stream=True)
                 if r.status_code == 200:
-
                     async def stream_generator():
                         """Asynchronous generator that yields streaming chunks from LiteLLM completions response and logs usage stats on completion."""
                         import codecs
-
                         completion_chars = 0
                         request_tokens = estimate_prompt_tokens(body_to_send)
                         sse_buffer = ""
@@ -2284,14 +1954,10 @@ async def chat_completions(request: Request):
                                             try:
                                                 data_json = json.loads(data_str)
                                                 choices = data_json.get("choices", [])
-                                                if choices and isinstance(
-                                                    choices[0], dict
-                                                ):
+                                                if choices and isinstance(choices[0], dict):
                                                     delta = choices[0].get("delta")
                                                     if isinstance(delta, dict):
-                                                        content = (
-                                                            delta.get("content") or ""
-                                                        )
+                                                        content = delta.get("content") or ""
                                                         completion_chars += len(content)
                                             except Exception:
                                                 pass
@@ -2299,26 +1965,14 @@ async def chat_completions(request: Request):
                                     pass
                             proxy_latency = (time.time() - proxy_start) * 1000.0
                             stats["total_proxy_time_ms"] += proxy_latency
-                            stats["avg_proxy_latency_ms"] = (
-                                stats["total_proxy_time_ms"] / stats["total_requests"]
-                            )
-                            record_tool_usage(
-                                active_tool,
-                                request_tokens,
-                                completion_chars // 4,
-                                model_name,
-                                proxy_latency,
-                                route="litellm_fallback",
-                            )
+                            stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                            record_tool_usage(active_tool, request_tokens, completion_chars // 4, model_name, proxy_latency, route="litellm_fallback")
                             # Finalize LiteLLM span (streaming path)
                             if litellm_span_obj:
                                 try:
                                     litellm_span_obj.end(
                                         output={"model": model_name, "stream": True},
-                                        metadata={
-                                            "latency_ms": proxy_latency,
-                                            "tokens": completion_chars // 4,
-                                        },
+                                        metadata={"latency_ms": proxy_latency, "tokens": completion_chars // 4},
                                     )
                                 except Exception:
                                     pass
@@ -2326,97 +1980,58 @@ async def chat_completions(request: Request):
                             logger.error(f"Stream error: {ex}")
                             if model_name.startswith("ollama-"):
                                 global _ollama_cooldown_until
-                                _ollama_cooldown_until = (
-                                    time.monotonic() + OLLAMA_COOLDOWN_SECONDS
-                                )
+                                _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
                                 try:
                                     await save_cooldowns_to_valkey()
                                     logger.error(
                                         f"🧊 Ollama failed midway through stream, activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
                                     )
                                 except Exception as save_err:
-                                    logger.warning(
-                                        f"Failed to save cooldowns to Valkey: {save_err}"
-                                    )
+                                    logger.warning(f"Failed to save cooldowns to Valkey: {save_err}")
                         finally:
                             await r.aclose()
-
-                    return StreamingResponse(
-                        stream_generator(), media_type="text/event-stream"
-                    )
+                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
                     error_body = await r.aread() if r else b""
-                    logger.warning(
-                        f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}"
-                    )
+                    logger.warning(f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}")
                     await r.aclose()
-                    raise HTTPException(
-                        status_code=r.status_code,
-                        detail="LiteLLM upstream request failed",
-                    )
+                    raise HTTPException(status_code=r.status_code, detail="LiteLLM upstream request failed")
             else:
                 logger.info(f"Proxying to LiteLLM as model={model_name}")
-                response = await client.post(
-                    f"{backend_api_base}/chat/completions",
-                    json=body_to_send,
-                    headers=headers,
-                )
+                response = await client.post(f"{backend_api_base}/chat/completions", json=body_to_send, headers=headers)
                 if response.status_code == 200:
                     proxy_latency = (time.time() - proxy_start) * 1000.0
                     stats["total_proxy_time_ms"] += proxy_latency
-                    stats["avg_proxy_latency_ms"] = (
-                        stats["total_proxy_time_ms"] / stats["total_requests"]
-                    )
+                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                     resp_json = response.json()
                     usage = resp_json.get("usage") or {}
-                    prompt_tokens = usage.get(
-                        "prompt_tokens"
-                    ) or estimate_prompt_tokens(body_to_send)
+                    prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
                     choices = resp_json.get("choices") or []
                     fallback_completion = 0
                     if choices and isinstance(choices[0], dict):
                         msg = choices[0].get("message")
                         if isinstance(msg, dict):
                             fallback_completion = len(msg.get("content") or "") // 4
-                    completion_tokens = (
-                        usage.get("completion_tokens") or fallback_completion
-                    )
-                    record_tool_usage(
-                        active_tool,
-                        prompt_tokens,
-                        completion_tokens,
-                        model_name,
-                        proxy_latency,
-                        route="litellm_fallback",
-                    )
+                    completion_tokens = usage.get("completion_tokens") or fallback_completion
+                    record_tool_usage(active_tool, prompt_tokens, completion_tokens, model_name, proxy_latency, route="litellm_fallback")
                     # Finalize LiteLLM span (non-streaming path)
                     if litellm_span_obj:
                         try:
                             litellm_span_obj.end(
-                                output={
-                                    "model": model_name,
-                                    "tokens": completion_tokens,
-                                },
+                                output={"model": model_name, "tokens": completion_tokens},
                                 metadata={"latency_ms": proxy_latency},
                             )
                         except Exception:
                             pass
                     return resp_json
                 else:
-                    logger.warning(
-                        f"LiteLLM failed ({response.status_code}): {response.text[:300]}"
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail="LiteLLM upstream request failed",
-                    )
+                    logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
+                    raise HTTPException(status_code=response.status_code, detail="LiteLLM upstream request failed")
         except HTTPException:
             raise
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
-            raise HTTPException(
-                status_code=502, detail="Proxy call failed"
-            ) from exc
+            raise HTTPException(status_code=502, detail=f"Proxy call failed: {exc}") from exc
 
     if should_try_ollama:
         # Sync state from Valkey first
@@ -2431,21 +2046,16 @@ async def chat_completions(request: Request):
                 f"⏳ Ollama cooldown active ({remaining}s remaining), "
                 f"skipping {target_model}"
             )
-            if client_model in (
-                "llm-routing-auto-ollama",
-                "llm-routing-auto-agy-ollama",
-            ):
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
                 # Auto mode: silently fall through to the free tier
-                logger.info(
-                    f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)"
-                )
+                logger.info(f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)")
                 return await execute_proxy(original_target_model)
             else:
                 # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
                 # skips this model group and moves to openrouter-auto
                 raise HTTPException(
                     status_code=429,
-                    detail=f"Ollama backend cooled down ({remaining}s remaining)",
+                    detail=f"Ollama backend cooled down ({remaining}s remaining)"
                 )
 
         try:
@@ -2460,26 +2070,19 @@ async def chat_completions(request: Request):
                 logger.error(
                     f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
                 )
-            if client_model in (
-                "llm-routing-auto-ollama",
-                "llm-routing-auto-agy-ollama",
-            ):
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
                 if is_transient:
-                    logger.warning(
-                        f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}"
-                    )
+                    logger.warning(f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}")
                     return await execute_proxy(original_target_model)
                 else:
                     raise e
             else:
                 # Direct/fallback llm-routing-ollama request
                 if is_transient:
-                    logger.error(
-                        f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429"
-                    )
+                    logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
                     raise HTTPException(
                         status_code=429,
-                        detail="Ollama backend rate limited/unavailable",
+                        detail="Ollama backend rate limited/unavailable"
                     ) from e
                 else:
                     raise e
@@ -2490,21 +2093,16 @@ async def chat_completions(request: Request):
             logger.error(
                 f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
             )
-            if client_model in (
-                "llm-routing-auto-ollama",
-                "llm-routing-auto-agy-ollama",
-            ):
-                logger.warning(
-                    f"Ollama proxy error ({e}), falling back to free tier {original_target_model}"
-                )
+            if client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama"):
+                logger.warning(f"Ollama proxy error ({e}), falling back to free tier {original_target_model}")
                 return await execute_proxy(original_target_model)
             else:
                 raise HTTPException(
-                    status_code=429, detail="Ollama backend rate limited/unavailable"
+                    status_code=429,
+                    detail="Ollama backend rate limited/unavailable"
                 ) from e
     else:
         return await execute_proxy(target_model)
-
 
 @app.get("/metrics")
 async def metrics():
@@ -2564,49 +2162,35 @@ async def metrics():
     # Circuit breaker metrics — dual breaker (google + vendor)
     google = breaker_status["google"]
     vendor = breaker_status["vendor"]
-    lines.append(
-        "# HELP circuit_breaker_google_tier Google breaker cooldown tier (0=open, 3=max)"
-    )
+    lines.append("# HELP circuit_breaker_google_tier Google breaker cooldown tier (0=open, 3=max)")
     lines.append("# TYPE circuit_breaker_google_tier gauge")
     lines.append(f"circuit_breaker_google_tier {google['tier']}")
-    lines.append(
-        "# HELP circuit_breaker_vendor_tier Vendor breaker cooldown tier (0=open, 3=max)"
-    )
+    lines.append("# HELP circuit_breaker_vendor_tier Vendor breaker cooldown tier (0=open, 3=max)")
     lines.append("# TYPE circuit_breaker_vendor_tier gauge")
     lines.append(f"circuit_breaker_vendor_tier {vendor['tier']}")
-    lines.append(
-        "# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)"
-    )
+    lines.append("# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)")
     lines.append("# TYPE circuit_breaker_agy_allowed gauge")
     lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed_peek())}")
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
-    lines.append(
-        f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}"
-    )
+    lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
 
     # Ollama router-side cooldown metrics
     _now_mono = time.monotonic()
     _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
-    lines.append(
-        "# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)"
-    )
+    lines.append("# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)")
     lines.append("# TYPE ollama_cooldown_active gauge")
     lines.append(f"ollama_cooldown_active {int(_ollama_remaining > 0)}")
-    lines.append(
-        "# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown"
-    )
+    lines.append("# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown")
     lines.append("# TYPE ollama_cooldown_remaining_seconds gauge")
     lines.append(f"ollama_cooldown_remaining_seconds {_ollama_remaining:.0f}")
 
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
-
 # Source badge helper: generates a colored inline source tag
 def src_badge(label, color):
     """Generate inline HTML span styled as a colored status/category badge."""
     return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
-
 
 async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
@@ -2720,31 +2304,11 @@ async def get_dashboard_data():
 
     # 3. Calculative metrics — 5-tier triage table
     tier_data = [
-        {
-            "tier": "agent-simple-core",
-            "count": stats.get("simple_requests", 0),
-            "color": "#34d399",
-        },
-        {
-            "tier": "agent-medium-core",
-            "count": stats.get("medium_requests", 0),
-            "color": "#fbbf24",
-        },
-        {
-            "tier": "agent-complex-core",
-            "count": stats.get("complex_requests", 0),
-            "color": "#a78bfa",
-        },
-        {
-            "tier": "agent-reasoning-core",
-            "count": stats.get("reasoning_requests", 0),
-            "color": "#60a5fa",
-        },
-        {
-            "tier": "agent-advanced-core",
-            "count": stats.get("advanced_requests", 0),
-            "color": "#f472b6",
-        },
+        {"tier": "agent-simple-core",    "count": stats.get("simple_requests", 0),    "color": "#34d399"},
+        {"tier": "agent-medium-core",    "count": stats.get("medium_requests", 0),    "color": "#fbbf24"},
+        {"tier": "agent-complex-core",   "count": stats.get("complex_requests", 0),   "color": "#a78bfa"},
+        {"tier": "agent-reasoning-core", "count": stats.get("reasoning_requests", 0), "color": "#60a5fa"},
+        {"tier": "agent-advanced-core",  "count": stats.get("advanced_requests", 0),  "color": "#f472b6"},
     ]
     total_tier = sum(t["count"] for t in tier_data)
     for t in tier_data:
@@ -2755,12 +2319,12 @@ async def get_dashboard_data():
     for t in tier_data:
         tier_table_rows += f"""
         <tr>
-            <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{t["color"]};">
-                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{t["color"]};margin-right:8px;box-shadow:0 0 4px {t["color"]}aa;"></span>
-                {t["tier"]}
+            <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{t['color']};">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{t['color']};margin-right:8px;box-shadow:0 0 4px {t['color']}aa;"></span>
+                {t['tier']}
             </td>
-            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{t["count"]}</td>
-            <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{t["ratio"]:.1f}%</td>
+            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{t['count']}</td>
+            <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{t['ratio']:.1f}%</td>
         </tr>"""
     tier_table_html = f"""
     <table style="width:100%;border-collapse:collapse;">
@@ -2789,6 +2353,7 @@ async def get_dashboard_data():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
         color = TOOL_COLORS.get(tool_name, "#94a3b8")
+
         # Horizontal meters
         tool_tokens_html += f"""
         <div style="margin-bottom: 20px;">
@@ -2817,26 +2382,22 @@ async def get_dashboard_data():
         timeline_html = "<div style='opacity: 0.5; font-size: 14px; text-align: center; padding: 20px;'>Waiting for active tool executions...</div>"
     else:
         for ev in reversed(stats["timeline"]):
-            route_label = ev.get("route", "litellm_fallback")
-            route_color = (
-                "#fbbf24" if route_label == "google_oauth_direct" else "#818cf8"
-            )
-            route_short = (
-                "GOOGLE" if route_label == "google_oauth_direct" else "LITELLM"
-            )
+            route_label = ev.get('route', 'litellm_fallback')
+            route_color = '#fbbf24' if route_label == 'google_oauth_direct' else '#818cf8'
+            route_short = 'GOOGLE' if route_label == 'google_oauth_direct' else 'LITELLM'
             timeline_html += f"""
             <div style="display: flex; gap: 15px; margin-bottom: 15px; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 20px; position: relative;">
                 <div style="width: 10px; height: 10px; background: {route_color}; border-radius: 50%; position: absolute; left: -6px; top: 6px; box-shadow: 0 0 8px {route_color};"></div>
                 <div style="flex-grow: 1;">
                     <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px;">
-                        <span style="font-weight: 600; text-transform: uppercase; color: #a5b4fc;">🔧 {ev["tool"]} <span style="font-size: 9px; padding: 1px 5px; border-radius: 4px; background: {route_color}22; color: {route_color}; border: 1px solid {route_color}44; margin-left: 6px; vertical-align: middle;">{route_short}</span></span>
-                        <span style="opacity: 0.5; font-family: monospace;">{ev["timestamp"]}</span>
+                        <span style="font-weight: 600; text-transform: uppercase; color: #a5b4fc;">🔧 {ev['tool']} <span style="font-size: 9px; padding: 1px 5px; border-radius: 4px; background: {route_color}22; color: {route_color}; border: 1px solid {route_color}44; margin-left: 6px; vertical-align: middle;">{route_short}</span></span>
+                        <span style="opacity: 0.5; font-family: monospace;">{ev['timestamp']}</span>
                     </div>
                     <div style="font-size: 14px; opacity: 0.9;">
-                        Processed <strong>{ev["tokens"]:,} tokens</strong> on <span style="color: #c084fc;">{ev["model"]}</span>
+                        Processed <strong>{ev['tokens']:,} tokens</strong> on <span style="color: #c084fc;">{ev['model']}</span>
                     </div>
                     <div style="font-size: 12px; opacity: 0.5; margin-top: 2px;">
-                        Latency: {ev["latency_ms"]} ms
+                        Latency: {ev['latency_ms']} ms
                     </div>
                 </div>
             </div>
@@ -2852,51 +2413,44 @@ async def get_dashboard_data():
         """
     else:
         for idx, sess in enumerate(goose_sessions):
-            is_active = idx == 0
-            badge_style = (
-                "background: rgba(129, 140, 248, 0.15); color: #c084fc; border: 1px solid rgba(129, 140, 248, 0.3);"
-                if is_active
-                else "background: rgba(255,255,255,0.03); color: #fff; border: 1px solid rgba(255,255,255,0.05);"
-            )
-            active_label = (
-                "<span style='font-size: 10px; background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;'>ACTIVE</span>"
-                if is_active
-                else ""
-            )
+            is_active = (idx == 0)
+            badge_style = "background: rgba(129, 140, 248, 0.15); color: #c084fc; border: 1px solid rgba(129, 140, 248, 0.3);" if is_active else "background: rgba(255,255,255,0.03); color: #fff; border: 1px solid rgba(255,255,255,0.05);"
+            active_label = "<span style='font-size: 10px; background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;'>ACTIVE</span>" if is_active else ""
 
-            desc = sess.get("description") or sess.get("name") or "Interactive session"
-            tokens = sess.get("accumulated_total_tokens", 0) or 0
+            desc = sess.get('description') or sess.get('name') or "Interactive session"
+            tokens = sess.get('accumulated_total_tokens', 0) or 0
 
             goose_html += f"""
             <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 15px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="display: flex; align-items: center;">
                         {active_label}
-                        <span style="font-weight: 600; font-size: 15px;">Session {sess["id"]}</span>
+                        <span style="font-weight: 600; font-size: 15px;">Session {sess['id']}</span>
                     </div>
-                    <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {badge_style}">{sess.get("goose_mode", "auto").upper()}</span>
+                    <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {badge_style}">{sess.get('goose_mode', 'auto').upper()}</span>
                 </div>
                 <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                     {desc}
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
-                    <span>📅 {sess["updated_at"]}</span>
+                    <span>📅 {sess['updated_at']}</span>
                     <span style="font-weight: bold; color: #a5b4fc;">{tokens:,} total tokens</span>
                 </div>
             </div>
             """
 
     # 8. Routing Paths pie chart & legend
-    routing_paths = stats.get(
-        "routing_paths", {"google_oauth_direct": 0, "litellm_fallback": 0}
-    )
+    routing_paths = stats.get("routing_paths", {"google_oauth_direct": 0, "litellm_fallback": 0})
     total_routed = sum(routing_paths.values())
     routing_pie_gradient = "background: rgba(255, 255, 255, 0.05);"
     routing_legend_html = ""
-    routing_colors = {"google_oauth_direct": "#fbbf24", "litellm_fallback": "#818cf8"}
+    routing_colors = {
+        "google_oauth_direct": "#fbbf24",
+        "litellm_fallback": "#818cf8"
+    }
     routing_labels = {
         "google_oauth_direct": "Google OAuth Direct",
-        "litellm_fallback": "LiteLLM Fallback",
+        "litellm_fallback": "LiteLLM Fallback"
     }
     if total_routed > 0:
         current_angle = 0.0
@@ -2914,9 +2468,7 @@ async def get_dashboard_data():
             </div>
             """
             current_angle = next_angle
-        routing_pie_gradient = (
-            f"background: conic-gradient({', '.join(route_grad_parts)});"
-        )
+        routing_pie_gradient = f"background: conic-gradient({', '.join(route_grad_parts)});"
 
     # 9. Model Usage — canonical source is Langfuse traces (replaces duplicated in-memory counter)
     # See router trace → LiteLLM trace linkage via X-Langfuse-Trace-Id header.
@@ -2930,29 +2482,15 @@ async def get_dashboard_data():
     llamacpp_models_html = ""
     if llamacpp["models"]:
         for m in llamacpp["models"]:
-            status_style = (
-                "background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25);"
-                if m["status"] == "loaded"
-                else "background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08);"
-            )
-            params_str = (
-                f"<span>\U0001f9e0 {m['n_params'] / 1e9:.1f}B params</span>"
-                if m["n_params"]
-                else ""
-            )
-            ctx_str = (
-                f"<span>\U0001f4d0 ctx {m['n_ctx']:,}</span>" if m["n_ctx"] else ""
-            )
-            size_str = (
-                f"<span>\U0001f4be {m['size_bytes'] / 1e6:.0f} MB</span>"
-                if m["size_bytes"]
-                else ""
-            )
+            status_style = "background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25);" if m["status"] == "loaded" else "background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08);"
+            params_str = f"<span>\U0001f9e0 {m['n_params']/1e9:.1f}B params</span>" if m["n_params"] else ""
+            ctx_str = f"<span>\U0001f4d0 ctx {m['n_ctx']:,}</span>" if m["n_ctx"] else ""
+            size_str = f"<span>\U0001f4be {m['size_bytes']/1e6:.0f} MB</span>" if m["size_bytes"] else ""
             llamacpp_models_html += f"""
             <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-weight: 700; font-size: 14px; font-family: monospace;">{m["id"]}</span>
-                    <span style="font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; {status_style}">{m["status"].upper()}</span>
+                    <span style="font-weight: 700; font-size: 14px; font-family: monospace;">{m['id']}</span>
+                    <span style="font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; {status_style}">{m['status'].upper()}</span>
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 11px; opacity: 0.6;">
                     {params_str}{ctx_str}{size_str}
@@ -2966,18 +2504,14 @@ async def get_dashboard_data():
     if llamacpp["slots"]:
         slot_items = ""
         for sl in llamacpp["slots"]:
-            dot_style = (
-                "background: #34d399; box-shadow: 0 0 8px #34d399;"
-                if sl["is_processing"]
-                else "background: rgba(255,255,255,0.15);"
-            )
+            dot_style = "background: #34d399; box-shadow: 0 0 8px #34d399;" if sl["is_processing"] else "background: rgba(255,255,255,0.15);"
             slot_items += f"""
             <div style="background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; padding: 10px 14px; position: relative; overflow: hidden;">
                 <div style="position: absolute; top: 0; right: 0; width: 8px; height: 8px; margin: 8px; border-radius: 50%; {dot_style}"></div>
-                <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">Slot {sl["id"]}</div>
+                <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">Slot {sl['id']}</div>
                 <div style="font-size: 11px; opacity: 0.6; display: flex; flex-direction: column; gap: 2px;">
-                    <span>Prompt: {sl["n_prompt_processed"]} tok</span>
-                    <span>Decoded: {sl["n_decoded"]} tok</span>
+                    <span>Prompt: {sl['n_prompt_processed']} tok</span>
+                    <span>Decoded: {sl['n_decoded']} tok</span>
                 </div>
             </div>
             """
@@ -3016,15 +2550,13 @@ async def get_dashboard_data():
         "avg_proxy_latency_ms": stats["avg_proxy_latency_ms"],
         "cache_hits": stats["cache_hits"],
         "total_requests": stats["total_requests"],
-        "last_triage_decision": stats["last_triage_decision"],
+        "last_triage_decision": stats["last_triage_decision"]
     }
-
 
 @app.get("/api/dashboard-stats")
 async def get_dashboard_stats():
     """Return dashboard metrics and pre-computed HTML as JSON for asynchronous UI updates."""
     return await get_dashboard_data()
-
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -3567,7 +3099,7 @@ async def get_dashboard():
                 <!-- Analytics Card -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Gateway Performance Telemetry</span>
+                        <span>{src_badge('ROUTER', '#818cf8')} Gateway Performance Telemetry</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Persistent telemetry</span>
                     </div>
 
@@ -3595,7 +3127,7 @@ async def get_dashboard():
                     </div>
 
                     <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
-                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge("ROUTER", "#818cf8")} Triage Routing Split</div>
+                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge('ROUTER', '#818cf8')} Triage Routing Split</div>
                         <div id="tier-table-container">
                             {tier_table_html}
                         </div>
@@ -3605,7 +3137,7 @@ async def get_dashboard():
                 <!-- Token Distribution & Circular Tool Pies Card -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Tool Token Distribution</span>
+                        <span>{src_badge('ROUTER', '#818cf8')} Tool Token Distribution</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Live conic-gradient pie</span>
                     </div>
                     
@@ -3638,7 +3170,7 @@ async def get_dashboard():
                 <!-- Routing Path Distribution Pie -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Routing Path Distribution</span>
+                        <span>{src_badge('ROUTER', '#818cf8')} Routing Path Distribution</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">% requests per path</span>
                     </div>
                     <div style="display: flex; gap: 40px; align-items: center; flex-wrap: wrap;">
@@ -3654,7 +3186,7 @@ async def get_dashboard():
                 <!-- Final Model Usage: canonically tracked in Langfuse -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge("LITELLM", "#34d399")} Model Usage</span>
+                        <span>{src_badge('LITELLM', '#34d399')} Model Usage</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Full traces in Langfuse</span>
                     </div>
                     <div style="text-align: center; padding: 25px 20px;">
@@ -3666,7 +3198,7 @@ async def get_dashboard():
                 <!-- Live Meters for Tool Tokens Card -->
                 <div class="glass-card">
                     <div class="section-title">
-                        <span>{src_badge("GOOSE", "#fbbf24")} Live Tool Token Meters</span>
+                        <span>{src_badge('GOOSE', '#fbbf24')} Live Tool Token Meters</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Token meters per extension tool</span>
                     </div>
                     <div id="tool-tokens-container">
@@ -3677,7 +3209,7 @@ async def get_dashboard():
                 <!-- Timelines Card -->
                 <div class="glass-card" style="margin-bottom: 0;">
                     <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Request Timeline</span>
+                        <span>{src_badge('ROUTER', '#818cf8')} Request Timeline</span>
                         <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Recent completions cascade</span>
                     </div>
                     <div id="timeline-container" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
@@ -3691,27 +3223,27 @@ async def get_dashboard():
                 <!-- Frontier Free Model widget -->
                 <div class="glass-card" style="background: rgba(16, 185, 129, 0.03); border-color: rgba(16, 185, 129, 0.15); margin-bottom: 30px;">
                     <div class="section-title" style="margin-bottom: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.15); padding-bottom: 12px;">
-                        <span>{src_badge("INTELLECT", "#34d399")} Frontier Free Model</span>
+                        <span>{src_badge('INTELLECT', '#34d399')} Frontier Free Model</span>
                         <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">agentic index score</span>
                     </div>
                     <div id="best-free-model-container" style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 12px; padding: 16px 20px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-weight: 800; font-size: 16px; color: #fff;">{best_free_model["name"]}</span>
-                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {best_free_model["score"]:.1f}</span>
+                            <span style="font-weight: 800; font-size: 16px; color: #fff;">{best_free_model['name']}</span>
+                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {best_free_model['score']:.1f}</span>
                         </div>
                         <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
-                            ID: {best_free_model["id"]}
+                            ID: {best_free_model['id']}
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                            <span>📐 context {best_free_model["context_length"]:,} tok</span>
-                            <span style="color: #34d399; font-weight: bold;">{"LIVE" if not best_free_model.get("is_fallback") else "FALLBACK"}</span>
+                            <span>📐 context {best_free_model['context_length']:,} tok</span>
+                            <span style="color: #34d399; font-weight: bold;">{ "LIVE" if not best_free_model.get('is_fallback') else "FALLBACK" }</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- Infrastructure nodes card -->
                 <div class="glass-card status-container">
-                    <div class="section-title" style="margin-bottom: 10px;">{src_badge("ROUTER", "#818cf8")} Infrastructure Nodes</div>
+                    <div class="section-title" style="margin-bottom: 10px;">{src_badge('ROUTER', '#818cf8')} Infrastructure Nodes</div>
                     
                     <div class="service-row">
                         <div class="service-info">
@@ -3726,8 +3258,8 @@ async def get_dashboard():
                             <span class="service-name">LiteLLM Proxy</span>
                             <span class="service-port">:4000</span>
                         </div>
-                        <span id="litellm-status" class="badge {"badge-online" if litellm_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if litellm_status else "Offline"}
+                        <span id="litellm-status" class="badge {'badge-online' if litellm_status else 'badge-offline'}">
+                            <span class="pulse-dot"></span>{'Online' if litellm_status else 'Offline'}
                         </span>
                     </div>
 
@@ -3736,8 +3268,8 @@ async def get_dashboard():
                             <span class="service-name">Valkey Cache</span>
                             <span class="service-port">:6379</span>
                         </div>
-                        <span id="valkey-status" class="badge {"badge-online" if valkey_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if valkey_status else "Offline"}
+                        <span id="valkey-status" class="badge {'badge-online' if valkey_status else 'badge-offline'}">
+                            <span class="pulse-dot"></span>{'Online' if valkey_status else 'Offline'}
                         </span>
                     </div>
 
@@ -3746,8 +3278,8 @@ async def get_dashboard():
                             <span class="service-name">Llama-Server</span>
                             <span class="service-port">:8080</span>
                         </div>
-                        <span id="llama-server-status" class="badge {"badge-online" if llama_server_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if llama_server_status else "Offline"}
+                        <span id="llama-server-status" class="badge {'badge-online' if llama_server_status else 'badge-offline'}">
+                            <span class="pulse-dot"></span>{'Online' if llama_server_status else 'Offline'}
                         </span>
                     </div>
 
@@ -3756,8 +3288,8 @@ async def get_dashboard():
                             <span class="service-name">Langfuse Traces</span>
                             <span class="service-port">:3001</span>
                         </div>
-                        <span id="langfuse-status" class="badge {"badge-online" if langfuse_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if langfuse_status else "Offline"}
+                        <span id="langfuse-status" class="badge {'badge-online' if langfuse_status else 'badge-offline'}">
+                            <span class="pulse-dot"></span>{'Online' if langfuse_status else 'Offline'}
                         </span>
                     </div>
                 </div>
@@ -3765,8 +3297,8 @@ async def get_dashboard():
                 <!-- Llama.cpp Metrics Card -->
                 <div class="glass-card">
                     <div class="section-title" style="margin-bottom: 10px;">
-                        <span>{src_badge("LLAMA.CPP", "#fb923c")} Engine Metrics</span>
-                        <span id="llamacpp-build" style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">build {data["llamacpp_build"]}</span>
+                        <span>{src_badge('LLAMA.CPP', '#fb923c')} Engine Metrics</span>
+                        <span id="llamacpp-build" style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">build {data['llamacpp_build']}</span>
                     </div>
                     <div id="llamacpp-models-container">
                         {llamacpp_models_html}
@@ -3778,7 +3310,7 @@ async def get_dashboard():
 
                 <!-- Goose active sessions and status card -->
                 <div class="glass-card">
-                    <div class="section-title" style="margin-bottom: 10px;">{src_badge("GOOSE", "#fbbf24")} Session Directory</div>
+                    <div class="section-title" style="margin-bottom: 10px;">{src_badge('GOOSE', '#fbbf24')} Session Directory</div>
                     <div id="goose-sessions-container" style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
                         {goose_html}
                     </div>
@@ -3790,21 +3322,21 @@ async def get_dashboard():
                     <div class="btn-group">
                         <!-- Goose Dashboard local -->
                         <a href="https://t.me/SheepBot?start=goose" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
-                            <span>{src_badge("GOOSE", "#fbbf24")} 🦢 Goose Telegram Bot</span>
+                            <span>{src_badge('GOOSE', '#fbbf24')} 🦢 Goose Telegram Bot</span>
                             <span class="btn-arrow">→</span>
                         </a>
                     </div>
                     <div class="btn-group">
                         <a href="http://localhost:3001" target="_blank" class="btn">
-                            <span>{src_badge("LANGFUSE", "#e879f9")} Observability UI</span>
+                            <span>{src_badge('LANGFUSE', '#e879f9')} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
                         <a href="http://localhost:4000/ui" target="_blank" class="btn">
-                            <span>{src_badge("LITELLM", "#34d399")} Admin UI</span>
+                            <span>{src_badge('LITELLM', '#34d399')} Admin UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
                         <a href="http://localhost:8080" target="_blank" class="btn">
-                            <span>{src_badge("LLAMA.CPP", "#fb923c")} Server Router UI</span>
+                            <span>{src_badge('LLAMA.CPP', '#fb923c')} Server Router UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
                     </div>
@@ -3820,14 +3352,12 @@ async def get_dashboard():
     """
     return html_content
 
-
 # --- Static files (visualizer, data files) ---
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
-
 
 @app.get("/visualizer", response_class=HTMLResponse)
 async def get_visualizer():
@@ -3839,52 +3369,13 @@ async def get_visualizer():
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
 
-VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
-MAX_ANNOTATION_KEY_LENGTH = 128
-MAX_ANNOTATION_ITEM_BYTES = 4096
-
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
-    model_config = ConfigDict(extra="forbid")
-
     tier: Union[int, str, None] = None
-    note: Optional[str] = Field(default=None, max_length=1000)
-    ts: Optional[str] = Field(default=None, max_length=100)
+    note: str = ""
+    ts: Optional[str] = None
 
-    @field_validator("tier")
-    @classmethod
-    def validate_tier(cls, v):
-        if v is None:
-            return v
-        if isinstance(v, int):
-            if v < 0 or v > 4:
-                raise ValueError(f"Invalid tier index {v}: must be between 0 and 4")
-        elif isinstance(v, str):
-            if v not in VALID_TIERS and v != "?":
-                raise ValueError(f"Invalid tier string '{v}'")
-        else:
-            raise ValueError("Tier must be int, str, or null")
-        return v
-
-class AnnotationPayload(RootModel):
-    root: Dict[str, AnnotationItem]
-
-    @model_validator(mode="after")
-    def validate_payload(self) -> "AnnotationPayload":
-        data = self.root
-        if len(data) > 1000:
-            raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
-        for k, item in data.items():
-            if len(k) > MAX_ANNOTATION_KEY_LENGTH:
-                raise ValueError(f"Invalid payload key '{k}': key is too long.")
-            is_valid_key = k.isdigit() or (
-                k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
-            )
-            if not is_valid_key:
-                raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
-            if len(item.model_dump_json().encode("utf-8")) > MAX_ANNOTATION_ITEM_BYTES:
-                raise ValueError(f"Annotation '{k}' exceeds the maximum serialized size.")
-        return self
+VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests
 # across different workers can still race. Eventual consistency is maintained via
@@ -3909,44 +3400,73 @@ def _read_annotations_sync(path) -> dict:
 
     return copy.deepcopy(_annotations_cache[path]["data"])
 
-
 @app.post("/dashboard/save-annotations")
-async def save_annotations(payload: AnnotationPayload):
+async def save_annotations(payload: Dict[str, AnnotationItem]):
     """Save human review annotations to disk."""
+    if len(payload) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Payload size limit exceeded: maximum of 1000 annotations allowed per request."
+        )
+    for k, item in payload.items():
+        # Allow numeric strings (dataset indexes) or stable hash keys starting with 'h' (hexadecimal)
+        is_valid_key = k.isdigit() or (
+            k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
+        )
+        if not is_valid_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
+            )
+
+        t = item.tier
+        if t is not None:
+            if isinstance(t, int):
+                if t < 0 or t > 4:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier index {t} for index {k}: must be between 0 and 4."
+                    )
+            elif isinstance(t, str):
+                if t not in VALID_TIERS and t != "?":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid tier string '{t}' for index {k}."
+                    )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid tier type for index {k}: must be int, str, or null."
+                )
+
+        if item.note and len(item.note) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."
+            )
 
     try:
-        data = payload.root
         ann_path = DATA_DIR / "annotations.json"
         existing = {}
         async with annotations_lock:
             if ann_path.exists():
                 try:
-                    existing = await asyncio.to_thread(
-                        _read_annotations_sync, str(ann_path)
-                    )
+                    existing = await asyncio.to_thread(_read_annotations_sync, str(ann_path))
                 except Exception as read_err:
-                    logger.warning(
-                        f"Could not read existing annotations: {read_err}. Overwriting."
-                    )
+                    logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
 
             # Merge new annotations into existing
-            for k, item in data.items():
-                # For partial updates, merge only fields provided in the request
-                update_data = item.model_dump(exclude_unset=True)
-                if k in existing and isinstance(existing[k], dict):
-                    existing[k].update(update_data)
-                else:
-                    existing[k] = item.model_dump()
+            for k, item in payload.items():
+                existing[k] = item.model_dump() if hasattr(item, "model_dump") else item.dict()
+
             await _atomic_write_json_async(str(ann_path), existing)
 
-        return JSONResponse({"status": "ok", "saved": len(data)})
+        return JSONResponse({"status": "ok", "saved": len(payload)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
         raise HTTPException(status_code=500, detail="Failed to save annotations")
 
-
 if __name__ == "__main__":
     import uvicorn
-
     logger.info(f"Starting LLM Triage Router on {host}:{port}...")
     uvicorn.run(app, host=host, port=port)
