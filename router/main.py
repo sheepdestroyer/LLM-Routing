@@ -1053,14 +1053,17 @@ def _get_live_gemini_oauth_token_sync() -> str | None:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
 
-
-async def get_live_gemini_oauth_token() -> str | None:
+def get_live_gemini_oauth_token() -> str | None:
     """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
+    return _get_live_gemini_oauth_token_sync()
+
+async def get_live_gemini_oauth_token_async() -> str | None:
+    """Async wrapper to retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     return await asyncio.to_thread(_get_live_gemini_oauth_token_sync)
 
 
-def get_gemini_oauth_status() -> dict:
-    """Returns structured OAuth status for the dashboard banner."""
+def _get_gemini_oauth_status_sync() -> dict:
+    """Synchronous helper to retrieve structured OAuth status."""
     creds_path = "/config/gemini_auth/oauth_creds.json"
     try:
         if not os.path.exists(creds_path):
@@ -1110,6 +1113,14 @@ def get_gemini_oauth_status() -> dict:
             }
     except Exception as e:
         return {"status": "error", "detail": str(e), "expiry_ms": 0}
+
+def get_gemini_oauth_status() -> dict:
+    """Returns structured OAuth status for the dashboard banner."""
+    return _get_gemini_oauth_status_sync()
+
+async def get_gemini_oauth_status_async() -> dict:
+    """Async wrapper to retrieve structured OAuth status for the dashboard banner."""
+    return await asyncio.to_thread(_get_gemini_oauth_status_sync)
 
 
 def map_tool_to_category(tool_name: str) -> str:
@@ -2631,7 +2642,7 @@ async def get_dashboard_data():
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
         check_http_endpoint("http://127.0.0.1:3001"),
-        asyncio.to_thread(get_gemini_oauth_status),
+        get_gemini_oauth_status_async(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
         asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
