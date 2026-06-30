@@ -27,9 +27,10 @@ def test_load_persisted_stats_success():
     initial_stats = {"some_dict": {"c": 3}}
 
     def mock_exists(path):
-        if path == main.STATS_JSON_PATH:
+        path_str = str(path)
+        if path_str == main.STATS_JSON_PATH:
             return True
-        if path.endswith("router_timeline.json"):
+        if path_str.endswith("router_timeline.json"):
             return True
         return False
 
