@@ -15,6 +15,7 @@ Tool names match the built-in Memory MCP exactly:
 import sys
 import json
 import time
+import hashlib
 import httpx
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
@@ -33,14 +34,16 @@ SERVER_VERSION = "2.0.0"
 SCOPE_GLOBAL = "global"
 SCOPE_LOCAL = "local"
 PREFIX = "memory"
+HASH_DIGEST_SIZE = 10  # 10 bytes = 20-character hex suffix
 
 
 def _make_key(category: str, is_global: bool, data: str) -> str:
     """Build a unique key from memory attributes."""
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
     ts = int(time.time() * 1000)
-    # Use first 12 chars of a basic hash for uniqueness within the same second
-    h = str(hash(data + str(ts)))[:12].replace("-", "x")
+    # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts.
+    # Provides uniqueness within the same millisecond.
+    h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=HASH_DIGEST_SIZE).hexdigest()
     return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
 
 
