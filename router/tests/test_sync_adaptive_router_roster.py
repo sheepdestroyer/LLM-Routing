@@ -1,7 +1,7 @@
-import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from router.main import sync_adaptive_router_roster
 
