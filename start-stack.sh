@@ -31,12 +31,6 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Ensure openssl is installed if we need to generate passwords/keys
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
-    if ! command -v openssl &>/dev/null; then
-        echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
-        exit 1
-    fi
-fi
 
 
 if [ -z "$OPENROUTER_API_KEY" ]; then
@@ -101,7 +95,7 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -390,7 +384,7 @@ placeholders = [
 ]
 for ph in placeholders:
     if ph not in text:
-        sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml\n")
+        sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml. Ensure you are using the latest version of the template.\n")
         sys.exit(1)
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
