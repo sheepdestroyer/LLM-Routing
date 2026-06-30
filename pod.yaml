@@ -48,7 +48,7 @@ spec:
     image: ghcr.io/berriai/litellm:v1.89.4
     livenessProbe:
       httpGet:
-        path: /health/readiness
+        path: /ping
         port: 4000
       initialDelaySeconds: 240
       periodSeconds: 15
@@ -103,7 +103,7 @@ spec:
     image: localhost/llm-triage-router:latest
     livenessProbe:
       httpGet:
-        path: /dashboard
+        path: /metrics
         port: 5000
       initialDelaySeconds: 20
       periodSeconds: 15
@@ -111,7 +111,7 @@ spec:
     name: llm-triage-router
     readinessProbe:
       httpGet:
-        path: /dashboard
+        path: /metrics
         port: 5000
       initialDelaySeconds: 10
       periodSeconds: 10
@@ -285,7 +285,7 @@ spec:
     image: docker.io/langfuse/langfuse:3
     livenessProbe:
       httpGet:
-        path: /
+        path: /api/health
         port: 3001
       initialDelaySeconds: 240
       periodSeconds: 15
@@ -293,7 +293,7 @@ spec:
     name: langfuse-web
     readinessProbe:
       httpGet:
-        path: /
+        path: /api/health
         port: 3001
       initialDelaySeconds: 15
       periodSeconds: 10
@@ -338,8 +338,10 @@ spec:
       value: warn
     image: docker.io/langfuse/langfuse-worker:3
     livenessProbe:
-      tcpSocket:
-        port: 3030
+      exec:
+        command:
+        - pgrep
+        - node
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -360,14 +362,16 @@ spec:
       value: minioadmin
     image: docker.io/minio/minio:latest
     livenessProbe:
-      tcpSocket:
+      httpGet:
+        path: /minio/health/live
         port: 9002
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
     name: minio-s3
     readinessProbe:
-      tcpSocket:
+      httpGet:
+        path: /minio/health/ready
         port: 9002
       initialDelaySeconds: 5
       periodSeconds: 10
