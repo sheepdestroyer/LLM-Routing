@@ -129,3 +129,20 @@ def test_parse_memory_value_invalid_json_string():
     """Test _parse_memory_value with invalid JSON string."""
     result = _parse_memory_value("this is not a valid json string")
     assert result == {"data": "this is not a valid json string", "tags": []}
+
+def test_make_key_category_with_colons():
+    """Test generating and parsing a key when the category contains colons."""
+    from router.memory_mcp import _parse_key
+    category = "test:category::with:colons"
+    data = "test_data"
+
+    key = _make_key(category, True, data)
+
+    # Check that it encoded the colons safely
+    assert "%3A" in key
+    assert "test:category" not in key
+
+    # Check that it parses back successfully
+    parsed = _parse_key(key)
+    assert parsed["category"] == category
+    assert parsed["scope"] == SCOPE_GLOBAL
