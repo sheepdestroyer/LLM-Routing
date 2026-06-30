@@ -45,9 +45,6 @@ fi
 if [ -z "$POSTGRES_PASSWORD" ]; then
     echo "🔐 Generating secure POSTGRES_PASSWORD..."
     POSTGRES_PASSWORD=$(openssl rand -hex 16)
-    if [ -f "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE" 2>/dev/null)" ]; then
-        echo "" >> "$ENV_FILE"
-    fi
     echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\"" >> "$ENV_FILE"
     chmod 600 "$ENV_FILE"
 fi
@@ -330,8 +327,7 @@ text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
-import urllib.parse
-text = text.replace("postgres:***", f"postgres:{urllib.parse.quote_plus(os.environ['POSTGRES_PASSWORD'])}")
+text = text.replace("postgres:***", f"postgres:{os.environ['POSTGRES_PASSWORD']}")
 text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 sys.stdout.write(text)
 PY
