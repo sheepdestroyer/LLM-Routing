@@ -84,7 +84,7 @@ def test_load_persisted_stats_invalid_json():
 
     real_open = open
     def mock_open_file(file, mode="r", *args, **kwargs):
-        if file == main.STATS_JSON_PATH:
+        if str(file) == main.STATS_JSON_PATH:
             return mock_open(read_data="invalid json")()
         return real_open(file, mode, *args, **kwargs)
 
