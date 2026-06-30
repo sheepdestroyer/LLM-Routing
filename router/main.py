@@ -67,28 +67,32 @@ def get_http_client():
 
 
 def _count_tokens_heuristic(text: str) -> float:
-    """Heuristically count tokens in a string using regex splitting and weighted categories."""
+    """Heuristically estimate token count using weighted categories and optimized regex splitting.
+
+    This replaces the naive character-count logic with a more granular approach that
+    balances English words, technical identifiers, punctuation, and multi-byte characters.
+    """
     if not text:
         return 0.0
-    total = 0.0
-    # Match sequences of alphanumeric characters OR single non-space characters
-    tokens = re.findall(r'[a-zA-Z0-9]+|[^\s]', text)
-    for t in tokens:
-        if t.isalnum() and t.isascii():
-            # For short alphanumeric runs (words), use a constant multiplier.
-            # For long identifiers, hashes, or base64, use a length-based estimate
-            # to avoid significant under-counting.
-            total += 1.2 if len(t) <= 8 else len(t) / 4.0
-        elif ord(t[0]) > 127:
-            total += 0.35  # CJK/Emoji characters (multi-byte, so we discount length)
-        else:
-            total += 0.4  # Punctuation/Symbols
-    return total
+
+    # 1. Alphanumeric runs (Words/Identifiers/Hashes/Base64)
+    # Use a length-aware heuristic to avoid under-counting technical content.
+    word_matches = re.findall(r'[a-zA-Z0-9]+', text)
+    word_total = sum(1.2 if len(w) <= 8 else len(w) / 4.0 for w in word_matches)
+
+    # 2. Non-ASCII characters (CJK/Emoji)
+    # Each character is weighted at 0.35 tokens.
+    non_ascii_count = len(re.findall(r'[^\s\x00-\x7F]', text))
+
+    # 3. ASCII Punctuation/Symbols
+    # Characters that are ASCII but not alphanumeric or whitespace.
+    punc_count = len(re.findall(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]', text))
+
+    return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
 
 
 def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens using a regex-based heuristic that balances English words,
-    punctuation, and multi-byte characters.
+    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
     """
     total = 0.0
     for msg in body.get("messages", []):
@@ -101,8 +105,10 @@ def estimate_prompt_tokens(body: dict) -> int:
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
                     total += _count_tokens_heuristic(block.get("text") or "")
-    # Include a flat estimate for system prompt / metadata overhead
-    return max(1, int(total) + 50)
+
+    # Include a flat estimate for system prompt / metadata overhead.
+    # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
+    return max(1, int(round(total)) + 50)
 
 
 async def sync_cooldowns_from_valkey() -> None:
@@ -525,6 +531,9 @@ async def sync_adaptive_router_roster(master_key: str):
     # Without this, every roster sync accumulates stale deployments (4,591+
     # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
     # starts clean — delete all, then register only the current roster.
+    # Ensure AA scores are pre-loaded non-blockingly
+    if not _AA_SCORES_LOADED:
+        await asyncio.to_thread(_load_aa_scores)
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
@@ -723,6 +732,9 @@ async def lifespan(app: FastAPI):
             await _register_ollama_models_in_db(litellm_master_key)
         except Exception as e:
             logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
+
+    # Pre-load AA scores in background to avoid blocking first requests
+    asyncio.create_task(asyncio.to_thread(_load_aa_scores))
 
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
@@ -1257,10 +1269,6 @@ async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
     now = time.time()
-
-    # Pre-load AA scores in a background thread if not already loaded to avoid blocking the event loop
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
 
     # Check if cache is still valid
     if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):

@@ -23,11 +23,11 @@ def test_estimate_prompt_tokens_empty_messages():
 def test_estimate_prompt_tokens_string_content():
     body = {
         "messages": [
-            {"content": "word " * 4},  # 4 * 1.2 = 4.8 -> 4 tokens
-            {"content": "word " * 8}   # 8 * 1.2 = 9.6 -> 9 tokens
+            {"content": "word " * 4},  # 4 * 1.2 = 4.8
+            {"content": "word " * 8}   # 8 * 1.2 = 9.6
         ]
     }
-    # Total is int(4.8 + 9.6) + 50 = int(14.4) + 50 = 64
+    # Total is int(round(4.8 + 9.6)) + 50 = int(round(14.4)) + 50 = 14 + 50 = 64
     assert estimate_prompt_tokens(body) == 50 + 14
 
 def test_estimate_prompt_tokens_list_content():
@@ -42,6 +42,7 @@ def test_estimate_prompt_tokens_list_content():
             }
         ]
     }
+    # Total is int(round(4.8 + 9.6)) + 50 = 64
     assert estimate_prompt_tokens(body) == 50 + 14
 
 def test_estimate_prompt_tokens_mixed_and_invalid_msgs():
@@ -56,7 +57,8 @@ def test_estimate_prompt_tokens_mixed_and_invalid_msgs():
             {"content": "word " * 4}  # 4.8 tokens
         ]
     }
-    assert estimate_prompt_tokens(body) == 50 + 4
+    # Total is int(round(4.8)) + 50 = 5 + 50 = 55
+    assert estimate_prompt_tokens(body) == 50 + 5
 
 def test_estimate_prompt_tokens_missing_content():
     body = {
