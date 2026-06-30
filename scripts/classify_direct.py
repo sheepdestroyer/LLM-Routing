@@ -1,4 +1,5 @@
 """Direct classification of Hermes prompts using gemma4-26a4b-routing."""
+import os
 import json, urllib.request, time
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def classify(prompt):
     req = urllib.request.Request(
         LLAMA_SERVER_URL,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": "Bearer local-token"}
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())

@@ -235,10 +235,22 @@ port = config.get("server", {}).get("port", 5000)
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
 router_api_key = router_model_conf.get("api_key", "local-token")
+if router_api_key.startswith("os.environ/"):
+    env_var = router_api_key.split("/", 1)[1]
+    router_api_key = os.environ.get(env_var, "local-token")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
+
+# Default colors for tool visualization badges and charts
+TOOL_COLORS = {
+    "tree": "#34d399",   # Green
+    "shell": "#fbbf24",  # Amber/Orange
+    "write": "#a78bfa",  # Violet
+    "view": "#60a5fa",   # Blue
+    "other": "#f472b6",  # Pink
+}
 
 # Triage and Performance Metric Trackers
 stats = {
@@ -307,14 +319,6 @@ def load_persisted_stats():
                     else:
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
-            # Load timeline from disk (may be stale after pod restart, but better than empty)
-            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
-            if os.path.exists(timeline_path):
-                try:
-                    with open(timeline_path, "r") as f:
-                        stats["timeline"] = json.load(f)
-                except Exception:
-                    pass  # stale/broken timeline file → start fresh
         except Exception as e:
             logger.error(f"Failed to load persisted stats: {e}")
 
@@ -1313,19 +1317,11 @@ def get_pie_chart_gradient() -> str:
     current_angle = 0.0
     gradient_parts = []
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6"   # Pink
-    }
-    
     for tool, tokens in stats["tool_tokens"].items():
         if tokens > 0:
             pct = (tokens / total_tokens) * 100.0
             next_angle = current_angle + pct
-            color = tool_colors.get(tool, "#94a3b8")
+            color = TOOL_COLORS.get(tool, "#94a3b8")
             gradient_parts.append(f"{color} {current_angle:.1f}% {next_angle:.1f}%")
             current_angle = next_angle
             
@@ -2156,17 +2152,62 @@ def src_badge(label, color):
 
 async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
-    await sync_cooldowns_from_valkey()
-    # 1. Run live health checks
-    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+    # Run ALL independent I/O concurrently with protective timeouts
+    (
+        _,  # sync_cooldowns_from_valkey
+        valkey_status,
+        litellm_status,
+        llama_server_status,
+        langfuse_status,
+        oauth_status,
+        best_free_model,
+        goose_sessions,
+        llamacpp,
+    ) = await asyncio.gather(
+        asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", 6379),
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
-        check_http_endpoint("http://127.0.0.1:3001")
+        check_http_endpoint("http://127.0.0.1:3001"),
+        asyncio.to_thread(get_gemini_oauth_status),
+        asyncio.wait_for(get_best_free_model(), timeout=5.0),
+        asyncio.to_thread(get_goose_sessions),
+        asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
+        return_exceptions=True
     )
 
-    # 1c. Check Gemini OAuth token status
-    oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
+    # Coerce exceptions to safe defaults if any task failed/timed out, and log failures
+    if isinstance(valkey_status, Exception):
+        logger.warning(f"Valkey health check failed: {valkey_status}")
+        valkey_status = False
+
+    if isinstance(litellm_status, Exception):
+        logger.warning(f"LiteLLM health check failed: {litellm_status}")
+        litellm_status = False
+
+    if isinstance(llama_server_status, Exception):
+        logger.warning(f"Llama-server health check failed: {llama_server_status}")
+        llama_server_status = False
+
+    if isinstance(langfuse_status, Exception):
+        logger.warning(f"Langfuse health check failed: {langfuse_status}")
+        langfuse_status = False
+
+    if isinstance(oauth_status, Exception):
+        logger.warning(f"Gemini OAuth status check failed: {oauth_status}")
+        oauth_status = {"status": "error", "detail": "Check failed", "expiry_ms": 0}
+
+    if isinstance(best_free_model, Exception):
+        logger.warning(f"Best free model fetch failed: {best_free_model}")
+        best_free_model = {"id": "error", "name": "Error fetching model", "score": 0.0}
+
+    if isinstance(goose_sessions, Exception):
+        logger.error(f"Failed to query goose sessions asynchronously: {goose_sessions}")
+        goose_sessions = []
+
+    if isinstance(llamacpp, Exception):
+        logger.warning(f"Failed to fetch llama.cpp metrics: {llamacpp}")
+        llamacpp = {"models": [], "slots": [], "build": "unknown"}
 
     # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
     oauth_banner_html = ""
@@ -2219,21 +2260,6 @@ async def get_dashboard_data():
         </div>
         """
 
-    # 1b. Fetch top free model from OpenRouter
-    best_free_model = await get_best_free_model()
-
-    # 2. Query Goose Sessions SQLite DB asynchronously.
-    # Note: get_goose_sessions creates and closes its sqlite3 connection entirely inside
-    # the function, making it thread-safe for background worker thread execution.
-    try:
-        goose_sessions = await asyncio.to_thread(get_goose_sessions)
-    except Exception as e:
-        logger.error(f"Failed to query goose sessions asynchronously: {e}")
-        goose_sessions = []
-
-    # 2b. Fetch live llama.cpp metrics
-    llamacpp = await get_llamacpp_metrics()
-
     # 3. Calculative metrics — 5-tier triage table
     tier_data = [
         {"tier": "agent-simple-core",    "count": stats.get("simple_requests", 0),    "color": "#34d399"},
@@ -2281,18 +2307,10 @@ async def get_dashboard_data():
     pie_legend_html = ""
     max_tool_val = max(stats["tool_tokens"].values()) if max(stats["tool_tokens"].values()) > 0 else 1
     
-    tool_colors = {
-        "tree": "#34d399",   # Green
-        "shell": "#fbbf24",  # Amber/Orange
-        "write": "#a78bfa",  # Violet
-        "view": "#60a5fa",   # Blue
-        "other": "#f472b6",  # Pink
-    }
-    
     for tool_name, token_count in stats["tool_tokens"].items():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
-        color = tool_colors.get(tool_name, "#94a3b8")
+        color = TOOL_COLORS.get(tool_name, "#94a3b8")
         
         # Horizontal meters
         tool_tokens_html += f"""
