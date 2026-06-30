@@ -96,6 +96,45 @@ async def test_sync_http_get_exception(mock_get_http_client):
 async def test_sync_no_free_models(mock_get_http_client):
     """Test early return when no free models are found."""
     mock_client = AsyncMock()
+
+
+@pytest.mark.asyncio
+@patch("router.main.get_http_client")
+async def test_sync_free_models_all_filtered(mock_get_http_client):
+    """Test early return when free models exist but are all filtered out by validation."""
+    mock_client = AsyncMock()
+
+    # Only free models returned, but all are invalid for routing (e.g., no tools support)
+    mock_get_response = MagicMock()
+    mock_get_response.status_code = 200
+    mock_get_response.json.return_value = {
+        "data": [
+            {
+                "id": "free-invalid-1",
+                "supported_parameters": [],
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+            {
+                "id": "free-invalid-2",
+                # missing required tools / supported parameters for routing
+                "supported_parameters": ["unsupported-capability"],
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+        ]
+    }
+    mock_client.get.return_value = mock_get_response
+
+    # POST should not be called if all free models are filtered out
+    mock_post_response = MagicMock()
+    mock_post_response.status_code = 200
+    mock_client.post.return_value = mock_post_response
+
+    mock_get_http_client.return_value = mock_client
+
+    await sync_adaptive_router_roster("dummy-key")
+
+    mock_client.get.assert_called_once()
+    mock_client.post.assert_not_called()
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
