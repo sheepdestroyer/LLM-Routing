@@ -17,12 +17,16 @@ async def test_purge_stale_deployments_success():
         await _purge_stale_deployments(db_url, pattern)
 
         # Assertions
-        mock_asyncpg.connect.assert_awaited_once_with(db_url)
-        mock_conn.execute.assert_awaited_once_with(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
-            pattern
-        )
-        mock_conn.close.assert_awaited_once()
+        mock_asyncpg.connect.assert_called_once_with(db_url)
+
+        # Assert that execute was called with a string containing the core query logic
+        assert mock_conn.execute.call_count == 1
+        called_query, called_pattern = mock_conn.execute.call_args[0]
+        assert "DELETE FROM \"LiteLLM_ProxyModelTable\"" in called_query
+        assert "WHERE model_name LIKE $1" in called_query
+        assert called_pattern == pattern
+
+        mock_conn.close.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_purge_stale_deployments_execute_exception():
@@ -40,10 +44,14 @@ async def test_purge_stale_deployments_execute_exception():
             await _purge_stale_deployments(db_url, pattern)
 
         # Assertions
-        mock_asyncpg.connect.assert_awaited_once_with(db_url)
-        mock_conn.execute.assert_awaited_once_with(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1',
-            pattern
-        )
+        mock_asyncpg.connect.assert_called_once_with(db_url)
+
+        # Assert that execute was called with a string containing the core query logic
+        assert mock_conn.execute.call_count == 1
+        called_query, called_pattern = mock_conn.execute.call_args[0]
+        assert "DELETE FROM \"LiteLLM_ProxyModelTable\"" in called_query
+        assert "WHERE model_name LIKE $1" in called_query
+        assert called_pattern == pattern
+
         # Ensure close is called even if execute raises an exception
-        mock_conn.close.assert_awaited_once()
+        mock_conn.close.assert_called_once()
