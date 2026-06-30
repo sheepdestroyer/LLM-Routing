@@ -310,7 +310,7 @@ spec:
       value: admin-local-pw-2026
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse:3.178.0
+    image: langfuse/langfuse:3.202.1
     livenessProbe:
       exec:
         command:
