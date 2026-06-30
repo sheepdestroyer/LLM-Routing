@@ -5,7 +5,8 @@ import json
 import sys
 import time
 import socket
-from datetime import datetime, timezone
+import datetime
+from datetime import datetime as original_datetime, timezone
 
 # Load .env into os.environ
 env_path = "/config/.env"
@@ -55,16 +56,18 @@ else:
     print(f"⚠️ Warning: PostgreSQL not ready after {max_wait}s — proceeding anyway")
 
 # Patch LiteLLM at runtime to support flexible date formats
-class RobustDatetime(datetime):
+# Based on PR feedback, we patch datetime.datetime globally for robustness.
+# We ensure naive/aware safety by trying the original format first.
+class RobustDatetime(original_datetime):
     """A datetime subclass that handles flexible date format parsing in strptime."""
     @classmethod
-    def strptime(cls, date_str: str, fmt: str) -> datetime:
+    def strptime(cls, date_str: str, fmt: str) -> original_datetime:
         if not isinstance(date_str, str):
-            return datetime.strptime(date_str, fmt)
+            return original_datetime.strptime(date_str, fmt)
 
         # 1. Try the original format first to maintain compatibility (returning naive if expected)
         try:
-            return datetime.strptime(date_str, fmt)
+            return original_datetime.strptime(date_str, fmt)
         except (ValueError, TypeError):
             pass
 
@@ -80,7 +83,7 @@ class RobustDatetime(datetime):
             if f == fmt:
                 continue
             try:
-                dt = datetime.strptime(date_str, f)
+                dt = original_datetime.strptime(date_str, f)
                 # For fallbacks, ensure we return a UTC-aware datetime
                 if dt.tzinfo is not None:
                     return dt.astimezone(timezone.utc)
@@ -89,28 +92,11 @@ class RobustDatetime(datetime):
                 continue
 
         # Fallback to original behavior to raise expected ValueError if all formats fail
-        return datetime.strptime(date_str, fmt)
+        return original_datetime.strptime(date_str, fmt)
 
-def apply_runtime_patches():
-    print("🩹 Applying localized runtime patches for flexible date formats...")
-    # Patch only specific modules to avoid global side effects (like naive/aware TypeErrors)
-    targets = [
-        "litellm.proxy.spend_tracking.spend_management_endpoints",
-        "litellm.proxy.analytics_endpoints.analytics_endpoints",
-        "litellm.proxy.auth.litellm_license"
-    ]
-    for target in targets:
-        try:
-            # We import the module and replace its 'datetime' reference
-            mod = __import__(target, fromlist=["datetime"])
-            if hasattr(mod, "datetime"):
-                mod.datetime = RobustDatetime
-                print(f"   ✓ Patched {target}")
-        except (ImportError, AttributeError):
-            pass
-    sys.stdout.flush()
-
-apply_runtime_patches()
+print("🩹 Applying global runtime patch for flexible date formats...")
+datetime.datetime = RobustDatetime
+sys.stdout.flush()
 
 # Start LiteLLM Proxy
 import litellm
