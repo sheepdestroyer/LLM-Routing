@@ -78,7 +78,7 @@ def test_load_persisted_stats_invalid_json():
     initial_stats = {"total_requests": 50}
 
     def mock_exists(path):
-        if path == main.STATS_JSON_PATH:
+        if str(path) == main.STATS_JSON_PATH:
             return True
         return False
 
