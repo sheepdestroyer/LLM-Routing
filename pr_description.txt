@@ -1,9 +1,0 @@
-🔒 [Security Fix: Remove Hardcoded Cryptographic Salt and Keys]
-
-🎯 **What:** The `pod.yaml` deployment file contained several hardcoded cryptographic secrets: a salt (`my-super-strong-salt-token-2026-value-1234`), a NextAuth secret (`my-super-secret-nextauth-token-2026`), and an encryption key (`4c265d39d04389f069225db1e88726727a090e7fc6275e8c910b81aa4b763135`) for the Langfuse web observability dashboard container.
-
-⚠️ **Risk:** Hardcoded cryptographic salts and secrets present a severe security vulnerability. Storing them in plaintext within source control means anyone with read access to the repository (or the compiled manifests) could decrypt sensitive authentication tokens or bypass security mechanisms meant to protect user sessions and data integrity. It compromises the randomness and secrecy required for cryptographic operations.
-
-🛡️ **Solution:** Modified the deployment pipeline to generate and inject secure secrets at runtime:
-- `pod.yaml` was updated to use placeholders (`LANGFUSE_SALT_PLACEHOLDER`, `NEXTAUTH_SECRET_PLACEHOLDER`, `LANGFUSE_ENCRYPTION_KEY_PLACEHOLDER`) instead of the hardcoded secrets.
-- The `start-stack.sh` shell script was updated to securely generate 32-byte hexadecimal random strings (`openssl rand -hex 32`) for each if they don't exist, append them to the `.env` file, and inject them dynamically via environment substitution during the podman play command. This mirrors the existing secure pattern used for the `LITELLM_MASTER_KEY`.
