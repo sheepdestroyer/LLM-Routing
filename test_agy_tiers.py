@@ -17,7 +17,7 @@ TIERS = [
     {"name": "Claude Opus 4.6",     "override": "claude-opus-4-6@default"},
 ]
 
-async def test_tier(tier, prompt="say hello in one word", conversation_id=None):
+async def run_tier_test(tier, prompt="say hello in one word", conversation_id=None):
     """Test a single agy tier and return (success, output, conv_id)."""
     env = os.environ.copy()
     if tier["override"]:
