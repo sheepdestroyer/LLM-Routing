@@ -74,7 +74,11 @@ if [ -f "$OAUTH_CREDS" ]; then
     fi
 fi
 if $NEED_SYNC; then
-    python3 sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
+    if [ ! -f "scripts/sync_gemini_token.py" ]; then
+        echo "❌ Error: scripts/sync_gemini_token.py not found. Repository structure is invalid." >&2
+        exit 1
+    fi
+    python3 scripts/sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
 fi
 
 ACTIVE_OAUTH=""
