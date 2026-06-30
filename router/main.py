@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import time
-import socket
 import asyncio
 import logging
 import copy
