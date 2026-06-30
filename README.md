@@ -575,11 +575,11 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 |----------|-------|
 | `LANGFUSE_S3_EVENT_UPLOAD_BUCKET` | `langfuse-events` |
 | `LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT` | `http://127.0.0.1:9002` |
-| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | `minioadmin` |
-| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
+| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | (auto-generated in `.env`) |
+| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | (auto-generated in `.env`) |
 | `S3_FORCE_PATH_STYLE` | `true` |
 
-Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials: `minioadmin` / `minioadmin`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials are automatically generated and stored in `.env`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
 
 ### Health Check
 
