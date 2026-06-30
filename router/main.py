@@ -75,9 +75,12 @@ def _count_tokens_heuristic(text: str) -> float:
     tokens = re.findall(r'[a-zA-Z0-9]+|[^\s]', text)
     for t in tokens:
         if t.isalnum() and t.isascii():
-            total += 1.2  # English word average tokens
+            # For short alphanumeric runs (words), use a constant multiplier.
+            # For long identifiers, hashes, or base64, use a length-based estimate
+            # to avoid significant under-counting.
+            total += 1.2 if len(t) <= 8 else len(t) / 4.0
         elif ord(t[0]) > 127:
-            total += 0.35 # CJK/Emoji characters (multi-byte, so we discount length)
+            total += 0.35  # CJK/Emoji characters (multi-byte, so we discount length)
         else:
             total += 0.4  # Punctuation/Symbols
     return total
@@ -1254,7 +1257,11 @@ async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
     now = time.time()
-    
+
+    # Pre-load AA scores in a background thread if not already loaded to avoid blocking the event loop
+    if not _AA_SCORES_LOADED:
+        await asyncio.to_thread(_load_aa_scores)
+
     # Check if cache is still valid
     if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
         await asyncio.to_thread(_save_best_model_to_disk, free_model_cache["data"])
