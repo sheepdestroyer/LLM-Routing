@@ -117,7 +117,9 @@ async def _get_session(session_id: str) -> Optional[Dict[str, Any]]:
         try:
             raw = await redis.get(f"agy:session:{session_id}")
             if raw:
-                return json.loads(raw)
+                data = json.loads(raw)
+                _local_session_cache.set(session_id, data)
+                return data
         except Exception as e:
             logger.warning(f"Failed to get session from Valkey: {e}")
 
