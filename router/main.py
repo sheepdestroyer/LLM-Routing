@@ -3887,9 +3887,23 @@ class AnnotationPayload(RootModel):
 annotations_lock = asyncio.Lock()
 
 
+_annotations_cache = {}
+
 def _read_annotations_sync(path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    import copy
+
+    # Do not swallow OSError if file doesn't exist to preserve original behavior.
+    # The caller (save_annotations) handles the exception when reading existing annotations.
+    current_mtime = os.path.getmtime(path)
+
+    cache_entry = _annotations_cache.get(path)
+
+    if cache_entry is None or current_mtime != cache_entry["mtime"]:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _annotations_cache[path] = {"mtime": current_mtime, "data": data}
+
+    return copy.deepcopy(_annotations_cache[path]["data"])
 
 
 @app.post("/dashboard/save-annotations")
