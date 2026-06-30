@@ -13,7 +13,7 @@ import host_agy_daemon
 
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
+        s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
 @pytest.fixture
@@ -52,6 +52,13 @@ def test_get_last_conversation_id_invalid_json(monkeypatch, tmp_path):
     cache_file.write_text("invalid json")
 
     monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", str(cache_file))
+    assert host_agy_daemon.get_last_conversation_id() is None
+
+def test_get_last_conversation_id_io_error(monkeypatch):
+    monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", "/fake/cache.json")
+    def mock_open_err(*args, **kwargs):
+        raise IOError("permission denied")
+    monkeypatch.setattr("builtins.open", mock_open_err)
     assert host_agy_daemon.get_last_conversation_id() is None
 
 def test_daemon_post_404(daemon_server):
@@ -193,6 +200,7 @@ def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
     read_calls = 0
     def mock_read(fd, n):
@@ -305,6 +313,7 @@ def test_daemon_post_stream_true_timeout_kill_fail(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
     with urllib.request.urlopen(req) as resp:
         content = resp.read().decode().strip()
@@ -330,6 +339,7 @@ def test_daemon_post_stream_true_wait_exception(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
     with urllib.request.urlopen(req) as resp:
         content = resp.read().decode().strip()
