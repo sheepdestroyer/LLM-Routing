@@ -1,5 +1,5 @@
-import os
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
+import os
 import json, urllib.request, time, sys
 from collections import defaultdict, Counter
 from pathlib import Path

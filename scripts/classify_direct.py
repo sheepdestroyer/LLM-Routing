@@ -1,5 +1,5 @@
-import os
 """Direct classification of Hermes prompts using gemma4-26a4b-routing."""
+import os
 import json, urllib.request, time
 from pathlib import Path
 
