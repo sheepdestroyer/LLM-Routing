@@ -49,7 +49,7 @@ spec:
       value: sk-lit...33bf
     - name: OLLAMA_API_KEY
       value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
-    image: ghcr.io/berriai/litellm:v1.89.3
+    image: ghcr.io/berriai/litellm:v1.89.4
     livenessProbe:
       exec:
         command:
@@ -158,7 +158,7 @@ spec:
     - name: POSTGRES_USER
       value: postgres
     - name: POSTGRES_PASSWORD
-      value: postgres-local-pw-2026
+      value: postgres-password-***
     - name: POSTGRES_DB
       value: langfuse
     image: docker.io/pgvector/pgvector:pg18
