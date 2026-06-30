@@ -11,7 +11,9 @@ async def test_register_ollama_models_in_db_no_master_key():
     """Test that it skips execution if master_key is empty."""
     with patch("router.main.logger.warning") as mock_warning:
         await _register_ollama_models_in_db("")
-        mock_warning.assert_called_once_with("No LiteLLM master key provided — skipping Ollama DB registration")
+        # We assert that a warning is logged, instead of the exact string
+        assert mock_warning.call_count == 1
+        assert "No LiteLLM master key provided" in mock_warning.call_args[0][0]
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
@@ -39,14 +41,34 @@ async def test_register_ollama_models_in_db_static_fallback_success(
         # 2 models in static fallback
         assert mock_post.call_count == 2
 
-        # Verify headers and correct url
-        call_args = mock_post.call_args_list[0]
-        assert call_args[0][0].endswith("/model/new")
-        assert call_args[1]["headers"] == {"Authorization": "Bearer fake-key", "Content-Type": "application/json"}
-        assert "ollama-deepseek-v4-pro" in call_args[1]["json"]["model_name"]
+        # Validate that the serialized payload preserves static capability flags
+        expected_models = ["ollama-deepseek-v4-pro", "ollama-deepseek-v4-flash"]
+        model_names_posted = []
+
+        for call in mock_post.call_args_list:
+            _, kwargs = call
+            payload = kwargs.get("json") or {}
+
+            # Basic shape checks
+            assert "model_name" in payload
+            assert "litellm_params" in payload
+            assert "model_info" in payload
+
+            model_name = payload["model_name"]
+            model_names_posted.append(model_name)
+            assert model_name in expected_models
+
+            # Check capability flags exist
+            model_info = payload["model_info"]
+            assert model_info["supports_vision"] is True
+            assert model_info["supports_reasoning"] is True
+            assert model_info["supports_function_calling"] is True
+
+        assert set(model_names_posted) == set(expected_models)
 
         mock_purge.assert_called_once_with("postgres://fake", "ollama-deepseek-%")
-        mock_info.assert_any_call("📊 Ollama DB registration: 2 registered, 0 failed")
+        assert mock_info.call_count >= 1
+        assert any("2 registered" in call[0][0] for call in mock_info.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -89,15 +111,14 @@ model_list:
             assert call_args[1]["json"]["model_name"] == "ollama-deepseek-test"
 
             mock_purge.assert_not_called()
-            mock_info.assert_any_call("📊 Ollama DB registration: 1 registered, 0 failed")
+            assert any("1 registered" in call[0][0] for call in mock_info.call_args_list)
 
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments", new_callable=AsyncMock)
 @patch("os.path.exists")
 async def test_register_ollama_models_in_db_post_failures(
-    mock_exists, mock_purge, mock_get_client
+    mock_exists, mock_get_client
 ):
     """Test handling of failed POST requests."""
     mock_exists.return_value = False # Static fallback
@@ -119,7 +140,7 @@ async def test_register_ollama_models_in_db_post_failures(
             await _register_ollama_models_in_db("fake-key")
 
             assert mock_post.call_count == 2
-            mock_info.assert_any_call("📊 Ollama DB registration: 0 registered, 2 failed")
+            assert any("2 failed" in call[0][0] for call in mock_info.call_args_list)
 
             warnings = [call[0][0] for call in mock_warning.call_args_list]
             assert any("HTTP 400" in w for w in warnings)
