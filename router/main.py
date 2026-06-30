@@ -3320,7 +3320,7 @@ class AnnotationItem(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     tier: Union[int, str, None] = None
-    note: Optional[str] = Field(default=None, max_length=1000)
+    note: str = Field(default="", max_length=1000)
     ts: Optional[str] = None
 
     @field_validator("tier")
