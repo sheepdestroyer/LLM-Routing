@@ -135,7 +135,7 @@ async def _store_session(session_id: str, data: Dict[str, Any], ttl: int = 86400
             logger.warning(f"Failed to store session in Valkey: {e}")
 
     # 2. Always update local cache as primary/fallback
-    _local_session_cache.set(session_id, data)
+    _local_session_cache.set(session_id, data, ttl=ttl)
 
 async def _delete_session(session_id: str):
     """Remove session from Valkey and local cache."""
