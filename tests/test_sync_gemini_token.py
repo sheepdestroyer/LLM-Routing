@@ -7,7 +7,12 @@ import time
 
 # Import the module to test
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+# Dynamic project root discovery
+root = Path(__file__).resolve()
+while root.parent != root and not (root / ".git").exists():
+    root = root.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "scripts"))
 
 import sync_gemini_token
 

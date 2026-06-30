@@ -4,8 +4,12 @@ import sys
 import time
 from pathlib import Path
 
-# Inject router path to allow importing memory_mcp directly
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Dynamic project root discovery
+root = Path(__file__).resolve()
+while root.parent != root and not (root / ".git").exists():
+    root = root.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "router"))
 
 import pytest
 from memory_mcp import (
