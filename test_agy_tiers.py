@@ -85,7 +85,8 @@ async def main():
     conv_ids = {}
     for tier in TIERS:
         success, output, conv_id = await run_tier_test(tier)
-        conv_ids[tier["name"]] = conv_id
+        if success and conv_id:
+            conv_ids[tier["name"]] = conv_id
         if not success:
             print(f"  ⚠️  Tier {tier['name']} failed — subsequent tests may use different model")
 

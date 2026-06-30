@@ -124,7 +124,7 @@ def calculate_metrics(results):
     return accuracy, metrics
 
 def main():
-    print(f"Starting Classifier Accuracy Evaluation Suite...")
+    print("Starting Classifier Accuracy Evaluation Suite...")
     print(f"Querying endpoint: {LLAMA_SERVER_URL}")
     print(f"Loaded {len(test_cases)} test cases.")
     print("-" * 80)
@@ -160,7 +160,7 @@ def main():
     accuracy, metrics = calculate_metrics(results)
     avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
 
-    print(f"OVERALL METRICS:")
+    print("OVERALL METRICS:")
     print(f"Classification Accuracy: {accuracy:.2f}%")
     print(f"Average Latency: {avg_latency:.2f} ms")
     print("-" * 80)
