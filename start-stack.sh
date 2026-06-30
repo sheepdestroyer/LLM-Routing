@@ -31,7 +31,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Ensure openssl is installed if we need to generate passwords/keys
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -101,7 +101,7 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ]; then
+if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -146,6 +146,19 @@ if [ -z "$ROUTER_API_KEY" ]; then
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
 fi
+
+if [ -z "$MINIO_ROOT_USER" ]; then
+    MINIO_ROOT_USER="minio-$(openssl rand -hex 4)"
+    echo "MINIO_ROOT_USER=\"$MINIO_ROOT_USER\"" >> "$ENV_FILE"
+    echo "✓ Generated new MINIO_ROOT_USER and saved to $ENV_FILE"
+fi
+
+if [ -z "$MINIO_ROOT_PASSWORD" ]; then
+    MINIO_ROOT_PASSWORD="$(openssl rand -hex 16)"
+    echo "MINIO_ROOT_PASSWORD=\"$MINIO_ROOT_PASSWORD\"" >> "$ENV_FILE"
+    echo "✓ Generated new MINIO_ROOT_PASSWORD and saved to $ENV_FILE"
+fi
+
 
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
@@ -255,7 +268,7 @@ setup_minio_buckets() {
     # Ensure mc alias points to the correct MinIO S3 API port (9002, not 9000)
     # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
     # not MinIO. We must override it.
-    podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 minioadmin minioadmin 2>/dev/null
+    podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null
 
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
@@ -356,7 +369,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY MINIO_ROOT_USER MINIO_ROOT_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse
 uid = os.getuid()
@@ -371,7 +384,9 @@ placeholders = [
     "NEXTAUTH_SECRET_PLACEHOLDER",
     "SALT_PLACEHOLDER",
     "ENCRYPTION_KEY_PLACEHOLDER",
-    "postgres-password-***"
+    "postgres-password-***",
+    "MINIO_USER_PLACEHOLDER",
+    "MINIO_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -388,6 +403,8 @@ text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
 text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
+text = text.replace("MINIO_USER_PLACEHOLDER", os.environ["MINIO_ROOT_USER"])
+text = text.replace("MINIO_PASSWORD_PLACEHOLDER", os.environ["MINIO_ROOT_PASSWORD"])
 sys.stdout.write(text)
 PY
 }
