@@ -571,7 +571,7 @@ async def _register_ollama_models_in_db(master_key: str):
     ]
 
     def _load_yaml(p):
-        with open(p, "r") as f:
+        with open(p, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     loaded_from_config = False
