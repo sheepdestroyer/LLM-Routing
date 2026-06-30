@@ -84,7 +84,7 @@ async def main():
     print("\n--- Test 1: Independent Tier Tests ---")
     conv_ids = {}
     for tier in TIERS:
-        success, output, conv_id = await test_tier(tier)
+        success, output, conv_id = await run_tier_test(tier)
         conv_ids[tier["name"]] = conv_id
         if not success:
             print(f"  ⚠️  Tier {tier['name']} failed — subsequent tests may use different model")
@@ -101,7 +101,7 @@ async def main():
     if successful_conv:
         print(f"  Continuing conversation {successful_conv[:8]}...")
         for tier in TIERS:
-            success, output, _ = await test_tier(
+            success, output, _ = await run_tier_test(
                 tier, 
                 prompt="continue our conversation, say one more word",
                 conversation_id=successful_conv
@@ -115,7 +115,7 @@ async def main():
     print("\n\n--- Test 3: Proxy Fallback Chain ---")
     proxy_prompt = "what's 2+2? answer in one word"
     for tier in TIERS:
-        success, output, conv_id = await test_tier(tier, prompt=proxy_prompt)
+        success, output, conv_id = await run_tier_test(tier, prompt=proxy_prompt)
         if success:
             print(f"\n  ✅ Proxy would use: {tier['name']}")
             break
