@@ -1744,8 +1744,7 @@ async def chat_completions(request: Request):
                                         }]
                                     }
                                     yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
-                                    # Intentionally yield to the event loop without artificial delay
-                                    await asyncio.sleep(0)
+                                    await asyncio.sleep(0.005)
 
                                 finish_data = {
                                     "id": chunk_id,
