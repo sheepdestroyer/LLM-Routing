@@ -45,6 +45,9 @@ fi
 if [ -z "$POSTGRES_PASSWORD" ]; then
     echo "🔐 Generating secure POSTGRES_PASSWORD..."
     POSTGRES_PASSWORD=$(openssl rand -hex 16)
+    if [ -f "$ENV_FILE" ] && [ -n "$(tail -c1 "$ENV_FILE" 2>/dev/null)" ]; then
+        echo "" >> "$ENV_FILE"
+    fi
     echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\"" >> "$ENV_FILE"
     chmod 600 "$ENV_FILE"
 fi
