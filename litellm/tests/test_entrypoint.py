@@ -9,6 +9,9 @@ entrypoint = importlib.util.module_from_spec(spec)
 
 mock_litellm = MagicMock()
 mock_litellm.__file__ = "/mock/litellm/__init__.py"
+mock_litellm.__path__ = []  # Ensure litellm is treated as a package for sub-module imports
+
+mock_proxy_cli = MagicMock()
 
 with patch('os.path.exists', return_value=False), \
      patch('builtins.print'), \
@@ -19,6 +22,8 @@ with patch('os.path.exists', return_value=False), \
      patch('builtins.open'):
 
     sys.modules['litellm'] = mock_litellm
+    sys.modules['litellm.proxy'] = MagicMock()
+    sys.modules['litellm.proxy.proxy_cli'] = mock_proxy_cli
     spec.loader.exec_module(entrypoint)
 
 def test_check_tcp_port_success():
