@@ -787,3 +787,12 @@ For auto-routing modes, the Triage Router handles failures by silently falling b
 | **Triage Cache Hit** (Repeat query) | **0.0 ms** | RAM In-Memory TTL | Infinite speedup, zero backend requests |
 | **Valkey Gateway Cache Hit** | **< 10 ms** | Redis RAM Cache | Zero provider cost, immediate response |
 
+## 11. NotebookLM Companion Knowledge Base
+
+This project is supported by a dedicated NotebookLM companion notebook:
+* **Notebook Name:** `TriageGate-Architect-KB`
+* **Notebook ID:** `llm-triage-gateway`
+* **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
+
+This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.
+

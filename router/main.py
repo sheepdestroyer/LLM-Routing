@@ -3420,7 +3420,7 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
                     detail=f"Invalid tier type for index {k}: must be int, str, or null."
                 )
 
-        if len(item.note) > 1000:
+        if item.note and len(item.note) > 1000:
             raise HTTPException(
                 status_code=400,
                 detail=f"Note length limit exceeded at index {k}: maximum of 1000 characters allowed."

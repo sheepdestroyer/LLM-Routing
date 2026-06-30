@@ -6,5 +6,5 @@ def run_cmd(cmd):
     # 1. Provide a static list of strings for args rather than a single string.
     # 2. Use shell=False
     args = shlex.split(cmd)
-    result = subprocess.run(args, shell=False, capture_output=True, text=True)
+    result = subprocess.run(args, shell=False, capture_output=True, text=True, check=True, timeout=30)
     return result.stdout.strip()
