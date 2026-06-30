@@ -1671,8 +1671,8 @@ async def proxy_models():
                             "context_length": 524288,
                         },
                     ]
-                    for entry in reversed(routing_models):
-                        data["data"].insert(0, entry)
+                    data["data"] = routing_models + data["data"]
+
                     return JSONResponse(content=data, status_code=200)
             except Exception as parse_err:
                 logger.warning(
