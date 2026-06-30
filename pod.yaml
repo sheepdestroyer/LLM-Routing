@@ -273,9 +273,9 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: S3_FORCE_PATH_STYLE
@@ -307,7 +307,7 @@ spec:
     - name: LANGFUSE_INIT_USER_EMAIL
       value: admin@local.dev
     - name: LANGFUSE_INIT_USER_PASSWORD
-      value: admin-local-pw-2026
+      value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
     image: docker.io/langfuse/langfuse:3
@@ -363,13 +363,13 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: S3_FORCE_PATH_STYLE
       value: 'true'
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
     image: docker.io/langfuse/langfuse-worker:3
@@ -393,9 +393,9 @@ spec:
     - ":9001"
     env:
     - name: MINIO_ROOT_USER
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: MINIO_ROOT_PASSWORD
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     image: docker.io/minio/minio:latest
     livenessProbe:
       httpGet:
