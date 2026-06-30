@@ -78,67 +78,57 @@ def test_memory_entry_missing_fields():
     result3 = _memory_entry({})
     assert result3 is None
 
-def test_parse_key_happy_path():
-    """Test full standard key structure"""
-    key = "memory:local:code::20240101T120000Z:abc123hash"
+@pytest.mark.parametrize(
+    "key, expected",
+    [
+        (
+            "memory:local:code::20240101T120000Z:abc123hash",
+            {"scope": "local", "category": "code", "timestamp": "20240101T120000Z"},
+        ),
+        (
+            "memory:global:general",
+            {"scope": "global", "category": "general", "timestamp": ""},
+        ),
+        (
+            "memory:local::20240101T120000Z:abc123hash",
+            {"scope": "local", "category": "", "timestamp": "20240101T120000Z"},
+        ),
+        (
+            "memory",
+            {"scope": "", "category": "", "timestamp": ""},
+        ),
+        (
+            "",
+            {"scope": "", "category": "", "timestamp": ""},
+        ),
+        (
+            None,
+            {"scope": "", "category": "", "timestamp": ""},
+        ),
+        (
+            "memory:global:category:with:colons::20240101T120000Z:abc123hash",
+            {"scope": "global", "category": "category", "timestamp": "20240101T120000Z"},
+        ),
+        (
+            "memory:global:general::20240101T120000Z",
+            {"scope": "global", "category": "general", "timestamp": "20240101T120000Z"},
+        ),
+    ],
+    ids=[
+        "happy_path",
+        "missing_timestamp_hash",
+        "missing_category",
+        "missing_scope_and_category",
+        "empty_string",
+        "invalid_type",
+        "extra_colons_in_category",
+        "missing_hash_but_has_timestamp",
+    ]
+)
+def test_parse_key(key, expected):
+    """Test _parse_key with various valid and invalid formats."""
     result = _parse_key(key)
-    assert result == {
-        "scope": "local",
-        "category": "code",
-        "timestamp": "20240101T120000Z"
-    }
-
-def test_parse_key_missing_timestamp_hash():
-    """Test key without the :: delimiter section"""
-    key = "memory:global:general"
-    result = _parse_key(key)
-    assert result == {
-        "scope": "global",
-        "category": "general",
-        "timestamp": ""
-    }
-
-def test_parse_key_missing_category():
-    """Test key with missing category"""
-    key = "memory:local::20240101T120000Z:abc123hash"
-    result = _parse_key(key)
-    # The split(":") on "memory:local" results in ["memory", "local"] length 2
-    # So category should be ""
-    assert result == {
-        "scope": "local",
-        "category": "",
-        "timestamp": "20240101T120000Z"
-    }
-
-def test_parse_key_missing_scope_and_category():
-    """Test minimal key prefix"""
-    key = "memory"
-    result = _parse_key(key)
-    assert result == {
-        "scope": "",
-        "category": "",
-        "timestamp": ""
-    }
-
-def test_parse_key_empty_string():
-    """Test completely empty string"""
-    key = ""
-    result = _parse_key(key)
-    assert result == {
-        "scope": "",
-        "category": "",
-        "timestamp": ""
-    }
-
-def test_parse_key_invalid_type():
-    """Test handling of an invalid type that triggers the exception branch"""
-    key = None
-    result = _parse_key(key)
-    assert result == {
-        "scope": "",
-        "category": "",
-        "timestamp": ""
-    }
+    assert result == expected
 
 def test_parse_memory_value_valid_json():
     raw_data = json.dumps({"data": "some data", "tags": ["tag1", "tag2"]})
