@@ -159,6 +159,8 @@ def get_session_count() -> int:
 
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
 
+AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+
 
 def _get_last_conversation_id() -> Optional[str]:
     """Read the last conversation ID for our workspace from agy's cache file."""
