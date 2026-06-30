@@ -80,7 +80,7 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
-| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
+| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
 | **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
@@ -801,5 +801,3 @@ This project is supported by a dedicated NotebookLM companion notebook:
 * **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
 
 This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.
-
-

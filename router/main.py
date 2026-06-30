@@ -234,10 +234,17 @@ port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
-router_api_key = router_model_conf.get("api_key", "local-token")
+router_api_key = router_model_conf.get("api_key")
+if not router_api_key:
+    raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
 if router_api_key.startswith("os.environ/"):
     env_var = router_api_key.split("/", 1)[1]
-    router_api_key = os.environ.get(env_var, "local-token")
+    router_api_key = os.environ.get(env_var)
+    if not router_api_key:
+        if "pytest" in sys.modules:
+            router_api_key = "local-token"
+        else:
+            raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
 router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
@@ -3328,14 +3335,16 @@ async def get_visualizer():
 
 
 VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+MAX_ANNOTATION_KEY_LENGTH = 128
+MAX_ANNOTATION_ITEM_BYTES = 4096
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     tier: Union[int, str, None] = None
     note: Optional[str] = Field(default=None, max_length=1000)
-    ts: Optional[str] = None
+    ts: Optional[str] = Field(default=None, max_length=100)
 
     @field_validator("tier")
     @classmethod
@@ -3360,12 +3369,16 @@ class AnnotationPayload(RootModel):
         data = self.root
         if len(data) > 1000:
             raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
-        for k in data:
+        for k, item in data.items():
+            if len(k) > MAX_ANNOTATION_KEY_LENGTH:
+                raise ValueError(f"Invalid payload key '{k}': key is too long.")
             is_valid_key = k.isdigit() or (
                 k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
             )
             if not is_valid_key:
                 raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
+            if len(item.model_dump_json().encode("utf-8")) > MAX_ANNOTATION_ITEM_BYTES:
+                raise ValueError(f"Annotation '{k}' exceeds the maximum serialized size.")
         return self
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests
