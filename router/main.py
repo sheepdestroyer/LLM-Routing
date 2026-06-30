@@ -3328,6 +3328,8 @@ async def get_visualizer():
 
 
 VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+MAX_ANNOTATION_KEY_LENGTH = 128
+MAX_ANNOTATION_ITEM_BYTES = 4096
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
@@ -3360,12 +3362,16 @@ class AnnotationPayload(RootModel):
         data = self.root
         if len(data) > 1000:
             raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
-        for k in data:
+        for k, item in data.items():
+            if len(k) > MAX_ANNOTATION_KEY_LENGTH:
+                raise ValueError(f"Invalid payload key '{k}': key is too long.")
             is_valid_key = k.isdigit() or (
                 k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
             )
             if not is_valid_key:
                 raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
+            if len(item.model_dump_json().encode("utf-8")) > MAX_ANNOTATION_ITEM_BYTES:
+                raise ValueError(f"Annotation '{k}' exceeds the maximum serialized size.")
         return self
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests

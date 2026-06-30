@@ -5,6 +5,8 @@ import json
 import sys
 import time
 import socket
+import datetime
+from datetime import datetime as original_datetime, timezone
 
 # Load .env into os.environ
 env_path = "/config/.env"
@@ -53,93 +55,51 @@ for i in range(max_wait):
 else:
     print(f"⚠️ Warning: PostgreSQL not ready after {max_wait}s — proceeding anyway")
 
-# Patch spend_management_endpoints.py to support flexible date formats for UI logs page
-import glob
-import sys
-import litellm
+# Patch LiteLLM at runtime to support flexible date formats
+# Based on PR feedback, we patch datetime.datetime globally for robustness.
+# We ensure naive/aware safety by trying the original format first.
+class RobustDatetime(original_datetime):
+    """A datetime subclass that handles flexible date format parsing in strptime."""
+    @classmethod
+    def strptime(cls, date_str: str, fmt: str) -> original_datetime:
+        if not isinstance(date_str, str):
+            return original_datetime.strptime(date_str, fmt)
 
-litellm_path = os.path.dirname(litellm.__file__)
-endpoints_paths = [
-    os.path.join(litellm_path, "proxy/spend_tracking/spend_management_endpoints.py"),
-    *glob.glob("/app/.venv/lib/python*/site-packages/litellm/proxy/spend_tracking/spend_management_endpoints.py")
-]
-
-for endpoints_path in endpoints_paths:
-    if os.path.exists(endpoints_path):
-        print(f"🩹 Patching {endpoints_path} for flexible date formats...")
-        sys.stdout.flush()
+        # 1. Try the original format first to maintain compatibility (returning naive if expected)
         try:
-            with open(endpoints_path, "r") as f:
-                code = f.read()
-            
-            target1 = 'is_v2 = "/spend/logs/v2" in get_request_route(request)\n        formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d"] if is_v2 else ["%Y-%m-%d %H:%M:%S"]'
-            replacement1 = '''is_v2 = "/spend/logs/v2" in get_request_route(request)
+            return original_datetime.strptime(date_str, fmt)
+        except (ValueError, TypeError):
+            pass
+
+        # 2. Try flexible fallbacks if the original format failed
         formats = [
             "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
             "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
             "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
             "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S%z",
             "%Y-%m-%dT%H:%M:%S%z"
-        ]'''
-            
-            target2 = '''    start_date_obj: Optional[datetime] = None
-    end_date_obj: Optional[datetime] = None
-    if start_date is not None:
-        start_date_obj = datetime.strptime(start_date, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc
-        )
-    if end_date is not None:
-        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc
-        )'''
-            replacement2 = '''    start_date_obj: Optional[datetime] = None
-    end_date_obj: Optional[datetime] = None
-    def _parse_detail_date(date_str: str) -> datetime:
-        for fmt in [
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
-            "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
-            "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S%z"
-        ]:
+        ]
+        for f in formats:
+            if f == fmt:
+                continue
             try:
-                dt = datetime.strptime(date_str, fmt)
+                dt = original_datetime.strptime(date_str, f)
+                # For fallbacks, ensure we return a UTC-aware datetime
                 if dt.tzinfo is not None:
                     return dt.astimezone(timezone.utc)
                 return dt.replace(tzinfo=timezone.utc)
-            except ValueError:
+            except (ValueError, TypeError):
                 continue
-        raise ValueError(f"Invalid date format: {date_str}")
 
-    if start_date is not None:
-        start_date_obj = _parse_detail_date(start_date)
-    if end_date is not None:
-        end_date_obj = _parse_detail_date(end_date)'''
-            
-            patched = False
-            if target1 in code:
-                code = code.replace(target1, replacement1)
-                print("   ✓ Patched list endpoint date parsing")
-                patched = True
-            else:
-                print("   ⚠ Target 1 not found (already patched?)")
-                
-            if target2 in code:
-                code = code.replace(target2, replacement2)
-                print("   ✓ Patched detail endpoint date parsing")
-                patched = True
-            else:
-                print("   ⚠ Target 2 not found (already patched?)")
-                
-            if patched:
-                with open(endpoints_path, "w") as f:
-                    f.write(code)
-            sys.stdout.flush()
-                
-        except Exception as e:
-            print(f"❌ Failed to patch {endpoints_path}: {e}")
-            sys.stdout.flush()
+        # Fallback to original behavior to raise expected ValueError if all formats fail
+        return original_datetime.strptime(date_str, fmt)
 
-# Exec into litellm
-os.execvp("litellm", ["litellm", "--config", "/app/config.yaml", "--port", "4000"])
+print("🩹 Applying global runtime patch for flexible date formats...")
+datetime.datetime = RobustDatetime
+sys.stdout.flush()
 
+# Start LiteLLM Proxy
+import litellm
+from litellm.proxy.proxy_cli import run_server
+sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
+run_server()
