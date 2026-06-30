@@ -79,6 +79,17 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
+if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ]; then
+    if ! command -v openssl &>/dev/null; then
+        echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
+        exit 1
+    fi
+fi
+
+# Ensure the env file exists and has secure permissions (owner read/write only)
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
 if [ -z "$NEXTAUTH_SECRET" ]; then
     NEXTAUTH_SECRET="$(openssl rand -base64 32)"
     echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
