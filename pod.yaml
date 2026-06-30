@@ -372,7 +372,7 @@ spec:
       value: minioadmin
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse-worker:3.178.0
+    image: langfuse/langfuse-worker:3.202.1
     livenessProbe:
       exec:
         command:
