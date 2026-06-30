@@ -8,13 +8,13 @@ AGY = os.path.expanduser("~/.local/bin/agy")
 async def test():
     env = os.environ.copy()
     cmd = [AGY, "--print", "say hi"]
-    
+
     proc = await asyncio.create_subprocess_exec(
         *cmd, env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    
+
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
         print(f"returncode: {proc.returncode}")
@@ -23,7 +23,7 @@ async def test():
     except asyncio.TimeoutError:
         proc.kill()
         print("TIMEOUT")
-    
+
     # Also check the log for recent quota lines
     log_path = os.path.expanduser("~/.gemini/antigravity-cli/cli.log")
     if os.path.exists(log_path):

@@ -22,7 +22,7 @@ async def main():
     print("Testing Stream Latency (TTFT Verification)")
     print("=" * 60)
     print("Sending streaming request to triage router on port 5000...")
-    
+
     start_time = time.time()
     first_token_time = None
     chunks_received = 0
@@ -60,21 +60,21 @@ async def main():
                                             first_token_time = time.time()
                                             ttft = (first_token_time - start_time) * 1000
                                             print(f"🚀 Time-To-First-Token (TTFT): {ttft:.0f} ms")
-                                        
+
                                         full_response.append(content)
                                         # Print character to show live streaming
                                         print(content, end="", flush=True)
                             except Exception as e:
                                 # Ignore parse errors for partial chunks
                                 pass
-                                
+
         end_time = time.time()
         elapsed = end_time - start_time
-        print(f"\n\nStream Finished!")
+        print("\n\nStream Finished!")
         print(f"Total time: {elapsed:.2f} s")
         print(f"Total chunks received: {chunks_received}")
         print(f"Story length: {len(''.join(full_response))} characters")
-        
+
         # Verify TTFT is within acceptable limits for a streamed response (typically <3-4s, unlike the 8s+ legacy TTFT)
         if first_token_time is not None:
             ttft_ms = (first_token_time - start_time) * 1000
@@ -84,7 +84,7 @@ async def main():
                 print("⚠️  TTFT is high, check daemon buffering.")
         else:
             print("❌ No tokens received in stream.")
-            
+
     except Exception as e:
         print(f"❌ Exception occurred: {e}")
 
