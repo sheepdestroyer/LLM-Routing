@@ -417,8 +417,6 @@ async def sync_adaptive_router_roster(master_key: str):
     free_models = []
     model_contexts = {}
     model_supported_params = {}
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
@@ -1207,8 +1205,7 @@ def _load_aa_scores():
 
 def compute_free_model_score(m: dict) -> float:
     """Return AA agentic index score, or a low default for unknown models."""
-    if not _AA_SCORES_LOADED:
-        raise RuntimeError("AA scores cache must be loaded before calling compute_free_model_score")
+    _load_aa_scores()
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
@@ -1243,10 +1240,6 @@ def _save_best_model_to_disk(best_model: dict) -> None:
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
-
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
-
     now = time.time()
     
     # Check if cache is still valid
@@ -1755,8 +1748,7 @@ async def chat_completions(request: Request):
                                         }]
                                     }
                                     yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
-                                    # Intentionally yield to the event loop without artificial delay
-                                    await asyncio.sleep(0)
+                                    await asyncio.sleep(0.005)
 
                                 finish_data = {
                                     "id": chunk_id,
