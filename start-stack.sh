@@ -90,14 +90,32 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
     exit 1
 fi
 
+if [ -z "$NEXTAUTH_SECRET" ]; then
+    NEXTAUTH_SECRET="$(openssl rand -hex 32)"
+    echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
+    echo "✓ Generated new NextAuth secret and saved to $ENV_FILE"
+fi
+
+if [ -z "$NEXTAUTH_SECRET" ]; then
+    echo "❌ Error: NEXTAUTH_SECRET is not set and could not be generated."
+    exit 1
+fi
+
+if [ -z "$LANGFUSE_ENCRYPTION_KEY" ]; then
+    LANGFUSE_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+    echo "LANGFUSE_ENCRYPTION_KEY=\"$LANGFUSE_ENCRYPTION_KEY\"" >> "$ENV_FILE"
+    echo "✓ Generated new Langfuse encryption key and saved to $ENV_FILE"
+fi
+
+if [ -z "$LANGFUSE_ENCRYPTION_KEY" ]; then
+    echo "❌ Error: LANGFUSE_ENCRYPTION_KEY is not set and could not be generated."
+    exit 1
+fi
+
 if [ -z "$LANGFUSE_SALT" ]; then
-    if command -v openssl >/dev/null 2>&1; then
-        LANGFUSE_SALT="$(openssl rand -hex 32)"
-        echo "LANGFUSE_SALT=\"$LANGFUSE_SALT\"" >> "$ENV_FILE"
-        echo "✓ Generated new Langfuse salt and saved to $ENV_FILE"
-    else
-        echo "⚠️ Warning: openssl command not found. Cannot generate LANGFUSE_SALT."
-    fi
+    LANGFUSE_SALT="$(openssl rand -hex 32)"
+    echo "LANGFUSE_SALT=\"$LANGFUSE_SALT\"" >> "$ENV_FILE"
+    echo "✓ Generated new Langfuse salt and saved to $ENV_FILE"
 fi
 
 if [ -z "$LANGFUSE_SALT" ]; then
@@ -313,7 +331,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY LANGFUSE_SALT
+    export WORKDIR HOME LITELLM_MASTER_KEY LANGFUSE_SALT NEXTAUTH_SECRET LANGFUSE_ENCRYPTION_KEY
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys
 uid = os.getuid()
@@ -326,6 +344,8 @@ placeholders = [
     "sk-lit...33bf",
     "postgres:***",
     "LANGFUSE_SALT_PLACEHOLDER"
+    ,"NEXTAUTH_SECRET_PLACEHOLDER"
+    ,"LANGFUSE_ENCRYPTION_KEY_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -336,6 +356,8 @@ text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
 text = text.replace("LANGFUSE_SALT_PLACEHOLDER", os.environ["LANGFUSE_SALT"])
+    ,"NEXTAUTH_SECRET_PLACEHOLDER"
+    ,"LANGFUSE_ENCRYPTION_KEY_PLACEHOLDER"
 text = text.replace("postgres:***", "postgres:postgres-local-pw-2026")
 sys.stdout.write(text)
 PY
