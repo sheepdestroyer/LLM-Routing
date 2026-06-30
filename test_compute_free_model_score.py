@@ -46,3 +46,10 @@ def test_compute_free_model_score_file_not_found():
         assert score == 25.0
         assert router_main._AA_SCORES_LOADED is True
         assert router_main._AA_SCORES_CACHE == {}
+
+def test_compute_free_model_score_unloaded():
+    """Test that it raises RuntimeError if cache is not loaded."""
+    import pytest
+    from router.main import compute_free_model_score
+    with pytest.raises(RuntimeError, match="AA scores cache must be loaded before calling compute_free_model_score"):
+        compute_free_model_score({"id": "model-a"})

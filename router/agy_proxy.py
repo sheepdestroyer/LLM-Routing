@@ -24,8 +24,7 @@ import logging
 import os
 import time
 import httpx
-from typing import Optional, Protocol, runtime_checkable, Dict, Any
-from redis_client import get_redis
+from typing import Optional, Protocol, runtime_checkable
 
 @runtime_checkable
 class CooldownPersistence(Protocol):
@@ -64,100 +63,9 @@ AGY_FALLBACK_TIERS = [
 AGY_TIMEOUT_SECS = 120
 AGY_TOTAL_TIMEOUT_SECS = 300
 
-class BoundedSessionStore:
-    """A simple in-memory bounded session store with TTL (Option B fallback)."""
-    def __init__(self, maxsize: int = 10000, ttl: int = 86400):
-        self.maxsize = maxsize
-        self.ttl = ttl
-        self.warn_threshold = 5000
-        self._has_warned = False
-        self._data: Dict[str, Dict[str, Any]] = {}
-        self._expiry: Dict[str, float] = {}
-
-    @property
-    def count(self) -> int:
-        """Return the number of active sessions."""
-        return len(self._data)
-
-    def get(self, key: str) -> Optional[Dict[str, Any]]:
-        now = time.time()
-        if key in self._data:
-            if now < self._expiry.get(key, 0):
-                return self._data[key]
-            else:
-                self.delete(key)
-        return None
-
-    def set(self, key: str, value: Dict[str, Any], ttl: Optional[int] = None):
-        now = time.time()
-        current_size = len(self._data)
-
-        if current_size >= self.warn_threshold and not self._has_warned:
-            logger.warning(f"agy proxy: high session count detected ({current_size}). Memory growth may increase.")
-            self._has_warned = True
-        elif current_size < self.warn_threshold:
-            self._has_warned = False
-
-        if current_size >= self.maxsize and key not in self._data:
-            # Evict oldest by first key in dict (Python 3.7+ dict is ordered)
-            oldest_key = next(iter(self._data))
-            self.delete(oldest_key)
-
-        item_ttl = ttl if ttl is not None else self.ttl
-        self._data[key] = value
-        self._expiry[key] = now + item_ttl
-
-    def delete(self, key: str):
-        self._data.pop(key, None)
-        self._expiry.pop(key, None)
-
-_local_session_cache = BoundedSessionStore()
-
-async def _get_session(session_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve session data from Valkey (Option A) or local cache (Option B)."""
-    # 1. Try Valkey (Redis)
-    redis = get_redis()
-    if redis:
-        try:
-            raw = await redis.get(f"agy:session:{session_id}")
-            if raw:
-                return json.loads(raw)
-        except Exception as e:
-            logger.warning(f"Failed to get session from Valkey: {e}")
-
-    # 2. Fallback to local cache
-    return _local_session_cache.get(session_id)
-
-async def _store_session(session_id: str, data: Dict[str, Any], ttl: int = 86400):
-    """Store session data in Valkey (Option A) and local cache (Option B)."""
-    # 1. Store in Valkey (Redis)
-    redis = get_redis()
-    if redis:
-        try:
-            await redis.set(f"agy:session:{session_id}", json.dumps(data), ex=ttl)
-        except Exception as e:
-            logger.warning(f"Failed to store session in Valkey: {e}")
-
-    # 2. Always update local cache as primary/fallback
-    _local_session_cache.set(session_id, data, ttl=ttl)
-
-async def _delete_session(session_id: str):
-    """Remove session from Valkey and local cache."""
-    redis = get_redis()
-    if redis:
-        try:
-            await redis.delete(f"agy:session:{session_id}")
-        except Exception as e:
-            logger.warning(f"Failed to delete session from Valkey: {e}")
-
-    _local_session_cache.delete(session_id)
-
-def get_session_count() -> int:
-    """Return the current number of active sessions in the local cache."""
-    return _local_session_cache.count
-
-
-AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+# In-memory session store: {router_session_id: agy_conversation_data}
+# agy_conversation_data = {"conversation_id": str, "current_tier_index": int}
+_session_store: dict = {}
 
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
 
@@ -357,13 +265,12 @@ async def try_agy_proxy(prompt: str, messages: list = None,
         # Check if we have an existing session with a conversation ID
         existing_conv_id = None
         start_tier_index = 0
-        if session_id:
-            session = await _get_session(session_id)
-            if session:
-                existing_conv_id = session.get("conversation_id")
-                start_tier_index = session.get("current_tier_index", 0)
-                conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
-                logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
+        if session_id and session_id in _session_store:
+            session = _session_store[session_id]
+            existing_conv_id = session.get("conversation_id")
+            start_tier_index = session.get("current_tier_index", 0)
+            conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
+            logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
         
         start_time = time.time()
         last_conv_id = existing_conv_id
@@ -468,10 +375,10 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     elif init_data.get("type") == "conversation_id" and init_data.get("id"):
                         current_conv_id = init_data["id"]
                         if session_id:
-                            await _store_session(session_id, {
+                            _session_store[session_id] = {
                                 "conversation_id": current_conv_id,
                                 "current_tier_index": actual_tier_idx,
-                            })
+                            }
                     
                     try:
                         async for line in lines_iter:
@@ -483,10 +390,10 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                             elif data.get("type") == "conversation_id" and data.get("id"):
                                 current_conv_id = data["id"]
                                 if session_id:
-                                    await _store_session(session_id, {
+                                    _session_store[session_id] = {
                                         "conversation_id": current_conv_id,
                                         "current_tier_index": actual_tier_idx,
-                                    })
+                                    }
                     finally:
                         await stream_resp.aclose()
                         if close_client:
@@ -541,10 +448,10 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     
                     # Save session state for continuation
                     if session_id and last_conv_id is not None:
-                        await _store_session(session_id, {
+                        _session_store[session_id] = {
                             "conversation_id": last_conv_id,
                             "current_tier_index": actual_tier_idx,
-                        })
+                        }
                         logger.info(f"agy proxy: saved session {session_id[:8]}..."
                                     f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}")
                     
@@ -566,8 +473,8 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     continue
 
         # All tiers exhausted — clean up session
-        if session_id:
-            await _delete_session(session_id)
+        if session_id and session_id in _session_store:
+            del _session_store[session_id]
         
         logger.warning("agy proxy: all tiers exhausted — falling back to LiteLLM")
         return None
