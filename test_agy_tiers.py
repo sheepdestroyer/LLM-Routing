@@ -17,11 +17,13 @@ TIERS = [
     {"name": "Claude Opus 4.6",     "override": "claude-opus-4-6@default"},
 ]
 
-async def test_tier(tier, prompt="say hello in one word", conversation_id=None):
+async def run_tier_test(tier, prompt="say hello in one word", conversation_id=None):
     """Test a single agy tier and return (success, output, conv_id)."""
     env = os.environ.copy()
     if tier["override"]:
         env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = tier["override"]
+    else:
+        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
 
     cmd = [AGY]
     if conversation_id:
@@ -59,7 +61,7 @@ async def test_tier(tier, prompt="say hello in one word", conversation_id=None):
         if "RESOURCE_EXHAUSTED" in stderr or "code 429" in stderr:
             print(f"❌ QUOTA EXHAUSTED ({elapsed:.1f}s)")
             print(f"     stderr: {stderr[:100]}")
-            return False, None, conv_id
+            return False, None, None
 
         if stdout:
             print(f"✅ OK ({elapsed:.1f}s, {len(stdout)} chars)")
@@ -68,10 +70,11 @@ async def test_tier(tier, prompt="say hello in one word", conversation_id=None):
         else:
             print(f"⚠️  EMPTY RESPONSE ({elapsed:.1f}s)")
             print(f"     stderr: {stderr[:200]}")
-            return False, None, conv_id
+            return False, None, None
 
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.communicate()
         print(f"❌ TIMEOUT (30s)")
         return False, None, None
 
@@ -84,8 +87,9 @@ async def main():
     print("\n--- Test 1: Independent Tier Tests ---")
     conv_ids = {}
     for tier in TIERS:
-        success, output, conv_id = await test_tier(tier)
-        conv_ids[tier["name"]] = conv_id
+        success, output, conv_id = await run_tier_test(tier)
+        if success and conv_id:
+            conv_ids[tier["name"]] = conv_id
         if not success:
             print(f"  ⚠️  Tier {tier['name']} failed — subsequent tests may use different model")
 
@@ -101,7 +105,7 @@ async def main():
     if successful_conv:
         print(f"  Continuing conversation {successful_conv[:8]}...")
         for tier in TIERS:
-            success, output, _ = await test_tier(
+            success, output, _ = await run_tier_test(
                 tier,
                 prompt="continue our conversation, say one more word",
                 conversation_id=successful_conv
@@ -115,7 +119,7 @@ async def main():
     print("\n\n--- Test 3: Proxy Fallback Chain ---")
     proxy_prompt = "what's 2+2? answer in one word"
     for tier in TIERS:
-        success, output, conv_id = await test_tier(tier, prompt=proxy_prompt)
+        success, output, conv_id = await run_tier_test(tier, prompt=proxy_prompt)
         if success:
             print(f"\n  ✅ Proxy would use: {tier['name']}")
             break
