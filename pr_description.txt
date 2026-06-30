@@ -1,13 +1,3 @@
-🎯 **What:**
-The testing gap addressed is the lack of unit tests for the `get_pie_chart_gradient` visualization utility in `router/main.py`. This utility generates a CSS conic gradient based on global state (`stats["tool_tokens"]`).
-
-📊 **Coverage:**
-What scenarios are now tested:
-- Generation of an empty gradient when all tool counts are zero.
-- Proper fallback assignment of an unknown tool fallback color `#94a3b8`.
-- 100% boundary scenarios for single tool distributions.
-- Variable percentage tracking across multiple distinct concurrent tools.
-
-✨ **Result:**
-The improvement in test coverage isolates the gradient calculation logic via global state monkeypatching using pytest features, providing a safety net to visualize token distributions correctly within the UI dashboards.
-
+🎯 **What:** Removed the hardcoded PostgreSQL password (`postgres-local-pw-2026`) from `pod.yaml` and replaced it with a dynamic environment variable insertion (`postgres-password-***`) that `start-stack.sh` replaces at runtime. Also addressed two CI security warnings in `get_pr_status.py` regarding command injection vulnerabilities from `subprocess.run()`.
+⚠️ **Risk:** Storing credentials in plain text in configuration files (like `pod.yaml`) can lead to unauthorized access to the database or unauthorized operations if the codebase is exposed or shared. It creates a critical security risk. The `subprocess.run()` warnings identified unsafe shell execution behavior.
+🛡️ **Solution:** Updated `pod.yaml` to use a generic placeholder instead of the password. Modified `start-stack.sh` to load or securely generate (`openssl rand -hex 16`) a password from the `.env` file, and securely inject it at runtime into the `pod.yaml` file. Modified `get_pr_status.py` to use `shlex.split()` with a static array of arguments and set `shell=False` to securely execute shell commands.
