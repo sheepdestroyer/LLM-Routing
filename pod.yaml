@@ -158,7 +158,7 @@ spec:
     - name: POSTGRES_USER
       value: postgres
     - name: POSTGRES_PASSWORD
-      value: postgres-local-pw-2026
+      value: postgres-password-***
     - name: POSTGRES_DB
       value: langfuse
     image: docker.io/pgvector/pgvector:pg18
