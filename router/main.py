@@ -1599,7 +1599,7 @@ async def proxy_memory(request: Request, path: str = ""):
         )
     except Exception as e:
         logger.error(f"Failed to proxy memory request: {e}")
-        raise HTTPException(status_code=502, detail=f"Memory proxy failed: {e}")
+        raise HTTPException(status_code=502, detail="Memory proxy failed")
 
 
 @app.get("/v1/models")
@@ -1691,7 +1691,7 @@ async def proxy_models():
         )
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
-        raise HTTPException(status_code=502, detail=f"Model proxy failed: {e}")
+        raise HTTPException(status_code=502, detail="Model proxy failed")
 
 
 @app.post("/v1/chat/completions")
@@ -2008,12 +2008,12 @@ async def chat_completions(request: Request):
                                         pass
                             except Exception as stream_err:
                                 logger.error(
-                                    f"Error during native agy stream generation: {stream_err}"
+                                    f"Error during native agy stream generation: {type(stream_err).__name__}"
                                 )
                                 if agy_span_obj:
                                     try:
                                         agy_span_obj.end(
-                                            output={"error": str(stream_err)[:200]},
+                                            output={"error": type(stream_err).__name__},
                                             metadata={"status": "failed"},
                                         )
                                     except Exception:
@@ -2129,12 +2129,12 @@ async def chat_completions(request: Request):
             if agy_span_obj:
                 try:
                     agy_span_obj.end(
-                        output={"error": str(e)[:200]},
+                        output={"error": type(e).__name__},
                         metadata={"status": "failed"},
                     )
                 except Exception:
                     pass
-            logger.error(f"agy proxy failed: {e}, falling back to LiteLLM")
+            logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
 
     original_target_model = target_model
 
@@ -2408,7 +2408,7 @@ async def chat_completions(request: Request):
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
             raise HTTPException(
-                status_code=502, detail=f"Proxy call failed: {exc}"
+                status_code=502, detail="Proxy call failed"
             ) from exc
 
     if should_try_ollama:
