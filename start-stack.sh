@@ -91,9 +91,13 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_SALT" ]; then
-    LANGFUSE_SALT="$(openssl rand -hex 32)"
-    echo "LANGFUSE_SALT=\"$LANGFUSE_SALT\"" >> "$ENV_FILE"
-    echo "✓ Generated new Langfuse salt and saved to $ENV_FILE"
+    if command -v openssl >/dev/null 2>&1; then
+        LANGFUSE_SALT="$(openssl rand -hex 32)"
+        echo "LANGFUSE_SALT=\"$LANGFUSE_SALT\"" >> "$ENV_FILE"
+        echo "✓ Generated new Langfuse salt and saved to $ENV_FILE"
+    else
+        echo "⚠️ Warning: openssl command not found. Cannot generate LANGFUSE_SALT."
+    fi
 fi
 
 if [ -z "$LANGFUSE_SALT" ]; then
