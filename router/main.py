@@ -414,8 +414,6 @@ async def sync_adaptive_router_roster(master_key: str):
     free_models = []
     model_contexts = {}
     model_supported_params = {}
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
     for m in all_models:
         mid = m.get("id", "")
         # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
@@ -573,12 +571,12 @@ async def _register_ollama_models_in_db(master_key: str):
     ]
 
     def _load_yaml(p):
-        with open(p, "r") as f:
+        with open(p, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     loaded_from_config = False
     for path in config_paths_to_try:
-        if path and await asyncio.to_thread(os.path.exists, path):
+        if path:
             try:
                 litellm_config = await asyncio.to_thread(_load_yaml, path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
@@ -745,13 +743,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LLM Triage Router", lifespan=lifespan)
 
 async def check_tcp_port(ip: str, port: int) -> bool:
-    """Verifies if a TCP port is open locally."""
+    """Verifies if a TCP port is open locally asynchronously."""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        return result == 0
+        _, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=0.5)
+        writer.close()
+        await writer.wait_closed()
+        return True
     except Exception:
         return False
 
@@ -1207,8 +1204,7 @@ def _load_aa_scores():
 
 def compute_free_model_score(m: dict) -> float:
     """Return AA agentic index score, or a low default for unknown models."""
-    if not _AA_SCORES_LOADED:
-        raise RuntimeError("AA scores cache must be loaded before calling compute_free_model_score")
+    _load_aa_scores()
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
@@ -1243,10 +1239,6 @@ def _save_best_model_to_disk(best_model: dict) -> None:
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
-
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
-
     now = time.time()
     
     # Check if cache is still valid
@@ -1755,8 +1747,7 @@ async def chat_completions(request: Request):
                                         }]
                                     }
                                     yield f"data: {json.dumps(chunk_data)}\n\n".encode("utf-8")
-                                    # Intentionally yield to the event loop without artificial delay
-                                    await asyncio.sleep(0)
+                                    await asyncio.sleep(0.005)
 
                                 finish_data = {
                                     "id": chunk_id,
@@ -2167,10 +2158,12 @@ async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     await sync_cooldowns_from_valkey()
     # 1. Run live health checks
-    valkey_status = await check_tcp_port("127.0.0.1", 6379)
-    litellm_status = await check_http_endpoint("http://127.0.0.1:4000/")
-    llama_server_status = await check_http_endpoint("http://127.0.0.1:8080/health")
-    langfuse_status = await check_http_endpoint("http://127.0.0.1:3001")
+    valkey_status, litellm_status, llama_server_status, langfuse_status = await asyncio.gather(
+        check_tcp_port("127.0.0.1", 6379),
+        check_http_endpoint("http://127.0.0.1:4000/"),
+        check_http_endpoint("http://127.0.0.1:8080/health"),
+        check_http_endpoint("http://127.0.0.1:3001")
+    )
 
     # 1c. Check Gemini OAuth token status
     oauth_status = await asyncio.to_thread(get_gemini_oauth_status)
