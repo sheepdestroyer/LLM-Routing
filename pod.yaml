@@ -236,8 +236,14 @@ spec:
       timeoutSeconds: 2
     name: valkey-lf
     readinessProbe:
-      tcpSocket:
-        port: 6380
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - "6380"
+        - -a
+        - langfuse-redis-2026
+        - ping
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -253,9 +259,9 @@ spec:
     - name: NEXTAUTH_URL
       value: http://localhost:3001
     - name: SALT
-      value: LANGFUSE_SALT_PLACEHOLDER
+      value: SALT_PLACEHOLDER
     - name: ENCRYPTION_KEY
-      value: LANGFUSE_ENCRYPTION_KEY_PLACEHOLDER
+      value: ENCRYPTION_KEY_PLACEHOLDER
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
