@@ -128,8 +128,7 @@ async def test_sync_success(mock_get_http_client, mock_purge, mock_http_client):
 
     # Verify OpenRouter GET
     mock_http_client.get.assert_called_once()
-    assert "https://openrouter.ai/api/v1/models" in mock_http_client.get.call_args[0]
-
+    mock_http_client.get.assert_called_once_with("https://openrouter.ai/api/v1/models", timeout=5.0)
     # Verify purge is called since DATABASE_URL is mocked
     mock_purge.assert_called_once_with("postgresql://test", "agent-%")
 
