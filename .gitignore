@@ -32,12 +32,8 @@ router/free_models_roster.json
 # agent artifacts
 .hermes/
 .jules/
-.local/
 workdirs/
 pr_description.txt
 
 # Dataset work in progress
 data/
-.cache/
-test_output*.log
-
