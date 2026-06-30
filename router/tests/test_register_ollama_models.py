@@ -94,9 +94,10 @@ model_list:
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
+@patch("router.main._purge_stale_deployments", new_callable=AsyncMock)
 @patch("os.path.exists")
 async def test_register_ollama_models_in_db_post_failures(
-    mock_exists, mock_get_client
+    mock_exists, mock_purge, mock_get_client
 ):
     """Test handling of failed POST requests."""
     mock_exists.return_value = False # Static fallback
