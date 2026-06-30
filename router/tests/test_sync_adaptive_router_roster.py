@@ -96,6 +96,24 @@ async def test_sync_http_get_exception(mock_get_http_client):
 async def test_sync_no_free_models(mock_get_http_client):
     """Test early return when no free models are found."""
     mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [
+            {
+                "id": "paid-model",
+                "supported_parameters": ["tools"],
+                "pricing": {"prompt": "0.01", "completion": "0.02"}
+            }
+        ]
+    }
+    mock_client.get.return_value = mock_response
+    mock_get_http_client.return_value = mock_client
+
+    await sync_adaptive_router_roster("dummy-key")
+
+    mock_client.get.assert_called_once()
+    mock_client.post.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -129,24 +147,6 @@ async def test_sync_free_models_all_filtered(mock_get_http_client):
     mock_post_response.status_code = 200
     mock_client.post.return_value = mock_post_response
 
-    mock_get_http_client.return_value = mock_client
-
-    await sync_adaptive_router_roster("dummy-key")
-
-    mock_client.get.assert_called_once()
-    mock_client.post.assert_not_called()
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "data": [
-            {
-                "id": "paid-model",
-                "supported_parameters": ["tools"],
-                "pricing": {"prompt": "0.01", "completion": "0.02"}
-            }
-        ]
-    }
-    mock_client.get.return_value = mock_response
     mock_get_http_client.return_value = mock_client
 
     await sync_adaptive_router_roster("dummy-key")
