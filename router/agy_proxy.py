@@ -74,6 +74,11 @@ class BoundedSessionStore:
         self._data: Dict[str, Dict[str, Any]] = {}
         self._expiry: Dict[str, float] = {}
 
+    @property
+    def count(self) -> int:
+        """Return the number of active sessions."""
+        return len(self._data)
+
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         now = time.time()
         if key in self._data:
@@ -84,8 +89,6 @@ class BoundedSessionStore:
         return None
 
     def set(self, key: str, value: Dict[str, Any], ttl: Optional[int] = None):
-        if self.maxsize <= 0:
-            return
         now = time.time()
         current_size = len(self._data)
 
@@ -95,13 +98,14 @@ class BoundedSessionStore:
         elif current_size < self.warn_threshold:
             self._has_warned = False
 
-        if current_size >= self.maxsize and key not in self._data and self._data:
+        if current_size >= self.maxsize and key not in self._data:
             # Evict oldest by first key in dict (Python 3.7+ dict is ordered)
             oldest_key = next(iter(self._data))
             self.delete(oldest_key)
 
+        item_ttl = ttl if ttl is not None else self.ttl
         self._data[key] = value
-        self._expiry[key] = now + (ttl if ttl is not None else self.ttl)
+        self._expiry[key] = now + item_ttl
 
     def delete(self, key: str):
         self._data.pop(key, None)
@@ -117,9 +121,7 @@ async def _get_session(session_id: str) -> Optional[Dict[str, Any]]:
         try:
             raw = await redis.get(f"agy:session:{session_id}")
             if raw:
-                data = json.loads(raw)
-                _local_session_cache.set(session_id, data)
-                return data
+                return json.loads(raw)
         except Exception as e:
             logger.warning(f"Failed to get session from Valkey: {e}")
 
@@ -152,7 +154,7 @@ async def _delete_session(session_id: str):
 
 def get_session_count() -> int:
     """Return the current number of active sessions in the local cache."""
-    return len(_local_session_cache._data)
+    return _local_session_cache.count
 
 
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
