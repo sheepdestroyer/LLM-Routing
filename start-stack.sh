@@ -45,7 +45,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
         echo -n "Please enter your OpenRouter API Key (input will be hidden): "
         read -rs OPENROUTER_API_KEY
         echo ""
-        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" > "$ENV_FILE"
+        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
     else
