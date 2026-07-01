@@ -20,6 +20,7 @@ Fallback Tiers (same conversation, different model):
 """
 
 import json
+import aiofiles
 import logging
 import os
 import aiofiles
@@ -348,8 +349,9 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     rc = 0 if raw_rc is None else raw_rc
                     raw_stderr = first_data.get("stderr", "")
                     stderr_content = "" if raw_stderr is None else raw_stderr
-                    if await _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
-                        if await _is_quota_exhausted(rc, "", stderr_content):
+                    is_exhausted = await _is_quota_exhausted(rc, "", stderr_content)
+                    if is_exhausted or rc != 0:
+                        if is_exhausted:
                             tier_breaker.record_failure()
                             if cooldown_persistence is not None:
                                 try:

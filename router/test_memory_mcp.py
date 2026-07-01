@@ -4,7 +4,7 @@ import sys
 import json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memory_mcp import _make_key, SCOPE_GLOBAL, SCOPE_LOCAL, PREFIX, _memory_value, _parse_memory_value
+from memory_mcp import _is_memory_key, _make_key, SCOPE_GLOBAL, SCOPE_LOCAL, PREFIX, _memory_value, _parse_memory_value
 
 def test_make_key_global():
     """Test generating a key for global scope."""
@@ -129,3 +129,19 @@ def test_parse_memory_value_invalid_json_string():
     """Test _parse_memory_value with invalid JSON string."""
     result = _parse_memory_value("this is not a valid json string")
     assert result == {"data": "this is not a valid json string", "tags": []}
+
+def test_is_memory_key_true():
+    """Test _is_memory_key with a valid memory key prefix."""
+    assert _is_memory_key(f"{PREFIX}:global:test_cat::123:abc") is True
+
+def test_is_memory_key_false_wrong_prefix():
+    """Test _is_memory_key with an incorrect prefix."""
+    assert _is_memory_key("not_memory:global:test_cat::123:abc") is False
+
+def test_is_memory_key_empty():
+    """Test _is_memory_key with an empty string."""
+    assert _is_memory_key("") is False
+
+def test_is_memory_key_none_or_non_string():
+    """Test _is_memory_key with None or non-string inputs."""
+    assert _is_memory_key(None) is False
