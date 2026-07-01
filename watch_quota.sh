@@ -2,8 +2,7 @@
 # Polling loop — checks quota every 30s and runs tests when reset
 # Log file to watch
 LOG_FILE="$HOME/.gemini/antigravity-cli/cli.log"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEST_SCRIPT="$SCRIPT_DIR/test_quota_reset.sh"
+TEST_SCRIPT="test_quota_reset.sh"
 POLL_INTERVAL=30  # seconds
 
 echo "=== Quota Reset Watcher ==="
