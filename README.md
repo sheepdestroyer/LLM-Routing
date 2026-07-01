@@ -66,8 +66,6 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
-
 ---
 
 ## 1b. Container Health Checks & Auto-Restart
@@ -76,12 +74,12 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** (9.1.0-alpine) | `tcpSocket` on port 6379 every 10s | Same, every 5s |
+| **valkey-cache** | `tcpSocket` on port 6379 every 10s | Same, every 5s |
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
-| **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
+| **valkey-lf** | `tcpSocket` on port 6380 every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
@@ -212,7 +210,7 @@ The gateway supports multiple routing modes controlled by the `model` field:
 All configurations, automation scripts, and databases are self-contained within this repository directory:
 
 ```
-/home/gpav/Vrac/LAB/AI/LLM-Routing/
+LLM-Routing/
 ├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
@@ -228,16 +226,26 @@ All configurations, automation scripts, and databases are self-contained within 
 │   ├── agy_proxy.py     # 3-tier agy fallback with session continuation
 │   ├── circuit_breaker.py # Exponential cooldown breaker for agy proxy
 │   └── memory_mcp.py    # MCP bridge server for Goose memory integration
-├── scripts/
-│   └── backup.sh        # Database backup with pg_isready retry logic
+├── scripts/             # Automation, maintenance, and verification scripts
+│   ├── backup.sh        # Database backup with pg_isready retry logic
+│   ├── host_agy_daemon.py # Real-time PTY-based streaming daemon for agy
+│   ├── sync_gemini_token.py # Extraction/sync script for keyring credentials
+│   ├── get_pr_status.py # PR state helper
+│   ├── watch_quota.sh   # Quota reset watcher
+│   ├── test_quota_reset.sh # Quota reset test simulator
+│   └── verification/    # Routing & cooldown verification tests
+│       ├── verify_breaker.py # Circuit breaker verification
+│       └── ...
+├── tests/               # Integration & unit test suite
+│   ├── test_agy_tiers.py # agy proxy model tier test suite
+│   ├── test_classifier_accuracy.py # Classifier accuracy benchmark
+│   └── ...
 ├── backups/             # Timestamped PostgreSQL dumps + config snapshots
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
 ├── valkey-lf-data/      # [Git Ignored] Persistent job queues for Langfuse v3
-├── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
-├── test_agy_tiers.py    # agy proxy model tier test suite
-└── test_classifier_accuracy.py # Classifier accuracy benchmark
+└── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
 ```
 
 ---
@@ -269,7 +277,8 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
+- **Version Pinning**: The tags are explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/repo/image` before upgrading.
+  
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
@@ -279,7 +288,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
+  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). 
 
   ```mermaid
   graph TD
@@ -695,15 +704,6 @@ Additional mounts required in `pod.yaml`:
   mountPath: /root/.gemini   # agy expects config at ~/.gemini
 ```
 
-### Model Identifiers (found in agy binary)
-
-| Model | Env Var Value | Backend |
-|-------|---------------|---------|
-| Gemini 3.5 Flash | `""` (auto-select) | Cloud Code Assist (default) |
-| Claude Opus 4.6 | `claude-opus-4-6@default` | Anthropic premium tier |
-| Claude Sonnet 4.5 | `claude-sonnet-4-5@20250929` | Anthropic via Vertex AI |
-| Claude Haiku 4.5 | `claude-haiku-4-5@20251001` | Anthropic lightweight |
-
 ### Verification
 
 ```bash
@@ -719,7 +719,7 @@ agy --print "First message"                    # creates conversation
 agy --conversation <id> --print "Follow-up"    # continues same session
 
 # Run the full tier test suite
-python3 test_agy_tiers.py
+python3 tests/test_agy_tiers.py
 ```
 
 ### 9b. Streaming & Concurrency Optimizations
@@ -727,7 +727,7 @@ python3 test_agy_tiers.py
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
 #### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
-To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
+To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `scripts/host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
 * Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
 * The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
@@ -789,7 +789,7 @@ For auto-routing modes, the Triage Router handles failures by silently falling b
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |
 | **Cold-Run Triage** (First query) | ~15 - 24s | Dynamic HF Download | Includes GGUF fetch & initialization |
-| **Warm-Run Triage** (Local inference) | **~449 ms** | 100% Vulkan GPU (Ryzen APU) | **12x speedup** compared to 35B model |
+| **Warm-Run Triage** (Local inference) | **~449 ms** | 100% GPU | **12x speedup** compared to 35B model |
 | **Triage Cache Hit** (Repeat query) | **0.0 ms** | RAM In-Memory TTL | Infinite speedup, zero backend requests |
 | **Valkey Gateway Cache Hit** | **< 10 ms** | Redis RAM Cache | Zero provider cost, immediate response |
 

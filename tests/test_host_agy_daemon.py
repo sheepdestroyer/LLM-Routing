@@ -9,6 +9,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import sys
+from pathlib import Path
+
+# Dynamic project root discovery
+root = Path(__file__).resolve()
+while root.parent != root and not (root / ".git").exists():
+    root = root.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "scripts"))
+
 import host_agy_daemon
 
 def find_free_port():

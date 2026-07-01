@@ -2,7 +2,13 @@
 """Verify circuit breaker integration into agy_proxy.py"""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent / 'router'))
+
+# Dynamic project root discovery
+root = Path(__file__).resolve()
+while root.parent != root and not (root / ".git").exists():
+    root = root.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "router"))
 
 from circuit_breaker import get_breaker
 from agy_proxy import try_agy_proxy

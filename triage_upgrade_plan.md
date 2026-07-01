@@ -37,8 +37,8 @@ This document outlines the steps to upgrade the triage system in the LLM-Routing
 - `router/agy_proxy.py`: Contains the core triage logic.
 - `router/main.py`: Entry point that may call the triage functions.
 - `router/config.yaml`: Configuration for the classifier and triage parameters.
-- `test_agy_tiers.py`: Tests for the triage tiers, may need updates.
-- `test_classifier_accuracy.py`: Tests for classifier accuracy, may need updates.
+- `tests/test_agy_tiers.py`: Tests for the triage tiers, may need updates.
+- `tests/test_classifier_accuracy.py`: Tests for classifier accuracy, may need updates.
 
 ## Estimated Effort
 - Review and planning: 2 hours
