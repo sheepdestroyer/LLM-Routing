@@ -27,6 +27,7 @@ async def test_read_annotations_async_initial_read():
     mock_file.read.return_value = '{"annotation1": "data1"}'
     
     mock_aiofiles_open = MagicMock()
+    mock_aiofiles_open.return_value = AsyncMock()
     mock_aiofiles_open.return_value.__aenter__.return_value = mock_file
 
     with patch("os.path.getmtime", return_value=100.0) as mock_getmtime, \
