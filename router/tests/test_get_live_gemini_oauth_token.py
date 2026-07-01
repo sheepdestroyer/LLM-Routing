@@ -10,7 +10,16 @@ router_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if router_path not in sys.path:
     sys.path.insert(0, router_path)
 
-import main
+with patch('builtins.open', mock_open(read_data='''
+server:
+  host: 0.0.0.0
+  port: 5000
+router:
+  router_model:
+    api_key: "dummy_key"
+    model: "dummy_model"
+''')):
+    import main
 
 def test_get_live_gemini_oauth_token_valid():
     """Test retrieving a valid, unexpired token."""
