@@ -16,10 +16,12 @@ def test_run_cmd_error():
     with pytest.raises(subprocess.CalledProcessError):
         run_cmd(["false"])
 
-def test_run_cmd_timeout():
-    # run_cmd has a 30s timeout.
+@patch("scripts.get_pr_status.subprocess.run")
+def test_run_cmd_timeout(mock_run):
+    # run_cmd has a 30s timeout. We mock subprocess.run to raise it immediately.
+    mock_run.side_effect = subprocess.TimeoutExpired(["sleep", "0.1"], 30)
     with pytest.raises(subprocess.TimeoutExpired):
-        run_cmd(["sleep", "31"])
+        run_cmd(["sleep", "0.1"])
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_success(mock_run_cmd, capsys):
@@ -28,7 +30,7 @@ def test_get_pr_status_success(mock_run_cmd, capsys):
         "reviewDecision": "APPROVED",
         "statusCheckRollup": [
             {"conclusion": "SUCCESS", "name": "test1"},
-            {"state": "CLEAN", "name": "test2"},
+            {"state": "SUCCESS", "name": "test2"},
             {"conclusion": "FAILURE", "name": "test3"}
         ]
     }

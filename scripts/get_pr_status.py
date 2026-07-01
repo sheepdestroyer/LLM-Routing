@@ -32,7 +32,7 @@ def get_pr_status(pr_id: str = "") -> None:
         for check in checks:
             # gh CLI returns conclusion for CheckRun and state for StatusContext
             conclusion = check.get("conclusion") or check.get("state")
-            if conclusion in ["SUCCESS", "CLEAN"]:
+            if conclusion == "SUCCESS":
                 success_count += 1
 
         print(f"PR Status: {state}")
