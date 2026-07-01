@@ -31,8 +31,8 @@ def test_load_persisted_stats_success(mock_stats):
     }
     mock_json = json.dumps(mock_data)
 
-    with patch("os.path.exists", return_value=True):
-        with patch("builtins.open", mock_open(read_data=mock_json)):
+    with patch("router.main.os.path.exists", return_value=True):
+        with patch("router.main.open", mock_open(read_data=mock_json)):
             with patch("router.main.logger.info") as mock_logger:
                 load_persisted_stats()
 
