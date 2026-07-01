@@ -82,7 +82,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     return
 
                 loop_ref = asyncio.get_running_loop()
-                
+
                 def read_bytes():
                     try:
                         return os.read(master_fd, 1024)
@@ -100,7 +100,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
                     self.wfile.write(chunk_json.encode('utf-8'))
                     self.wfile.flush()
-                    
+
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
                     returncode = proc.returncode or 0
@@ -112,12 +112,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     returncode = -1
                 except Exception:
                     returncode = -1
-                
+
                 os.close(master_fd)
-                
+
                 # Retrieve last conversation ID
                 result_conv_id = get_last_conversation_id()
-                
+
                 # Write closing metadata
                 meta_json = json.dumps({
                     "type": "status",

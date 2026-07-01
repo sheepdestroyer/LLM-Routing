@@ -721,7 +721,7 @@ python3 test_agy_tiers.py
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
 #### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
-To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
+To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`.
 * Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
 * The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
@@ -795,4 +795,3 @@ This project is supported by a dedicated NotebookLM companion notebook:
 * **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
 
 This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.
-
