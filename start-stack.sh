@@ -31,7 +31,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Ensure openssl is installed if we need to generate passwords/keys
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -74,11 +74,7 @@ if [ -f "$OAUTH_CREDS" ]; then
     fi
 fi
 if $NEED_SYNC; then
-    if [ ! -f "scripts/sync_gemini_token.py" ]; then
-        echo "❌ Error: scripts/sync_gemini_token.py not found. Repository structure is invalid." >&2
-        exit 1
-    fi
-    python3 scripts/sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
+    python3 sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
 fi
 
 ACTIVE_OAUTH=""
@@ -105,7 +101,7 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
+if [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -115,17 +111,6 @@ fi
 # Ensure the env file exists and has secure permissions (owner read/write only)
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
-
-generate_uuid() {
-    local val
-    val=$(openssl rand -hex 16 2>/dev/null)
-    local status=$?
-    if [ $status -ne 0 ] || [ ${#val} -ne 32 ]; then
-        echo "❌ Error: Failed to generate secure random UUID (openssl rand returned exit status $status, length ${#val})." >&2
-        return 1
-    fi
-    echo "${val:0:8}-${val:8:4}-${val:12:4}-${val:16:4}-${val:20:12}"
-}
 
 if [ -z "$NEXTAUTH_SECRET" ]; then
     NEXTAUTH_SECRET="$(openssl rand -base64 32)"
@@ -160,48 +145,6 @@ if [ -z "$ROUTER_API_KEY" ]; then
     ROUTER_API_KEY="$(openssl rand -hex 32)"
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
-fi
-
-if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
-        echo "❌ Error: Failed to generate LANGFUSE_PUBLIC_KEY." >&2
-        exit 1
-    fi
-    LANGFUSE_PUBLIC_KEY="pk-lf-$uuid"
-    echo "LANGFUSE_PUBLIC_KEY=\"$LANGFUSE_PUBLIC_KEY\"" >> "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    echo "✓ Generated new LANGFUSE_PUBLIC_KEY and saved to $ENV_FILE"
-fi
-
-if [ -z "$LANGFUSE_SECRET_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
-        echo "❌ Error: Failed to generate LANGFUSE_SECRET_KEY." >&2
-        exit 1
-    fi
-    LANGFUSE_SECRET_KEY="sk-lf-$uuid"
-    echo "LANGFUSE_SECRET_KEY=\"$LANGFUSE_SECRET_KEY\"" >> "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    echo "✓ Generated new LANGFUSE_SECRET_KEY and saved to $ENV_FILE"
-fi
-
-if [ -z "$OLLAMA_API_KEY" ]; then
-    if [ -t 0 ]; then
-        echo "🔑 OLLAMA_API_KEY not found."
-        echo -n "Please enter your Ollama API Key (input will be hidden): "
-        read -rs OLLAMA_API_KEY
-        echo ""
-        echo "OLLAMA_API_KEY=\"$OLLAMA_API_KEY\"" >> "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
-        echo "✓ Ollama API key saved securely to $ENV_FILE"
-    else
-        echo "❌ Error: OLLAMA_API_KEY is not set in your environment or in $ENV_FILE."
-        echo "Please run this script interactively first, or create the file manually:"
-        echo "  echo 'OLLAMA_API_KEY=your_key_here' >> $ENV_FILE"
-        echo "  chmod 600 $ENV_FILE"
-        exit 1
-    fi
 fi
 
 
@@ -413,7 +356,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse
 uid = os.getuid()
@@ -423,15 +366,12 @@ placeholders = [
     "/home/gpav/Vrac/LAB/AI/LLM-Routing",
     "/home/gpav/",
     "/run/user/1000",
-    "LITELLM_MASTER_KEY_PLACEHOLDER",
-    "POSTGRES_PASSWORD_RAW_PLACEHOLDER",
-    "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER",
+    "sk-lit...33bf",
+    "postgres:***",
     "NEXTAUTH_SECRET_PLACEHOLDER",
     "SALT_PLACEHOLDER",
     "ENCRYPTION_KEY_PLACEHOLDER",
-    "OLLAMA_API_KEY_PLACEHOLDER",
-    "LANGFUSE_PUBLIC_KEY_PLACEHOLDER",
-    "LANGFUSE_SECRET_KEY_PLACEHOLDER"
+    "postgres-password-***"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -440,17 +380,14 @@ for ph in placeholders:
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
-text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
+text = text.replace("sk-lit...33bf", os.environ["LITELLM_MASTER_KEY"])
 # URL-encode the postgres password for DSN insertion
-encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe='')
-text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
+encoded_password = urllib.parse.quote_plus(os.environ['POSTGRES_PASSWORD'])
+text = text.replace("postgres:***", f"postgres:{encoded_password}")
+text = text.replace("postgres-password-***", os.environ["POSTGRES_PASSWORD"])
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
 text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
-text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", os.environ["OLLAMA_API_KEY"])
-text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", os.environ["LANGFUSE_PUBLIC_KEY"])
-text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", os.environ["LANGFUSE_SECRET_KEY"])
 sys.stdout.write(text)
 PY
 }
