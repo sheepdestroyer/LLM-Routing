@@ -76,15 +76,15 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** (9.1.0-alpine) | `tcpSocket` on port 6379 every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
-| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
+| **valkey-cache** (9.1.0-alpine) | `valkey-cli PING` every 10s | `valkey-cli PING` every 5s |
+| **litellm-gateway** | Python `urllib` GET `/health` (port 4000, accepts 200/401) every 15s | Same, every 10s |
+| **llm-triage-router** | Python `urllib` GET `/dashboard` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
-| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
-| **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
-| **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
-| **langfuse-worker** | `pgrep node` every 15s | — |
-| **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
+| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | Same, every 10s |
+| **valkey-lf** | `redis-cli -p 6380 -a langfuse-redis-2026 PING` every 10s | Same, every 5s |
+| **langfuse-web** | `wget -qO /dev/null http://127.0.0.1:3001/` every 15s | Same, every 10s |
+| **langfuse-worker** | `pgrep -f langfuse-worker` every 15s | — |
+| **minio-s3** | TCP socket check on port 9002 every 15s | Same, every 10s |
 
 The pod-level `restartPolicy: Always` combined with these probes means Podman will restart any container that fails its health check or exits unexpectedly, enabling true self-healing for the entire stack.
 
@@ -379,7 +379,7 @@ Run the startup script from the root of the repository:
                               #   health probes, env vars, containers — no rebuild)
 ./start-stack.sh --full-rebuild  # Full reset: rebuild image + recreate pod
 ```
-*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
+*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`).*
 
 ### 2. Verify Container Status
 Check that all **10 containers** inside `agent-router-pod` are up and running:
@@ -575,25 +575,19 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 |----------|-------|
 | `LANGFUSE_S3_EVENT_UPLOAD_BUCKET` | `langfuse-events` |
 | `LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT` | `http://127.0.0.1:9002` |
-| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | `minioadmin` |
-| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
+| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | (auto-generated in `.env`) |
+| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | (auto-generated in `.env`) |
 | `S3_FORCE_PATH_STYLE` | `true` |
 
-Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials: `minioadmin` / `minioadmin`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials are automatically generated and stored in `.env`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
 
 ### Health Check
 
-MinIO's health is monitored using its native structured endpoints `/minio/health/live` (liveness) and `/minio/health/ready` (readiness) on port 9002:
+Minio's minimal Go image has no HTTP client tools. The probe uses a raw TCP socket check:
 
 ```yaml
-livenessProbe:
-  httpGet:
-    path: /minio/health/live
-    port: 9002
-readinessProbe:
-  httpGet:
-    path: /minio/health/ready
-    port: 9002
+exec:
+  command: [sh, -c, "exec 3<>/dev/tcp/127.0.0.1/9002 && echo ok"]
 ```
 
 ---
@@ -797,7 +791,7 @@ For auto-routing modes, the Triage Router handles failures by silently falling b
 
 This project is supported by a dedicated NotebookLM companion notebook:
 * **Notebook Name:** `TriageGate-Architect-KB`
-* **Notebook ID:** llm-triage-gateway
+* **Notebook ID:** `llm-triage-gateway`
 * **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
 
 This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.

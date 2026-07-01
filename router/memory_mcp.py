@@ -68,6 +68,8 @@ def _parse_key(key: str):
 
 def _is_memory_key(key: str) -> bool:
     """Check if a key follows the memory:{scope}:{category}:: format."""
+    if not isinstance(key, str):
+        return False
     return key.startswith(f"{PREFIX}:")
 
 
