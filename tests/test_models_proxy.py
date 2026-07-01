@@ -9,7 +9,13 @@ os.environ["CONFIG_PATH"] = "router/config.yaml"
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent / "router"))
+
+# Dynamic project root discovery
+root = Path(__file__).resolve()
+while root.parent != root and not (root / ".git").exists():
+    root = root.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "router"))
 
 from main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
 
