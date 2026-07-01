@@ -1154,9 +1154,9 @@ def get_goose_sessions() -> list:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, description, created_at, updated_at, accumulated_total_tokens, goose_mode 
-            FROM sessions 
-            ORDER BY updated_at DESC 
+            SELECT id, name, description, created_at, updated_at, accumulated_total_tokens, goose_mode
+            FROM sessions
+            ORDER BY updated_at DESC
             LIMIT 5
         """)
         for row in cursor.fetchall():
