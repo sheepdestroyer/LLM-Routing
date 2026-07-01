@@ -45,7 +45,7 @@ spec:
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
-    image: berriai/litellm:v1.90.1
+    image: berriai/litellm:v1.90.2
     livenessProbe:
       exec:
         command:
