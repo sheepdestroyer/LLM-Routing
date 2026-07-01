@@ -37,10 +37,15 @@ def get_redis():
             return None
         _redis_last_init_attempt = now
         try:
-            host = os.getenv("VALKEY_HOST", "127.0.0.1")
-            port = int(os.getenv("VALKEY_PORT", "6379"))
-            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
-            logger.info(f"Valkey client initialized at {host}:{port}")
+            url = os.getenv("VALKEY_URL")
+            if url:
+                _redis_client = aioredis.Redis.from_url(url, decode_responses=True, socket_timeout=1.0)
+                logger.info(f"Valkey client initialized from URL")
+            else:
+                host = os.getenv("VALKEY_HOST", "127.0.0.1")
+                port = int(os.getenv("VALKEY_PORT", "6379"))
+                _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+                logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
             logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
             _redis_client = None

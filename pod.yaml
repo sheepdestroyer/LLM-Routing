@@ -45,7 +45,7 @@ spec:
       value: sk-lit...33bf
     - name: OLLAMA_API_KEY
       value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
-    image: ghcr.io/berriai/litellm:v1.89.4
+    image: ghcr.io/berriai/litellm:v1.90.2
     livenessProbe:
       exec:
         command:
@@ -187,7 +187,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
+      value: clickhouse
     image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
       exec:
@@ -196,7 +196,7 @@ spec:
         - --user
         - clickhouse
         - --password
-        - CLICKHOUSE_PASSWORD_PLACEHOLDER
+        - clickhouse
         - --query
         - SELECT 1
       initialDelaySeconds: 20
@@ -222,7 +222,7 @@ spec:
     - --port
     - '6380'
     - --requirepass
-    - REDIS_AUTH_PLACEHOLDER
+    - langfuse-redis-2026
     - --maxmemory-policy
     - noeviction
     - --loglevel
@@ -242,7 +242,7 @@ spec:
         - -p
         - "6380"
         - -a
-        - REDIS_AUTH_PLACEHOLDER
+        - langfuse-redis-2026
         - ping
       initialDelaySeconds: 2
       periodSeconds: 5
@@ -287,7 +287,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
+      value: clickhouse
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -295,7 +295,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: REDIS_AUTH_PLACEHOLDER
+      value: langfuse-redis-2026
     - name: LANGFUSE_INIT_ORG_ID
       value: org-local-dev-id
     - name: LANGFUSE_INIT_ORG_NAME
@@ -343,7 +343,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
+      value: clickhouse
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -351,7 +351,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: REDIS_AUTH_PLACEHOLDER
+      value: langfuse-redis-2026
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
