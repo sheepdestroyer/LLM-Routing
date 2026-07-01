@@ -26,8 +26,11 @@ async def test_read_annotations_async_initial_read():
     mock_file = AsyncMock()
     mock_file.read.return_value = '{"annotation1": "data1"}'
     
-    mock_aiofiles_open = MagicMock()
-    mock_aiofiles_open.return_value.__aenter__.return_value = mock_file
+    mock_context_manager = MagicMock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=False)
+    
+    mock_aiofiles_open = MagicMock(return_value=mock_context_manager)
 
     with patch("os.path.getmtime", return_value=100.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:
@@ -75,8 +78,11 @@ async def test_read_annotations_async_cache_invalidation():
     mock_file = AsyncMock()
     mock_file.read.return_value = '{"annotation2": "data2"}'
     
-    mock_aiofiles_open = MagicMock()
-    mock_aiofiles_open.return_value.__aenter__.return_value = mock_file
+    mock_context_manager = MagicMock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=False)
+    
+    mock_aiofiles_open = MagicMock(return_value=mock_context_manager)
 
     with patch("os.path.getmtime", return_value=200.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:

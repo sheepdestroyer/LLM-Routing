@@ -80,7 +80,7 @@ The integration test suite is located in the root directory. Tests are categoriz
 - **`test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.
 
 ### Dashboard & Annotations Tests
-- **`test_read_annotations_async.py`**: Unit tests for the asynchronous dashboard annotation reading and caching mechanism.
+- **`tests/test_read_annotations_async.py`**: Unit tests for the asynchronous dashboard annotation reading and caching mechanism.
 
 ### Simulation Tests
 - **`test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
