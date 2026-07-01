@@ -117,7 +117,13 @@ touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 generate_uuid() {
-    local val=$(openssl rand -hex 16)
+    local val
+    val=$(openssl rand -hex 16 2>/dev/null)
+    local status=$?
+    if [ $status -ne 0 ] || [ ${#val} -ne 32 ]; then
+        echo "❌ Error: Failed to generate secure random UUID (openssl rand returned exit status $status, length ${#val})." >&2
+        return 1
+    fi
     echo "${val:0:8}-${val:8:4}-${val:12:4}-${val:16:4}-${val:20:12}"
 }
 
@@ -157,14 +163,26 @@ if [ -z "$ROUTER_API_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
-    LANGFUSE_PUBLIC_KEY="pk-lf-$(generate_uuid)"
+    uuid=$(generate_uuid)
+    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+        echo "❌ Error: Failed to generate LANGFUSE_PUBLIC_KEY." >&2
+        exit 1
+    fi
+    LANGFUSE_PUBLIC_KEY="pk-lf-$uuid"
     echo "LANGFUSE_PUBLIC_KEY=\"$LANGFUSE_PUBLIC_KEY\"" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
     echo "✓ Generated new LANGFUSE_PUBLIC_KEY and saved to $ENV_FILE"
 fi
 
 if [ -z "$LANGFUSE_SECRET_KEY" ]; then
-    LANGFUSE_SECRET_KEY="sk-lf-$(generate_uuid)"
+    uuid=$(generate_uuid)
+    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+        echo "❌ Error: Failed to generate LANGFUSE_SECRET_KEY." >&2
+        exit 1
+    fi
+    LANGFUSE_SECRET_KEY="sk-lf-$uuid"
     echo "LANGFUSE_SECRET_KEY=\"$LANGFUSE_SECRET_KEY\"" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
     echo "✓ Generated new LANGFUSE_SECRET_KEY and saved to $ENV_FILE"
 fi
 
@@ -178,10 +196,11 @@ if [ -z "$OLLAMA_API_KEY" ]; then
         chmod 600 "$ENV_FILE"
         echo "✓ Ollama API key saved securely to $ENV_FILE"
     else
-        echo "⚠️ OLLAMA_API_KEY not set in .env. Initializing with the default key."
-        OLLAMA_API_KEY="3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO"
-        echo "OLLAMA_API_KEY=\"$OLLAMA_API_KEY\"" >> "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
+        echo "❌ Error: OLLAMA_API_KEY is not set in your environment or in $ENV_FILE."
+        echo "Please run this script interactively first, or create the file manually:"
+        echo "  echo 'OLLAMA_API_KEY=your_key_here' >> $ENV_FILE"
+        echo "  chmod 600 $ENV_FILE"
+        exit 1
     fi
 fi
 
@@ -424,7 +443,7 @@ text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
 # URL-encode the postgres password for DSN insertion
-encoded_password = urllib.parse.quote_plus(os.environ['POSTGRES_PASSWORD'])
+encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'])
 text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
