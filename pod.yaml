@@ -157,7 +157,7 @@ spec:
       value: postgres-password-***
     - name: POSTGRES_DB
       value: langfuse
-    image: pgvector/pgvector:0.8.3-pg18
+    image: pgvector/pgvector:0.8.4-pg18
     livenessProbe:
       exec:
         command:
