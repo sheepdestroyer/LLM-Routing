@@ -26,10 +26,10 @@ jobs:
         run: pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles
 
       - name: Run Unit Tests
-        run: CONFIG_PATH=router/config.yaml PYTHONPATH=.:router pytest --ignore=test_agy_behavior.py --ignore=test_agy_tiers.py
+        run: CONFIG_PATH=router/config.yaml PYTHONPATH=.:router pytest --ignore=tests/test_agy_behavior.py --ignore=tests/test_agy_tiers.py
 
       - name: Run Breaker Verification
-        run: python3 verify_breaker.py
+        run: python3 scripts/verification/verify_breaker.py
 
       - name: Run Integration Verification
-        run: python3 test_a2_verify.py
+        run: python3 tests/test_a2_verify.py
