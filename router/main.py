@@ -25,6 +25,8 @@ LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rs
     "/"
 )
 
+GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
+
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -1035,9 +1037,8 @@ def _read_json_file_sync(file_path: str) -> dict:
 async def get_live_gemini_oauth_token() -> str | None:
     """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
-        creds_path = "/config/gemini_auth/oauth_creds.json"
-        if os.path.exists(creds_path):
-            data = await asyncio.to_thread(_read_json_file_sync, creds_path)
+        if await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
+            data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
             access_token = data.get("access_token")
             expiry_ms = data.get("expiry_date", 0)
             # Convert current time to milliseconds
@@ -1062,15 +1063,14 @@ async def get_live_gemini_oauth_token() -> str | None:
 
 async def get_gemini_oauth_status() -> dict:
     """Returns structured OAuth status for the dashboard banner."""
-    creds_path = "/config/gemini_auth/oauth_creds.json"
     try:
-        if not os.path.exists(creds_path):
+        if not await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
             return {
                 "status": "missing",
                 "detail": "No oauth_creds.json found",
                 "expiry_ms": 0,
             }
-        data = await asyncio.to_thread(_read_json_file_sync, creds_path)
+        data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)

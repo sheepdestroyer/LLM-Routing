@@ -59,8 +59,20 @@ def test_record_tool_usage_none_mapping():
 
 def test_record_tool_usage_accumulation():
     """Test that tokens accumulate correctly over multiple calls."""
-    router.main.record_tool_usage(ToolUsageRecord("write", 10, 10, "model1", 50.0))
-    router.main.record_tool_usage(ToolUsageRecord("write", 20, 30, "model2", 60.0))
+    router.main.record_tool_usage(ToolUsageRecord(
+        tool_name="write",
+        prompt_tokens=10,
+        completion_tokens=10,
+        model="model1",
+        latency_ms=50.0
+    ))
+    router.main.record_tool_usage(ToolUsageRecord(
+        tool_name="write",
+        prompt_tokens=20,
+        completion_tokens=30,
+        model="model2",
+        latency_ms=60.0
+    ))
 
     assert router.main.stats["tool_tokens"]["write"] == 70
     assert router.main.stats["prompt_tokens"] == 30
@@ -71,7 +83,13 @@ def test_record_tool_usage_timeline_limit():
     """Test that the timeline buffer is capped at 15 events."""
     # Add 20 events
     for i in range(20):
-        router.main.record_tool_usage(ToolUsageRecord(f"tool_{i}", 1, 1, "model", 10.0))
+        router.main.record_tool_usage(ToolUsageRecord(
+            tool_name=f"tool_{i}",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model="model",
+            latency_ms=10.0
+        ))
 
     assert len(router.main.stats["timeline"]) == 15
     # The first 5 events should be popped off, so the oldest event in the timeline

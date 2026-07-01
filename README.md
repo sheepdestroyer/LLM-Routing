@@ -571,6 +571,9 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 
 ### Configuration
 
+> [!WARNING]
+> The credentials `minioadmin` / `minioadmin` and settings specified below are strictly for **local development and testing**. You **must** override these default credentials before any shared, staging, or production use.
+
 | Env Var | Value |
 |----------|-------|
 | `LANGFUSE_S3_EVENT_UPLOAD_BUCKET` | `langfuse-events` |
@@ -579,11 +582,14 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 | `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
 | `S3_FORCE_PATH_STYLE` | `true` |
 
-Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials: `minioadmin` / `minioadmin`. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Default credentials (`minioadmin` / `minioadmin`) are only meant for local/dev setups. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
 
 ### Health Check
 
 MinIO's health is monitored using its native structured endpoints `/minio/health/live` (liveness) and `/minio/health/ready` (readiness) on port 9002:
+
+> [!IMPORTANT]
+> When deploying to staging or production, ensure that custom credentials are configured (rather than the default `minioadmin` keys described in [Configuration](#configuration)), and ensure the deployment's probes and S3 configurations are updated to reference the new values.
 
 ```yaml
 livenessProbe:
