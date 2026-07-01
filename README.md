@@ -721,7 +721,7 @@ python3 test_agy_tiers.py
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
 #### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
-To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`. 
+To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`.
 * Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
 * The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
