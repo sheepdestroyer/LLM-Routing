@@ -1034,31 +1034,6 @@ def _read_json_file_sync(file_path: str) -> dict:
     with open(file_path, "r") as f:
         return json.load(f)
 
-async def get_live_gemini_oauth_token() -> str | None:
-    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
-    try:
-        if await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
-            data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
-            access_token = data.get("access_token")
-            expiry_ms = data.get("expiry_date", 0)
-            # Convert current time to milliseconds
-            current_ms = int(time.time() * 1000)
-            if access_token and current_ms < expiry_ms:
-                logger.info(
-                    "🔑 Found valid, unexpired Gemini OAuth token from host!"
-                )
-                return access_token
-            else:
-                # agy CLI uses the OS system keyring (GNOME Keyring), not this
-                # stale disk file. The file being expired is expected — don't warn.
-                logger.debug(
-                    "Gemini OAuth token on disk is expired — agy uses system keyring instead."
-                )
-    except Exception as e:
-        logger.error(f"Failed to read live OAuth token: {e}")
-    return None
-
-
 
 
 async def get_gemini_oauth_status() -> dict:
