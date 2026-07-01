@@ -487,7 +487,7 @@ Navigate your web browser to:
 👉 **`http://localhost:5000/dashboard`**
 
 The triage router hosts a beautiful, single-pane-of-glass **Glassmorphic Status Control Panel** styled with modern vanilla CSS featuring:
-* **System Status Healthchecks**: Live connection status checks via TCP sockets (Valkey, Postgres) and HTTP pings (LiteLLM, Llama-server).
+* **System Status Healthchecks**: Live connection status checks via TCP sockets (Valkey, Postgres), HTTP pings (LiteLLM, Llama-server), and non-blocking asynchronous checks for Gemini OAuth token validation status.
 * **Real-time Routing Metrics**: Active classification splits (simple vs complex), request logs, and processing latencies.
 * **Direct Application Portals**: One-click navigation links to target web utilities (LiteLLM administration console, Langfuse telemetry console, Llama-Server playground).
 
