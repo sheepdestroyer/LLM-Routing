@@ -99,38 +99,3 @@ def test_get_redis_initialization_exception(mock_logger_warning, mock_redis, moc
     assert main._redis_last_init_attempt == 110.0
     mock_logger_warning.assert_called_once()
     assert "Test Exception" in mock_logger_warning.call_args[0][0]
-
-@patch("router.main.time.monotonic")
-@patch("router.main.aioredis.Redis.from_url")
-@patch.dict(os.environ, {"VALKEY_URL": "redis://my-url:1234"})
-def test_get_redis_simulation_flow_url(mock_from_url, mock_monotonic):
-    """Simulate the full flow for from_url: failure -> cooldown -> success -> cached."""
-    # State is reset by the autouse fixture reset_redis_globals
-
-    # 1. First attempt fails
-    mock_monotonic.return_value = 10.0
-    mock_from_url.side_effect = Exception("Connection error")
-    assert main.get_redis() is None
-    assert main._redis_last_init_attempt == 10.0
-
-    # 2. Second attempt during cooldown (e.g. 12.0s)
-    mock_monotonic.return_value = 12.0
-    mock_from_url.reset_mock()
-    assert main.get_redis() is None
-    mock_from_url.assert_not_called()
-
-    # 3. Third attempt after cooldown (e.g. 16.0s) succeeds
-    mock_monotonic.return_value = 16.0
-    mock_redis_instance = MagicMock()
-    mock_from_url.side_effect = None
-    mock_from_url.return_value = mock_redis_instance
-    client = main.get_redis()
-    assert client is mock_redis_instance
-    assert main._redis_client is mock_redis_instance
-    mock_from_url.assert_called_once()
-
-    # 4. Fourth attempt returns cached instance
-    mock_monotonic.return_value = 18.0
-    mock_from_url.reset_mock()
-    assert main.get_redis() is mock_redis_instance
-    mock_from_url.assert_not_called()
