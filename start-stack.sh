@@ -95,7 +95,7 @@ else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
 fi
 
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
@@ -398,7 +398,7 @@ placeholders = [
     "ENCRYPTION_KEY_PLACEHOLDER",
     "postgres-password-***",
     "MINIO_USER_PLACEHOLDER",
-    "MINIO_PASSWORD_PLACEHOLDER"
+    "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:

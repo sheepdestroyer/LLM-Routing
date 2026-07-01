@@ -82,3 +82,20 @@ def test_get_pr_status_invalid_json(mock_run_cmd, capsys):
     assert e.value.code == 1
     captured = capsys.readouterr()
     assert "Error: Failed to parse gh CLI output" in captured.err
+
+
+@patch("scripts.get_pr_status.run_cmd")
+def test_get_pr_status_null_checks(mock_run_cmd, capsys):
+    mock_data = {
+        "state": "OPEN",
+        "reviewDecision": "REVIEW_REQUIRED",
+        "statusCheckRollup": None
+    }
+    mock_run_cmd.return_value = json.dumps(mock_data)
+
+    get_pr_status("123")
+
+    captured = capsys.readouterr()
+    assert "PR Status: OPEN" in captured.out
+    assert "Review Decision: REVIEW_REQUIRED" in captured.out
+    assert "Checks: 0/0 passed" in captured.out
