@@ -3387,7 +3387,6 @@ def _read_annotations_sync(path) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
     """Save human review annotations to disk."""
