@@ -88,7 +88,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         return os.read(master_fd, 1024)
                     except OSError:
                         return b""
-                        
+
                 while True:
                     data = await loop_ref.run_in_executor(None, read_bytes)
                     if not data:
