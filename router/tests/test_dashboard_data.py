@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch  # Removed unused MagicMock import
+from unittest.mock import AsyncMock, patch, MagicMock
 import sys
 import os
 
