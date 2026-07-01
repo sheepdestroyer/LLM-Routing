@@ -34,7 +34,7 @@ spec:
     - /app/entrypoint.py
     env:
     - name: DATABASE_URL
-      value: postgresql://postgres:***@127.0.0.1:5432/postgres
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
     - name: STORE_MODEL_IN_DB
       value: 'True'
     - name: LITELLM_LOG
@@ -42,10 +42,10 @@ spec:
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
     - name: LITELLM_MASTER_KEY
-      value: sk-lit...33bf
+      value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: OLLAMA_API_KEY
-      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
-    image: ghcr.io/berriai/litellm:v1.90.1
+      value: OLLAMA_API_KEY_PLACEHOLDER
+    image: berriai/litellm:v1.90.1
     livenessProbe:
       exec:
         command:
@@ -89,19 +89,19 @@ spec:
     - name: LITELLM_CONFIG_PATH
       value: /config/litellm_dir/config.yaml
     - name: DATABASE_URL
-      value: postgresql://postgres:***@127.0.0.1:5432/postgres
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
       value: unix:path=/run/user/1000/bus
     - name: LITELLM_MASTER_KEY
-      value: sk-lit...33bf
+      value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: LANGFUSE_PUBLIC_KEY
-      value: pk-lf-200bbf48-1d23-447d-a79a-8614106497e6
+      value: LANGFUSE_PUBLIC_KEY_PLACEHOLDER
     - name: LANGFUSE_SECRET_KEY
-      value: sk-lf-...3b49
+      value: LANGFUSE_SECRET_KEY_PLACEHOLDER
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
     - name: OLLAMA_API_KEY
-      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
+      value: OLLAMA_API_KEY_PLACEHOLDER
     - name: LOG_LEVEL
       value: info
     image: localhost/llm-triage-router:latest
@@ -154,7 +154,7 @@ spec:
     - name: POSTGRES_USER
       value: postgres
     - name: POSTGRES_PASSWORD
-      value: postgres-password-***
+      value: POSTGRES_PASSWORD_RAW_PLACEHOLDER
     - name: POSTGRES_DB
       value: langfuse
     image: pgvector/pgvector:0.8.4-pg18
@@ -253,7 +253,7 @@ spec:
   # Langfuse Web — observability dashboard
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
     - name: NEXTAUTH_SECRET
       value: NEXTAUTH_SECRET_PLACEHOLDER
     - name: NEXTAUTH_URL
@@ -337,7 +337,7 @@ spec:
   # Langfuse Worker — background job processor
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
     - name: CLICKHOUSE_URL
       value: http://127.0.0.1:8123
     - name: CLICKHOUSE_USER
