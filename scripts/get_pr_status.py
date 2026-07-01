@@ -24,7 +24,7 @@ def get_pr_status(pr_id: str = "") -> None:
 
         state = data.get("state")
         review = data.get("reviewDecision") or "NONE"
-        checks = data.get("statusCheckRollup", [])
+        checks = data.get("statusCheckRollup") or []
 
         # Summarize checks
         success_count = 0
