@@ -76,6 +76,7 @@ async def test_read_annotations_async_cache_invalidation():
     mock_file.read.return_value = '{"annotation2": "data2"}'
     
     mock_aiofiles_open = MagicMock()
+    mock_aiofiles_open.return_value = AsyncMock()
     mock_aiofiles_open.return_value.__aenter__.return_value = mock_file
 
     with patch("os.path.getmtime", return_value=200.0) as mock_getmtime, \
