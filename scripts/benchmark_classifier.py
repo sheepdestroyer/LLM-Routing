@@ -87,7 +87,7 @@ for i, item in enumerate(dataset.get("prompts", [])):
         scored_so_far = sum(t["total"] for t in per_tier.values())
         acc = (correct / scored_so_far * 100) if scored_so_far > 0 else 0.0
         print(f"  {i+1}/{total} — accuracy {acc:.1f}%")
-    
+
     time.sleep(0.05)  # minimal rate-limit (model handles concurrency via llama-server slots)
 
 # Report
