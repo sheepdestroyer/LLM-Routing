@@ -1,4 +1,6 @@
 import os
+import aiofiles
+import re
 import sys
 import json
 import time
@@ -49,10 +51,15 @@ def get_redis():
             return None
         _redis_last_init_attempt = now
         try:
-            host = os.getenv("VALKEY_HOST", "127.0.0.1")
-            port = int(os.getenv("VALKEY_PORT", "6379"))
-            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
-            logger.info(f"Valkey client initialized at {host}:{port}")
+            url = os.getenv("VALKEY_URL")
+            if url:
+                _redis_client = aioredis.Redis.from_url(url, decode_responses=True, socket_timeout=1.0)
+                logger.info("Valkey client initialized from URL")
+            else:
+                host = os.getenv("VALKEY_HOST", "127.0.0.1")
+                port = int(os.getenv("VALKEY_PORT", "6379"))
+                _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+                logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
             logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
             _redis_client = None
@@ -82,24 +89,60 @@ def get_http_client():
     return _http_client
 
 
-def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens by counting characters in message contents (1 token ~= 4 chars)
-    to avoid inflating metrics with large tool/schema declarations.
+# Compiled regular expressions for token estimation heuristics
+WORD_RE = re.compile(r'[a-zA-Z0-9]+')
+NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
+PUNC_RE = re.compile(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]')
+
+
+def _count_tokens_heuristic(text: str) -> float:
+    """Heuristically estimate token count using weighted categories and optimized regex splitting.
+
+    This replaces the naive character-count logic with a more granular approach that
+    balances English words, technical identifiers, punctuation, and multi-byte characters.
+
+    Returns a float to prevent intermediate rounding errors when summing across multiple
+    message blocks. Callers should round the total sum to convert it to an integer.
     """
-    tokens = 0
+    if not text:
+        return 0.0
+
+    # 1. Alphanumeric runs (Words/Identifiers/Hashes/Base64)
+    # Use a length-aware heuristic to avoid under-counting technical content.
+    word_matches = WORD_RE.findall(text)
+    word_total = sum(1.2 if len(w) <= 8 else len(w) / 4.0 for w in word_matches)
+
+    # 2. Non-ASCII characters (CJK/Emoji)
+    # Each character is weighted at 0.35 tokens.
+    non_ascii_count = len(NON_ASCII_RE.findall(text))
+
+    # 3. ASCII Punctuation/Symbols
+    # Characters that are ASCII but not alphanumeric or whitespace.
+    punc_count = len(PUNC_RE.findall(text))
+
+    return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
+
+
+def estimate_prompt_tokens(body: dict) -> int:
+    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
+    """
+    total = 0.0
     for msg in body.get("messages", []):
         if not isinstance(msg, dict):
             continue
         content = msg.get("content") or ""
         if isinstance(content, str):
-            tokens += len(content) // 4
+            total += _count_tokens_heuristic(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    tokens += len(block.get("text") or "") // 4
-    # Include a flat estimate for system prompt / metadata overhead
-    tokens += 50
-    return max(1, tokens)
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        total += _count_tokens_heuristic(text)
+
+    # Include a flat estimate for system prompt / metadata overhead.
+    # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
+    return max(1, int(round(total)) + 50)
 
 
 async def sync_cooldowns_from_valkey() -> None:
@@ -3871,9 +3914,26 @@ class AnnotationPayload(RootModel):
 annotations_lock = asyncio.Lock()
 
 
-def _read_annotations_sync(path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+_annotations_cache = {}
+
+
+async def _read_annotations_async(path) -> dict:
+    import copy
+
+    # Do not swallow OSError if file doesn't exist to preserve original behavior.
+    # The caller (save_annotations) handles the exception when reading existing annotations.
+    current_mtime = await asyncio.to_thread(os.path.getmtime, path)
+
+    cache_entry = _annotations_cache.get(path)
+
+    if cache_entry is None or current_mtime != cache_entry["mtime"]:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            # Read asynchronously, but parse in a thread pool to avoid blocking event loop
+            content = await f.read()
+            data = await asyncio.to_thread(json.loads, content)
+            _annotations_cache[path] = {"mtime": current_mtime, "data": data}
+
+    return await asyncio.to_thread(copy.deepcopy, _annotations_cache[path]["data"])
 
 
 @app.post("/dashboard/save-annotations")
@@ -3887,9 +3947,7 @@ async def save_annotations(payload: AnnotationPayload):
         async with annotations_lock:
             if ann_path.exists():
                 try:
-                    existing = await asyncio.to_thread(
-                        _read_annotations_sync, str(ann_path)
-                    )
+                    existing = await _read_annotations_async(str(ann_path))
                 except Exception as read_err:
                     logger.warning(
                         f"Could not read existing annotations: {read_err}. Overwriting."
