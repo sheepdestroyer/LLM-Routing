@@ -17,7 +17,6 @@ import json
 import time
 import hashlib
 import httpx
-import urllib.parse
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -45,8 +44,7 @@ def _make_key(category: str, is_global: bool, data: str) -> str:
     # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts.
     # Provides uniqueness within the same millisecond.
     h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=HASH_DIGEST_SIZE).hexdigest()
-    safe_category = urllib.parse.quote(category)
-    return f"{PREFIX}:{scope}:{safe_category}::{ts}:{h}"
+    return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
 
 
 def _parse_key(key: str):
@@ -55,7 +53,7 @@ def _parse_key(key: str):
         parts = key.split("::")
         prefix = parts[0].split(":")  # memory:{scope}:{category}
         scope = prefix[1] if len(prefix) > 1 else ""
-        category = urllib.parse.unquote(prefix[2]) if len(prefix) > 2 else ""
+        category = prefix[2] if len(prefix) > 2 else ""
         ts_hash = parts[1] if len(parts) > 1 else ""
         ts = ts_hash.split(":")[0] if ts_hash else ""
         return {"scope": scope, "category": category, "timestamp": ts}
@@ -70,8 +68,6 @@ def _parse_key(key: str):
 
 def _is_memory_key(key: str) -> bool:
     """Check if a key follows the memory:{scope}:{category}:: format."""
-    if not isinstance(key, str):
-        return False
     return key.startswith(f"{PREFIX}:")
 
 
