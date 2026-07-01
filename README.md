@@ -213,7 +213,7 @@ All configurations, automation scripts, and databases are self-contained within 
 
 ```
 /home/gpav/Vrac/LAB/AI/LLM-Routing/
-├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
+├── .env                 # Environment file for OpenRouter API Key (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
 ├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
