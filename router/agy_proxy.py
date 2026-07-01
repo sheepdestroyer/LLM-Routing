@@ -153,12 +153,9 @@ async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool
             log_path = os.path.expanduser("~/.gemini/antigravity-cli/cli.log")
             try:
                 if os.path.exists(log_path):
-                    async with aiofiles.open(log_path, "rb") as f:
-                        await f.seek(0, 2)
-                        file_size = await f.tell()
-                        await f.seek(max(0, file_size - 1024))
-                        content = (await f.read()).decode("utf-8", errors="ignore")
-                        for line in content.splitlines()[-5:]:
+                    async with aiofiles.open(log_path, "r") as f:
+                        lines = await f.readlines()
+                        for line in lines[-5:]:
                             if "RESOURCE_EXHAUSTED" in line or "code 429" in line:
                                 return True
             except Exception:
