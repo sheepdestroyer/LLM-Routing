@@ -1146,18 +1146,17 @@ def get_goose_sessions() -> list:
     try:
         import sqlite3
         conn = sqlite3.connect(db_path, timeout=1.0)
-        try:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, name, description, created_at, updated_at, accumulated_total_tokens, goose_mode 
-                FROM sessions 
-                ORDER BY updated_at DESC 
-                LIMIT 5
-            """)
-            sessions_list = [dict(row) for row in cursor]
-        finally:
-            conn.close()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, name, description, created_at, updated_at, accumulated_total_tokens, goose_mode
+            FROM sessions
+            ORDER BY updated_at DESC
+            LIMIT 5
+        """)
+        for row in cursor.fetchall():
+            sessions_list.append(dict(row))
+        conn.close()
     except Exception as e:
         logger.error(f"Failed to query goose sessions SQLite DB: {e}")
     return sessions_list
