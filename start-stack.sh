@@ -141,8 +141,6 @@ if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
     echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
 fi
 
-<<<<<<< security/fix-memory-mcp-category-injection-14795006529015952965
-=======
 if [ -z "$REDIS_AUTH" ]; then
     REDIS_AUTH="$(openssl rand -hex 16)"
     echo "REDIS_AUTH=\"$REDIS_AUTH\"" >> "$ENV_FILE"
@@ -155,7 +153,6 @@ if [ -z "$CLICKHOUSE_PASSWORD" ]; then
     echo "✓ Generated new CLICKHOUSE_PASSWORD and saved to $ENV_FILE"
 fi
 
->>>>>>> master
 
 if [ -z "$ROUTER_API_KEY" ]; then
     ROUTER_API_KEY="$(openssl rand -hex 32)"
@@ -385,11 +382,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-<<<<<<< security/fix-memory-mcp-category-injection-14795006529015952965
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD
-=======
     export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD REDIS_AUTH CLICKHOUSE_PASSWORD
->>>>>>> master
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse
 uid = os.getuid()
@@ -406,15 +399,10 @@ placeholders = [
     "ENCRYPTION_KEY_PLACEHOLDER",
     "postgres-password-***",
     "MINIO_USER_PLACEHOLDER",
-<<<<<<< security/fix-memory-mcp-category-injection-14795006529015952965
-    "MINIO_PASSWORD_PLACEHOLDER"
-    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
-=======
     "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
     "REDIS_AUTH_PLACEHOLDER",
     "CLICKHOUSE_PASSWORD_PLACEHOLDER"
->>>>>>> master
 ]
 for ph in placeholders:
     if ph not in text:
@@ -434,11 +422,8 @@ text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
 text = text.replace("MINIO_USER_PLACEHOLDER", os.environ["MINIO_ROOT_USER"])
 text = text.replace("MINIO_PASSWORD_PLACEHOLDER", os.environ["MINIO_ROOT_PASSWORD"])
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", os.environ["LANGFUSE_INIT_USER_PASSWORD"])
-<<<<<<< security/fix-memory-mcp-category-injection-14795006529015952965
-=======
 text = text.replace("REDIS_AUTH_PLACEHOLDER", os.environ["REDIS_AUTH"])
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", os.environ["CLICKHOUSE_PASSWORD"])
->>>>>>> master
 sys.stdout.write(text)
 PY
 }
