@@ -141,3 +141,8 @@ def test_is_memory_key_false_wrong_prefix():
 def test_is_memory_key_empty():
     """Test _is_memory_key with an empty string."""
     assert _is_memory_key("") is False
+
+def test_is_memory_key_none_or_non_string():
+    """Test _is_memory_key with None or non-string inputs."""
+    assert _is_memory_key(None) is False
+    assert _is_memory_key(123) is False
