@@ -1027,8 +1027,9 @@ async def classify_request(
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 
-def _get_live_gemini_oauth_token_sync_read(creds_path: str) -> dict:
-    with open(creds_path, "r") as f:
+def _read_json_file_sync(file_path: str) -> dict:
+    """Helper to read JSON files synchronously."""
+    with open(file_path, "r") as f:
         return json.load(f)
 
 async def get_live_gemini_oauth_token() -> str | None:
@@ -1036,7 +1037,7 @@ async def get_live_gemini_oauth_token() -> str | None:
     try:
         creds_path = "/config/gemini_auth/oauth_creds.json"
         if os.path.exists(creds_path):
-            data = await asyncio.to_thread(_get_live_gemini_oauth_token_sync_read, creds_path)
+            data = await asyncio.to_thread(_read_json_file_sync, creds_path)
             access_token = data.get("access_token")
             expiry_ms = data.get("expiry_date", 0)
             # Convert current time to milliseconds
@@ -1057,9 +1058,7 @@ async def get_live_gemini_oauth_token() -> str | None:
     return None
 
 
-def _get_gemini_oauth_status_sync_read(creds_path: str) -> dict:
-    with open(creds_path, "r") as f:
-        return json.load(f)
+
 
 async def get_gemini_oauth_status() -> dict:
     """Returns structured OAuth status for the dashboard banner."""
@@ -1071,7 +1070,7 @@ async def get_gemini_oauth_status() -> dict:
                 "detail": "No oauth_creds.json found",
                 "expiry_ms": 0,
             }
-        data = await asyncio.to_thread(_get_gemini_oauth_status_sync_read, creds_path)
+        data = await asyncio.to_thread(_read_json_file_sync, creds_path)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)
