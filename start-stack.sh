@@ -443,7 +443,7 @@ text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
 # URL-encode the postgres password for DSN insertion
-encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'])
+encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe='')
 text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
