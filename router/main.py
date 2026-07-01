@@ -36,15 +36,10 @@ def get_redis():
             return None
         _redis_last_init_attempt = now
         try:
-            url = os.getenv("VALKEY_URL")
-            if url:
-                _redis_client = aioredis.Redis.from_url(url, decode_responses=True, socket_timeout=1.0)
-                logger.info(f"Valkey client initialized from URL")
-            else:
-                host = os.getenv("VALKEY_HOST", "127.0.0.1")
-                port = int(os.getenv("VALKEY_PORT", "6379"))
-                _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
-                logger.info(f"Valkey client initialized at {host}:{port}")
+            host = os.getenv("VALKEY_HOST", "127.0.0.1")
+            port = int(os.getenv("VALKEY_PORT", "6379"))
+            _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
+            logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
             logger.warning(f"Failed to initialize Valkey client: {e} — falling back to local memory")
             _redis_client = None
@@ -1452,8 +1447,8 @@ async def proxy_models():
                         {"id": "llm-routing-agy",               "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 1048576},
                         {"id": "llm-routing-ollama",            "object": "model", "created": 0, "owned_by": "llm-routing", "context_length": 524288},
                     ]
-                    for entry in reversed(routing_models):
-                        data["data"].insert(0, entry)
+                    data["data"] = routing_models + data["data"]
+
                     return JSONResponse(content=data, status_code=200)
             except Exception as parse_err:
                 logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
@@ -3382,10 +3377,23 @@ VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "
 # the atomic file-replace mechanism, which is acceptable for this dashboard feature.
 annotations_lock = asyncio.Lock()
 
+_annotations_cache = {}
 
 def _read_annotations_sync(path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    import copy
+
+    # Do not swallow OSError if file doesn't exist to preserve original behavior.
+    # The caller (save_annotations) handles the exception when reading existing annotations.
+    current_mtime = os.path.getmtime(path)
+
+    cache_entry = _annotations_cache.get(path)
+
+    if cache_entry is None or current_mtime != cache_entry["mtime"]:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _annotations_cache[path] = {"mtime": current_mtime, "data": data}
+
+    return copy.deepcopy(_annotations_cache[path]["data"])
 
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
