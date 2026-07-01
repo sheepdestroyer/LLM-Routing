@@ -1,5 +1,7 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
+import concurrent.futures
+import threading
 import json, urllib.request, time, sys
 from collections import defaultdict, Counter
 from pathlib import Path
@@ -54,7 +56,6 @@ correct = 0
 per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
-import concurrent.futures
 
 def process_item(item):
     prompt = item["prompt"]
@@ -73,7 +74,6 @@ results_list = [None] * total
 with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
     # Submit all tasks immediately, but executor map will process them and yield results in order
     # To maintain rate limit properly without the quadratic delay or blocking progress, we can use a threading.Lock
-    import threading
     rate_limit_lock = threading.Lock()
     
     def process_item_with_rate_limit(index_and_item):
