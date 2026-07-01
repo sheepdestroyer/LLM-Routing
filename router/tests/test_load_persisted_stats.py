@@ -48,8 +48,8 @@ def test_load_persisted_stats_success(mock_stats):
                 mock_logger.assert_called_once_with("✓ Successfully loaded persisted gateway statistics from disk.")
 
 def test_load_persisted_stats_exception(mock_stats):
-    with patch("os.path.exists", return_value=True):
-        with patch("builtins.open", side_effect=Exception("Mock read error")):
+    with patch("router.main.os.path.exists", return_value=True):
+        with patch("router.main.open", side_effect=Exception("Mock read error")):
             with patch("router.main.logger.error") as mock_logger:
                 load_persisted_stats()
 
