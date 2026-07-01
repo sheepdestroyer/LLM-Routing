@@ -17,7 +17,7 @@ def mock_stats():
         yield router.main.stats
 
 def test_load_persisted_stats_file_not_exists(mock_stats):
-    with patch("os.path.exists", return_value=False) as mock_exists:
+    with patch("router.main.os.path.exists", return_value=False) as mock_exists:
         load_persisted_stats()
         mock_exists.assert_called_once_with(router.main.STATS_JSON_PATH)
         # Stats should remain unchanged
