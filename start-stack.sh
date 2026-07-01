@@ -398,7 +398,7 @@ placeholders = [
     "ENCRYPTION_KEY_PLACEHOLDER",
     "postgres-password-***",
     "MINIO_USER_PLACEHOLDER",
-    "MINIO_PASSWORD_PLACEHOLDER"
+    "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
