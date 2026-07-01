@@ -30,7 +30,7 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
-# Ensure openssl is installed if we need to generate passwords/keys
+
 
 
 if [ -z "$OPENROUTER_API_KEY" ]; then
@@ -159,8 +159,6 @@ if [ -z "$MINIO_ROOT_PASSWORD" ]; then
     echo "MINIO_ROOT_PASSWORD=\"$MINIO_ROOT_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_PASSWORD and saved to $ENV_FILE"
 fi
-
-
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
@@ -387,7 +385,7 @@ placeholders = [
     "ENCRYPTION_KEY_PLACEHOLDER",
     "postgres-password-***",
     "MINIO_USER_PLACEHOLDER",
-    "MINIO_PASSWORD_PLACEHOLDER"
+    "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
