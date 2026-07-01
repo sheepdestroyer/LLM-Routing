@@ -17,7 +17,7 @@ async def test_get_dashboard_data_structure():
     with patch("main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync, \
          patch("main.check_tcp_port", new_callable=AsyncMock) as mock_tcp, \
          patch("main.check_http_endpoint", new_callable=AsyncMock) as mock_http, \
-         patch("main.get_gemini_oauth_status_async", new_callable=AsyncMock) as mock_oauth, \
+         patch("main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth, \
          patch("main.get_best_free_model", new_callable=AsyncMock) as mock_best_model, \
          patch("main.get_goose_sessions") as mock_goose, \
          patch("main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp, \

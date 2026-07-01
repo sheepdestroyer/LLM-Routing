@@ -1027,43 +1027,42 @@ async def classify_request(
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 
-def _get_live_gemini_oauth_token_sync() -> str | None:
-    """Synchronous internal helper to retrieve the current valid Gemini OAuth access token."""
+def _get_live_gemini_oauth_token_sync_read(creds_path: str) -> dict:
+    with open(creds_path, "r") as f:
+        return json.load(f)
+
+async def get_live_gemini_oauth_token() -> str | None:
+    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
         creds_path = "/config/gemini_auth/oauth_creds.json"
         if os.path.exists(creds_path):
-            with open(creds_path, "r") as f:
-                data = json.load(f)
-                access_token = data.get("access_token")
-                expiry_ms = data.get("expiry_date", 0)
-                # Convert current time to milliseconds
-                current_ms = int(time.time() * 1000)
-                if access_token and current_ms < expiry_ms:
-                    logger.info(
-                        "🔑 Found valid, unexpired Gemini OAuth token from host!"
-                    )
-                    return access_token
-                else:
-                    # agy CLI uses the OS system keyring (GNOME Keyring), not this
-                    # stale disk file. The file being expired is expected — don't warn.
-                    logger.debug(
-                        "Gemini OAuth token on disk is expired — agy uses system keyring instead."
-                    )
+            data = await asyncio.to_thread(_get_live_gemini_oauth_token_sync_read, creds_path)
+            access_token = data.get("access_token")
+            expiry_ms = data.get("expiry_date", 0)
+            # Convert current time to milliseconds
+            current_ms = int(time.time() * 1000)
+            if access_token and current_ms < expiry_ms:
+                logger.info(
+                    "🔑 Found valid, unexpired Gemini OAuth token from host!"
+                )
+                return access_token
+            else:
+                # agy CLI uses the OS system keyring (GNOME Keyring), not this
+                # stale disk file. The file being expired is expected — don't warn.
+                logger.debug(
+                    "Gemini OAuth token on disk is expired — agy uses system keyring instead."
+                )
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
 
-def get_live_gemini_oauth_token() -> str | None:
-    """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
-    return _get_live_gemini_oauth_token_sync()
 
-async def get_live_gemini_oauth_token_async() -> str | None:
-    """Async wrapper to retrieve the current valid Gemini OAuth access token from local storage if not expired."""
-    return await asyncio.to_thread(_get_live_gemini_oauth_token_sync)
+def _get_gemini_oauth_status_sync_read(creds_path: str) -> dict:
+    with open(creds_path, "r") as f:
+        return json.load(f)
 
-
-def _get_gemini_oauth_status_sync() -> dict:
-    """Synchronous helper to retrieve structured OAuth status."""
+async def get_gemini_oauth_status() -> dict:
+    """Returns structured OAuth status for the dashboard banner."""
     creds_path = "/config/gemini_auth/oauth_creds.json"
     try:
         if not os.path.exists(creds_path):
@@ -1072,8 +1071,7 @@ def _get_gemini_oauth_status_sync() -> dict:
                 "detail": "No oauth_creds.json found",
                 "expiry_ms": 0,
             }
-        with open(creds_path, "r") as f:
-            data = json.load(f)
+        data = await asyncio.to_thread(_get_gemini_oauth_status_sync_read, creds_path)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)
@@ -1113,14 +1111,6 @@ def _get_gemini_oauth_status_sync() -> dict:
             }
     except Exception as e:
         return {"status": "error", "detail": str(e), "expiry_ms": 0}
-
-def get_gemini_oauth_status() -> dict:
-    """Returns structured OAuth status for the dashboard banner."""
-    return _get_gemini_oauth_status_sync()
-
-async def get_gemini_oauth_status_async() -> dict:
-    """Async wrapper to retrieve structured OAuth status for the dashboard banner."""
-    return await asyncio.to_thread(_get_gemini_oauth_status_sync)
 
 
 def map_tool_to_category(tool_name: str) -> str:
@@ -2642,7 +2632,7 @@ async def get_dashboard_data():
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
         check_http_endpoint("http://127.0.0.1:3001"),
-        get_gemini_oauth_status_async(),
+        get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
         asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
