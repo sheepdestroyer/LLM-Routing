@@ -25,6 +25,8 @@ LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rs
     "/"
 )
 
+GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
+
 
 _redis_client = None
 _redis_last_init_attempt = 0.0
@@ -1027,45 +1029,48 @@ async def classify_request(
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 
-def get_live_gemini_oauth_token() -> str | None:
+def _read_json_file_sync(file_path: str) -> dict:
+    """Helper to read JSON files synchronously."""
+    with open(file_path, "r") as f:
+        return json.load(f)
+
+async def get_live_gemini_oauth_token() -> str | None:
     """Retrieve the current valid Gemini OAuth access token from local storage if not expired."""
     try:
-        creds_path = "/config/gemini_auth/oauth_creds.json"
-        if os.path.exists(creds_path):
-            with open(creds_path, "r") as f:
-                data = json.load(f)
-                access_token = data.get("access_token")
-                expiry_ms = data.get("expiry_date", 0)
-                # Convert current time to milliseconds
-                current_ms = int(time.time() * 1000)
-                if access_token and current_ms < expiry_ms:
-                    logger.info(
-                        "🔑 Found valid, unexpired Gemini OAuth token from host!"
-                    )
-                    return access_token
-                else:
-                    # agy CLI uses the OS system keyring (GNOME Keyring), not this
-                    # stale disk file. The file being expired is expected — don't warn.
-                    logger.debug(
-                        "Gemini OAuth token on disk is expired — agy uses system keyring instead."
-                    )
+        if await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
+            data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
+            access_token = data.get("access_token")
+            expiry_ms = data.get("expiry_date", 0)
+            # Convert current time to milliseconds
+            current_ms = int(time.time() * 1000)
+            if access_token and current_ms < expiry_ms:
+                logger.info(
+                    "🔑 Found valid, unexpired Gemini OAuth token from host!"
+                )
+                return access_token
+            else:
+                # agy CLI uses the OS system keyring (GNOME Keyring), not this
+                # stale disk file. The file being expired is expected — don't warn.
+                logger.debug(
+                    "Gemini OAuth token on disk is expired — agy uses system keyring instead."
+                )
     except Exception as e:
         logger.error(f"Failed to read live OAuth token: {e}")
     return None
 
 
-def get_gemini_oauth_status() -> dict:
+
+
+async def get_gemini_oauth_status() -> dict:
     """Returns structured OAuth status for the dashboard banner."""
-    creds_path = "/config/gemini_auth/oauth_creds.json"
     try:
-        if not os.path.exists(creds_path):
+        if not await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
             return {
                 "status": "missing",
                 "detail": "No oauth_creds.json found",
                 "expiry_ms": 0,
             }
-        with open(creds_path, "r") as f:
-            data = json.load(f)
+        data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)
@@ -2626,7 +2631,7 @@ async def get_dashboard_data():
         check_http_endpoint("http://127.0.0.1:4000/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
         check_http_endpoint("http://127.0.0.1:3001"),
-        asyncio.to_thread(get_gemini_oauth_status),
+        get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
         asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
