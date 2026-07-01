@@ -187,7 +187,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
       exec:
@@ -196,7 +196,7 @@ spec:
         - --user
         - clickhouse
         - --password
-        - clickhouse
+        - CLICKHOUSE_PASSWORD_PLACEHOLDER
         - --query
         - SELECT 1
       initialDelaySeconds: 20
@@ -222,7 +222,7 @@ spec:
     - --port
     - '6380'
     - --requirepass
-    - langfuse-redis-2026
+    - REDIS_AUTH_PLACEHOLDER
     - --maxmemory-policy
     - noeviction
     - --loglevel
@@ -242,7 +242,7 @@ spec:
         - -p
         - "6380"
         - -a
-        - langfuse-redis-2026
+        - REDIS_AUTH_PLACEHOLDER
         - ping
       initialDelaySeconds: 2
       periodSeconds: 5
@@ -273,9 +273,9 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: S3_FORCE_PATH_STYLE
@@ -287,7 +287,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -295,7 +295,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: langfuse-redis-2026
+      value: REDIS_AUTH_PLACEHOLDER
     - name: LANGFUSE_INIT_ORG_ID
       value: org-local-dev-id
     - name: LANGFUSE_INIT_ORG_NAME
@@ -307,7 +307,7 @@ spec:
     - name: LANGFUSE_INIT_USER_EMAIL
       value: admin@local.dev
     - name: LANGFUSE_INIT_USER_PASSWORD
-      value: admin-local-pw-2026
+      value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
     image: docker.io/langfuse/langfuse:3
@@ -343,7 +343,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -351,7 +351,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: langfuse-redis-2026
+      value: REDIS_AUTH_PLACEHOLDER
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
@@ -363,13 +363,13 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: S3_FORCE_PATH_STYLE
       value: 'true'
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
     image: docker.io/langfuse/langfuse-worker:3
@@ -393,9 +393,9 @@ spec:
     - ":9001"
     env:
     - name: MINIO_ROOT_USER
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: MINIO_ROOT_PASSWORD
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     image: docker.io/minio/minio:latest
     livenessProbe:
       httpGet:
