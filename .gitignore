@@ -34,6 +34,7 @@ router/free_models_roster.json
 .jules/
 workdirs/
 pr_description.txt
+scripts/get_pr_status.py
 
 # Dataset work in progress
 data/
