@@ -141,6 +141,17 @@ if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
     echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
 fi
 
+if [ -z "$REDIS_AUTH" ]; then
+    REDIS_AUTH="$(openssl rand -hex 16)"
+    echo "REDIS_AUTH=\"$REDIS_AUTH\"" >> "$ENV_FILE"
+    echo "✓ Generated new REDIS_AUTH and saved to $ENV_FILE"
+fi
+
+if [ -z "$CLICKHOUSE_PASSWORD" ]; then
+    CLICKHOUSE_PASSWORD="$(openssl rand -hex 16)"
+    echo "CLICKHOUSE_PASSWORD=\"$CLICKHOUSE_PASSWORD\"" >> "$ENV_FILE"
+    echo "✓ Generated new CLICKHOUSE_PASSWORD and saved to $ENV_FILE"
+fi
 
 if [ -z "$ROUTER_API_KEY" ]; then
     ROUTER_API_KEY="$(openssl rand -hex 32)"

@@ -1,4 +1,5 @@
 import os
+import aiofiles
 import re
 import sys
 import json
@@ -3384,21 +3385,23 @@ annotations_lock = asyncio.Lock()
 
 _annotations_cache = {}
 
-def _read_annotations_sync(path) -> dict:
+async def _read_annotations_async(path) -> dict:
     import copy
 
     # Do not swallow OSError if file doesn't exist to preserve original behavior.
     # The caller (save_annotations) handles the exception when reading existing annotations.
-    current_mtime = os.path.getmtime(path)
+    current_mtime = await asyncio.to_thread(os.path.getmtime, path)
 
     cache_entry = _annotations_cache.get(path)
 
     if cache_entry is None or current_mtime != cache_entry["mtime"]:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            # Read asynchronously, but parse in a thread pool to avoid blocking event loop
+            content = await f.read()
+            data = await asyncio.to_thread(json.loads, content)
             _annotations_cache[path] = {"mtime": current_mtime, "data": data}
 
-    return copy.deepcopy(_annotations_cache[path]["data"])
+    return await asyncio.to_thread(copy.deepcopy, _annotations_cache[path]["data"])
 
 @app.post("/dashboard/save-annotations")
 async def save_annotations(payload: Dict[str, AnnotationItem]):
@@ -3451,7 +3454,7 @@ async def save_annotations(payload: Dict[str, AnnotationItem]):
         async with annotations_lock:
             if ann_path.exists():
                 try:
-                    existing = await asyncio.to_thread(_read_annotations_sync, str(ann_path))
+                    existing = await _read_annotations_async(str(ann_path))
                 except Exception as read_err:
                     logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
 
