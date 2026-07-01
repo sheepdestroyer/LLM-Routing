@@ -114,7 +114,7 @@ try:
     serializer.register(original_datetime, _serialize_dt)
     serializer.register(RobustDatetime, _serialize_dt)
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
-except ImportError:
+except Exception:
     pass
 sys.stdout.flush()
 
