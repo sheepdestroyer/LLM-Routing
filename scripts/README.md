@@ -4,7 +4,7 @@ This directory and the repository root contain various scripts used for stack or
 
 ---
 
-## 1. Stack Orchestration & Backups
+## 1. Stack Orchestration, Backups, and PR Utilities
 
 ### `start-stack.sh` (Root Directory)
 Unified startup and credential extraction script for the Podman Kubernetes container stack.
@@ -15,6 +15,13 @@ Unified startup and credential extraction script for the Podman Kubernetes conta
 
 ### `scripts/backup.sh`
 Automated database backup script that runs before every stack deployment. Uses `pg_isready` to safely wait for database connections and manages timestamped backups under `backups/`.
+
+### `scripts/get_pr_status.py`
+A CLI utility to fetch and print the status of a GitHub PR (its state, review decisions, and checks status rollup) using the `gh` CLI.
+- **Usage**:
+  - `python3 scripts/get_pr_status.py` (Fetches status of the current branch's PR)
+  - `python3 scripts/get_pr_status.py <pr_id>` (Fetches status for the specified PR ID)
+
 
 ---
 
@@ -81,6 +88,9 @@ The integration test suite is located in the root directory. Tests are categoriz
 
 ### Dashboard & Annotations Tests
 - **`tests/test_read_annotations_async.py`**: Unit tests for the asynchronous dashboard annotation reading and caching mechanism.
+
+### Utility Script Tests
+- **`tests/test_get_pr_status.py`**: Unit tests validating command execution, status fetching, and error/timeout handling in `scripts/get_pr_status.py`.
 
 ### Simulation Tests
 - **`test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
