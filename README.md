@@ -66,7 +66,7 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
+> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.90.2`. See §3B for pinning policy.
 
 ---
 
@@ -269,7 +269,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
+- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.90.2` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
