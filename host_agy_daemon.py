@@ -65,91 +65,67 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 cmd.extend(["--print", prompt])
                 
                 master_fd, slave_fd = pty.openpty()
-                proc = None
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         *cmd, env=env,
                         stdout=slave_fd,
                         stderr=slave_fd,
                     )
+                    os.close(slave_fd)
                 except Exception as e:
-                    try:
-                        os.close(slave_fd)
-                    except OSError:
-                        pass
-                    try:
-                        os.close(master_fd)
-                    except OSError:
-                        pass
+                    os.close(slave_fd)
+                    os.close(master_fd)
                     # Write failure details as status
-                    try:
-                        err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
-                        self.wfile.write(err_msg.encode('utf-8'))
-                        self.wfile.flush()
-                    except Exception:
-                        pass
+                    err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
+                    self.wfile.write(err_msg.encode('utf-8'))
+                    self.wfile.flush()
                     return
-                finally:
-                    # Always close the slave end in the parent process
+
+                loop_ref = asyncio.get_running_loop()
+
+                def read_bytes():
                     try:
-                        os.close(slave_fd)
+                        return os.read(master_fd, 1024)
                     except OSError:
-                        pass
+                        return b""
 
-                returncode = -1
+                while True:
+                    data = await loop_ref.run_in_executor(None, read_bytes)
+                    if not data:
+                        break
+                    text = data.decode('utf-8', errors='replace')
+                    # PTY text can have \r\n, normalize to \n
+                    text_norm = text.replace('\r\n', '\n')
+                    # Yield token JSON line
+                    chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
+                    self.wfile.write(chunk_json.encode('utf-8'))
+                    self.wfile.flush()
+
                 try:
-                    loop_ref = asyncio.get_running_loop()
-
-                    def read_bytes():
-                        try:
-                            return os.read(master_fd, 1024)
-                        except OSError:
-                            return b""
-
-                    while True:
-                        data = await loop_ref.run_in_executor(None, read_bytes)
-                        if not data:
-                            break
-                        text = data.decode('utf-8', errors='replace')
-                        text_norm = text.replace('\r\n', '\n')
-                        chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
-                        self.wfile.write(chunk_json.encode('utf-8'))
-                        self.wfile.flush()
-
-                    # Wait for subprocess
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
                     returncode = proc.returncode or 0
                 except asyncio.TimeoutError:
-                    returncode = -1
-                except Exception:
-                    returncode = -1
-                finally:
-                    # Ensure process is killed and cleaned up
-                    if proc and proc.returncode is None:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
-
-                    # Ensure master FD is closed
                     try:
-                        os.close(master_fd)
-                    except OSError:
+                        proc.kill()
+                    except Exception:
                         pass
-
-                # Retrieve last conversation ID and write closing status
-                try:
-                    result_conv_id = get_last_conversation_id()
-                    meta_json = json.dumps({
-                        "type": "status",
-                        "returncode": returncode,
-                        "conversation_id": result_conv_id
-                    }) + "\n"
-                    self.wfile.write(meta_json.encode('utf-8'))
-                    self.wfile.flush()
+                    returncode = -1
                 except Exception:
-                    pass
+                    returncode = -1
+
+                os.close(master_fd)
+
+                # Retrieve last conversation ID
+                result_conv_id = get_last_conversation_id()
+
+                # Write closing metadata
+                meta_json = json.dumps({
+                    "type": "status",
+                    "returncode": returncode,
+                    "conversation_id": result_conv_id
+                }) + "\n"
+                self.wfile.write(meta_json.encode('utf-8'))
+                self.wfile.flush()
                 
             loop.run_until_complete(run_stream())
             loop.close()

@@ -3,13 +3,7 @@
 
 import sys
 from pathlib import Path
-
-# Dynamic project root discovery
-root = Path(__file__).resolve()
-while root.parent != root and not (root / ".git").exists():
-    root = root.parent
-sys.path.insert(0, str(root))
-sys.path.insert(0, str(root / "router"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from router.circuit_breaker import get_breaker
 

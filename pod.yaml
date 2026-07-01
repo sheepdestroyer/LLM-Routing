@@ -4,14 +4,14 @@ metadata:
   name: agent-router-pod
 spec:
   containers:
-  # Valkey Cache — LiteLLM response cache (exact-match & semantic)
+  # Valkey Cache 9.1.0-alpine — LiteLLM response cache (exact-match & semantic)
   - command:
     - valkey-server
     - --protected-mode
     - 'no'
     - --loglevel
     - warning
-    image: valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
       tcpSocket:
         port: 6379
@@ -34,7 +34,7 @@ spec:
     - /app/entrypoint.py
     env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
+      value: postgresql://postgres:***@127.0.0.1:5432/postgres
     - name: STORE_MODEL_IN_DB
       value: 'True'
     - name: LITELLM_LOG
@@ -42,10 +42,10 @@ spec:
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
     - name: LITELLM_MASTER_KEY
-      value: LITELLM_MASTER_KEY_PLACEHOLDER
+      value: sk-lit...33bf
     - name: OLLAMA_API_KEY
-      value: OLLAMA_API_KEY_PLACEHOLDER
-    image: berriai/litellm:v1.90.2
+      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
+    image: ghcr.io/berriai/litellm:v1.89.4
     livenessProbe:
       exec:
         command:
@@ -89,19 +89,19 @@ spec:
     - name: LITELLM_CONFIG_PATH
       value: /config/litellm_dir/config.yaml
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
+      value: postgresql://postgres:***@127.0.0.1:5432/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
       value: unix:path=/run/user/1000/bus
     - name: LITELLM_MASTER_KEY
-      value: LITELLM_MASTER_KEY_PLACEHOLDER
+      value: sk-lit...33bf
     - name: LANGFUSE_PUBLIC_KEY
-      value: LANGFUSE_PUBLIC_KEY_PLACEHOLDER
+      value: pk-lf-200bbf48-1d23-447d-a79a-8614106497e6
     - name: LANGFUSE_SECRET_KEY
-      value: LANGFUSE_SECRET_KEY_PLACEHOLDER
+      value: sk-lf-...3b49
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:3001
     - name: OLLAMA_API_KEY
-      value: OLLAMA_API_KEY_PLACEHOLDER
+      value: 3cd542f8fca14fd08bedfd4f2ab36f9f.6G7Iukbvu1Keyi9x8eKckNEO
     - name: LOG_LEVEL
       value: info
     image: localhost/llm-triage-router:latest
@@ -154,10 +154,10 @@ spec:
     - name: POSTGRES_USER
       value: postgres
     - name: POSTGRES_PASSWORD
-      value: POSTGRES_PASSWORD_RAW_PLACEHOLDER
+      value: postgres-password-***
     - name: POSTGRES_DB
       value: langfuse
-    image: pgvector/pgvector:0.8.4-pg18
+    image: docker.io/pgvector/pgvector:pg18
     livenessProbe:
       exec:
         command:
@@ -188,7 +188,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: clickhouse
-    image: clickhouse/clickhouse-server:26.6.1.1193
+    image: docker.io/clickhouse/clickhouse-server:26.5.1
     livenessProbe:
       exec:
         command:
@@ -227,7 +227,7 @@ spec:
     - noeviction
     - --loglevel
     - warning
-    image: valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0-alpine
     livenessProbe:
       tcpSocket:
         port: 6380
@@ -253,7 +253,7 @@ spec:
   # Langfuse Web — observability dashboard
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
     - name: NEXTAUTH_SECRET
       value: NEXTAUTH_SECRET_PLACEHOLDER
     - name: NEXTAUTH_URL
@@ -273,9 +273,9 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: S3_FORCE_PATH_STYLE
@@ -307,10 +307,10 @@ spec:
     - name: LANGFUSE_INIT_USER_EMAIL
       value: admin@local.dev
     - name: LANGFUSE_INIT_USER_PASSWORD
-      value: admin-local-pw-2026
+      value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse:3.202.1
+    image: docker.io/langfuse/langfuse:3
     livenessProbe:
       exec:
         command:
@@ -337,7 +337,7 @@ spec:
   # Langfuse Worker — background job processor
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:***@127.0.0.1:5432/langfuse
     - name: CLICKHOUSE_URL
       value: http://127.0.0.1:8123
     - name: CLICKHOUSE_USER
@@ -363,16 +363,16 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_REGION
       value: us-east-1
     - name: LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: S3_FORCE_PATH_STYLE
       value: 'true'
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
       value: http://127.0.0.1:9002
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
-      value: minioadmin
+      value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse-worker:3.202.1
+    image: docker.io/langfuse/langfuse-worker:3
     livenessProbe:
       exec:
         command:
@@ -393,10 +393,10 @@ spec:
     - ":9001"
     env:
     - name: MINIO_ROOT_USER
-      value: minioadmin
+      value: MINIO_USER_PLACEHOLDER
     - name: MINIO_ROOT_PASSWORD
-      value: minioadmin
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+      value: MINIO_PASSWORD_PLACEHOLDER
+    image: docker.io/minio/minio:latest
     livenessProbe:
       httpGet:
         path: /minio/health/live
