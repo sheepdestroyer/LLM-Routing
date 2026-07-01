@@ -37,9 +37,9 @@ updates:
     #   - dockerhub
     ignore:
       # Example: ignore semver-major updates for Postgres and ClickHouse while testing
-      - dependency-name: "docker.io/pgvector/pgvector"
+      - dependency-name: "pgvector/pgvector"
         update-types: ["version-update:semver-major"]
-      - dependency-name: "docker.io/clickhouse/clickhouse-server"
+      - dependency-name: "clickhouse/clickhouse-server"
         update-types: ["version-update:semver-major"]
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
