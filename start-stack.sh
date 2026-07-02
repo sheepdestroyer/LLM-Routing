@@ -12,6 +12,29 @@ set -e
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORKDIR"
 
+show_help() {
+    echo "Usage:"
+    echo "  ./start-stack.sh                   → Restart existing pod (fast, preserves logs)"
+    echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
+    echo "  ./start-stack.sh --full-rebuild    → Rebuild router image and recreate/redeploy pod"
+    echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
+    exit 0
+}
+
+FULL_REBUILD=false
+REPLACE_MODE=false
+if [ "${1:-}" = "--full-rebuild" ]; then
+    FULL_REBUILD=true
+elif [ "${1:-}" = "--replace" ]; then
+    REPLACE_MODE=true
+elif [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    show_help
+elif [ -n "${1:-}" ]; then
+    echo "❌ Error: Unknown argument '${1}'"
+    show_help
+    exit 1
+fi
+
 # Ensure local volume directories exist on the host for Podman mounts
 mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
 
@@ -226,13 +249,7 @@ fi
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
-FULL_REBUILD=false
-REPLACE_MODE=false
-if [ "${1:-}" = "--full-rebuild" ]; then
-    FULL_REBUILD=true
-elif [ "${1:-}" = "--replace" ]; then
-    REPLACE_MODE=true
-fi
+# Arguments parsed at top of script
 
 # ── Cleanup zombie host-network ports ──
 # Podman with host networking can leave stuck LISTEN sockets after SIGKILL.
