@@ -36,6 +36,9 @@ if [ $# -gt 1 ]; then
     exit 1
 fi
 
+# Ensure local volume directories exist on the host for Podman mounts
+mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
+
 FULL_REBUILD=false
 REPLACE_MODE=false
 if [ "${1:-}" = "--full-rebuild" ]; then
@@ -51,8 +54,7 @@ elif [ -n "${1:-}" ]; then
     exit 1
 fi
 
-# Ensure local volume directories exist on the host for Podman mounts
-mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
+
 
 ENV_FILE="${WORKDIR}/.env"
 
@@ -80,9 +82,17 @@ fi
 if [ -z "$OPENROUTER_API_KEY" ]; then
     if [ -t 0 ]; then
         echo "🔑 OpenRouter API Key not found."
-        echo -n "Please enter your OpenRouter API Key (input will be hidden): "
-        read -rs OPENROUTER_API_KEY
-        echo ""
+        while [ -z "$OPENROUTER_API_KEY" ]; do
+            echo -n "Please enter your OpenRouter API Key (input will be hidden): "
+            if ! read -rs OPENROUTER_API_KEY; then
+                echo -e "\n❌ Error: Failed to read OpenRouter API Key (EOF reached). Aborting." >&2
+                exit 1
+            fi
+            echo ""
+            if [ -z "$OPENROUTER_API_KEY" ]; then
+                echo "❌ Error: API key cannot be empty. Please try again."
+            fi
+        done
         escaped_key=$(escape_env_val "$OPENROUTER_API_KEY")
         echo "OPENROUTER_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
@@ -249,7 +259,10 @@ if [ -z "$OLLAMA_API_KEY" ]; then
         echo "🔑 OLLAMA_API_KEY not found."
         while [ -z "$OLLAMA_API_KEY" ]; do
             echo -n "Please enter your Ollama API Key (input will be hidden): "
-            read -rs OLLAMA_API_KEY
+            if ! read -rs OLLAMA_API_KEY; then
+                echo -e "\n❌ Error: Failed to read Ollama API Key (EOF reached). Aborting." >&2
+                exit 1
+            fi
             echo ""
             if [ -z "$OLLAMA_API_KEY" ]; then
                 echo "❌ Error: API key cannot be empty. Please try again."
@@ -378,7 +391,10 @@ setup_minio_buckets() {
     # Ensure mc alias points to the correct MinIO S3 API port (9002, not 9000)
     # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
     # not MinIO. We must override it.
-    podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null
+    if ! podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
+        echo "❌ Error: Failed to set MinIO alias 'local' on http://127.0.0.1:9002" >&2
+        exit 1
+    fi
 
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
@@ -531,6 +547,15 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
+import re
+unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
+if unresolved:
+    sys.stderr.write(
+        "Error: Unresolved placeholders remain in rendered pod.yaml: "
+        + ", ".join(unresolved)
+        + "\n"
+    )
+    sys.exit(1)
 sys.stdout.write(text)
 PY
 }

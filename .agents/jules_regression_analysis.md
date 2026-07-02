@@ -55,7 +55,7 @@ To prevent automated agents from causing directory and code regressions, the fol
 > [!WARNING]
 > Never push conflict resolutions without running the full test suite.
 > * If the workspace previously had $N$ passing tests, the resolved branch must have at least $N$ passing tests.
-> * Confirm all files staged for deletion or addition are intentional using `git diff --stat origin/master`.
+> * Confirm all files staged for deletion, addition, or rename are intentional by running `git diff --name-only origin/master...HEAD` and inspecting the content diffs of renamed or moved files.
 
 ### Rule 3: File Integrity & Verification Checklist
 Add a post-conflict verification script step to the agent workflow:
@@ -76,6 +76,6 @@ You are resolving merge conflicts for the branch [branch_name].
 1. Run `git fetch origin` and `git rebase origin/master`.
 2. If conflicts arise, inspect whether any files were renamed/moved in master. Apply your changes to the renamed files in their new locations, rather than re-creating them at their old locations.
 3. Once rebased, run the entire test suite: `pytest`.
-4. Run `git diff --stat origin/master` and review every file addition/deletion. Verify that no tests or scripts are missing compared to master.
-5. If any test files or core logic sections are missing, checkout the missing files from master and apply changes cleanly.
+4. Run `git diff --name-only origin/master...HEAD` and inspect the full content diff for renamed, deleted, or restored files.
+5. Only restore files from `master` after confirming the deletion was accidental; do not auto-checkout files that may have been intentionally renamed or removed.
 ```

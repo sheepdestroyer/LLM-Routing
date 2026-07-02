@@ -63,7 +63,7 @@ def process_item(item):
         prompt = item["prompt"]
         expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = classify(prompt)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError) as e:
+    except Exception as e:
         expected = ""
         if isinstance(item, dict):
             expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")

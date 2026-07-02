@@ -78,9 +78,10 @@ def test_daemon_post_404(daemon_server):
 def test_daemon_post_stream_false(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False, "conversation_id": "conv_abc", "model_override": "gpt-4"})
 
+    captured = {}
     async def mock_exec(*args, **kwargs):
-        assert args == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_abc", "--print", "test prompt")
-        assert kwargs.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "gpt-4"
+        captured["args"] = args
+        captured["env"] = kwargs.get("env", {})
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -100,6 +101,8 @@ def test_daemon_post_stream_false(daemon_server, monkeypatch):
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode())
 
+    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_abc", "--print", "test prompt")
+    assert captured.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "gpt-4"
     assert data["returncode"] == 0
     assert data["stdout"] == "mocked stdout output"
     assert data["stderr"] == "mocked stderr output"
@@ -130,9 +133,10 @@ def test_daemon_post_stream_false_timeout(daemon_server, monkeypatch):
 def test_daemon_post_stream_true(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "model_override": "test-model"})
 
+    captured = {}
     async def mock_exec(*args, **kwargs):
-        assert args == (host_agy_daemon.AGY_BINARY, "--print", "test prompt")
-        assert kwargs.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "test-model"
+        captured["args"] = args
+        captured["env"] = kwargs.get("env", {})
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -158,6 +162,8 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
+    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--print", "test prompt")
+    assert captured.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "test-model"
     assert len(lines) == 3
     assert json.loads(lines[0]) == {"type": "token", "content": "token1\n"}
     assert json.loads(lines[1]) == {"type": "token", "content": "token2\n"}
@@ -227,9 +233,11 @@ def test_run_server_interrupt(monkeypatch):
 
     # Track if server_close was called
     close_called = False
+    real_close = host_agy_daemon.ThreadingHTTPServer.server_close
     def mock_server_close(self):
         nonlocal close_called
         close_called = True
+        real_close(self)
 
     monkeypatch.setattr(host_agy_daemon.ThreadingHTTPServer, "server_close", mock_server_close)
 
@@ -240,8 +248,9 @@ def test_run_server_interrupt(monkeypatch):
 def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False})
 
+    captured = {}
     async def mock_exec(*args, **kwargs):
-        assert "CASCADE_DEFAULT_MODEL_OVERRIDE" not in kwargs.get("env", {})
+        captured["env"] = kwargs.get("env", {})
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -253,6 +262,7 @@ def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode())
 
+    assert "CASCADE_DEFAULT_MODEL_OVERRIDE" not in captured.get("env", {})
     assert data["returncode"] == 0
 
 def test_daemon_post_stream_true_read_oserror(daemon_server, monkeypatch):
@@ -412,8 +422,9 @@ def test_daemon_post_stream_false_unlink_error(daemon_server, monkeypatch):
 def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "conversation_id": "conv_789"})
 
+    captured = {}
     async def mock_exec(*args, **kwargs):
-        assert args == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_789", "--print", "test prompt")
+        captured["args"] = args
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
@@ -427,5 +438,6 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
+    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_789", "--print", "test prompt")
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": 0, "conversation_id": "conv_789"}

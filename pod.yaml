@@ -157,6 +157,8 @@ spec:
       value: POSTGRES_PASSWORD_RAW_PLACEHOLDER
     - name: POSTGRES_DB
       value: langfuse
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pg18
     image: docker.io/pgvector/pgvector:0.8.3-pg18
     livenessProbe:
       exec:

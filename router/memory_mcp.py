@@ -252,7 +252,7 @@ async def handle_remove_memory_category(args: dict) -> str:
                     return None
                 else:
                     return r.text
-            except Exception as e:
+            except httpx.HTTPError as e:
                 return str(e)
 
     sem = asyncio.Semaphore(10)
