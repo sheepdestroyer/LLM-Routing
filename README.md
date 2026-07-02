@@ -790,7 +790,31 @@ The cooldown mechanism works as follows:
 
 For auto-routing modes, the Triage Router handles failures by silently falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns `429` immediately during cooldown, allowing LiteLLM to skip this model group and cascade to `openrouter-auto`. The cooldown status is visible via the `/metrics` endpoint (`ollama_cooldown_active` and `ollama_cooldown_remaining_seconds` gauges).
 
-## 10. Performance Benchmarks\n\nThrough our local benchmarks, the following performance characteristics have been achieved:
+## 9d. Live Stack Tier Testing & Verification
+
+The repository includes an automated integration script to test the 5-tier intent routing pipeline on the live gateway stack:
+* **Location**: [test_reasoning_tiers.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/scripts/verification/test_reasoning_tiers.py)
+
+This script sends five sequential chat completion requests (from simple to advanced prompt complexities) to the gateway's `llm-routing-auto-free` auto-triage route, verifying that:
+1. The local classifier correctly categorizes and labels the prompt intent.
+2. The gateway successfully routes the prompt to the mapped LiteLLM fallback model group or provider.
+3. The responses are returned successfully with acceptable latency.
+
+### How to Run
+
+Ensure the container stack is deployed and healthy:
+```bash
+./start-stack.sh
+```
+
+Execute the verification script:
+```bash
+./scripts/verification/test_reasoning_tiers.py
+```
+
+## 10. Performance Benchmarks
+
+Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |
