@@ -9,6 +9,8 @@ router_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if router_path not in sys.path:
     sys.path.insert(0, router_path)
 
+os.environ["CONFIG_PATH"] = os.path.join(router_path, "config.yaml")
+
 import main
 
 @pytest.mark.asyncio

@@ -324,7 +324,7 @@ def test_parse_memory_value_type_error_fallback():
 def test_parse_memory_value_non_dict_json():
     raw_data = '"just a string"'
     result = _parse_memory_value(raw_data)
-    assert result == "just a string"
+    assert result == {"data": "just a string", "tags": []}
 
 
 def test_make_key_and_parse_key_round_trip():

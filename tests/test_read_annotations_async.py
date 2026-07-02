@@ -12,6 +12,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import router.main
 from router.main import _read_annotations_async
 
+def make_mock_aiofiles_open(content: str):
+    mock_file = AsyncMock()
+    mock_file.read.return_value = content
+    mock_context_manager = MagicMock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(return_value=mock_context_manager)
+
 @pytest.fixture(autouse=True)
 def clear_cache():
     router.main._annotations_cache.clear()
@@ -23,14 +31,7 @@ async def test_read_annotations_async_initial_read():
     fake_data = {"annotation1": "data1"}
 
     # Mock aiofiles.open
-    mock_file = AsyncMock()
-    mock_file.read.return_value = '{"annotation1": "data1"}'
-    
-    mock_context_manager = MagicMock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=False)
-    
-    mock_aiofiles_open = MagicMock(return_value=mock_context_manager)
+    mock_aiofiles_open = make_mock_aiofiles_open('{"annotation1": "data1"}')
 
     with patch("os.path.getmtime", return_value=100.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:
@@ -75,14 +76,7 @@ async def test_read_annotations_async_cache_invalidation():
     # Pre-populate cache with old mtime
     router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data_old}
 
-    mock_file = AsyncMock()
-    mock_file.read.return_value = '{"annotation2": "data2"}'
-    
-    mock_context_manager = MagicMock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=False)
-    
-    mock_aiofiles_open = MagicMock(return_value=mock_context_manager)
+    mock_aiofiles_open = make_mock_aiofiles_open('{"annotation2": "data2"}')
 
     with patch("os.path.getmtime", return_value=200.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:

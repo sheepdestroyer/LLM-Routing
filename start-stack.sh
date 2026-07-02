@@ -18,7 +18,6 @@ show_help() {
     echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
     echo "  ./start-stack.sh --full-rebuild    → Rebuild router image and recreate/redeploy pod"
     echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
-    exit 0
 }
 
 FULL_REBUILD=false
@@ -29,6 +28,7 @@ elif [ "${1:-}" = "--replace" ]; then
     REPLACE_MODE=true
 elif [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     show_help
+    exit 0
 elif [ -n "${1:-}" ]; then
     echo "❌ Error: Unknown argument '${1}'"
     show_help
@@ -230,9 +230,14 @@ fi
 if [ -z "$OLLAMA_API_KEY" ]; then
     if [ -t 0 ]; then
         echo "🔑 OLLAMA_API_KEY not found."
-        echo -n "Please enter your Ollama API Key (input will be hidden): "
-        read -rs OLLAMA_API_KEY
-        echo ""
+        while [ -z "$OLLAMA_API_KEY" ]; do
+            echo -n "Please enter your Ollama API Key (input will be hidden): "
+            read -rs OLLAMA_API_KEY
+            echo ""
+            if [ -z "$OLLAMA_API_KEY" ]; then
+                echo "❌ Error: API key cannot be empty. Please try again."
+            fi
+        done
         echo "OLLAMA_API_KEY=\"$OLLAMA_API_KEY\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ Ollama API key saved securely to $ENV_FILE"
@@ -456,7 +461,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse
 uid = os.getuid()
@@ -477,7 +482,9 @@ placeholders = [
     "LANGFUSE_SECRET_KEY_PLACEHOLDER",
     "MINIO_USER_PLACEHOLDER",
     "MINIO_PASSWORD_PLACEHOLDER",
-    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
+    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
+    "REDIS_AUTH_PLACEHOLDER",
+    "CLICKHOUSE_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -500,6 +507,8 @@ text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", os.environ["LANGFUSE_SECR
 text = text.replace("MINIO_USER_PLACEHOLDER", os.environ["MINIO_ROOT_USER"])
 text = text.replace("MINIO_PASSWORD_PLACEHOLDER", os.environ["MINIO_ROOT_PASSWORD"])
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", os.environ["LANGFUSE_INIT_USER_PASSWORD"])
+text = text.replace("REDIS_AUTH_PLACEHOLDER", os.environ["REDIS_AUTH"])
+text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", os.environ["CLICKHOUSE_PASSWORD"])
 sys.stdout.write(text)
 PY
 }

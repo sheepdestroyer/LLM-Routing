@@ -39,7 +39,7 @@ To ensure complete stability, we performed a systematic, automated three-dot dif
 
 ### The Regression
 * **File:** `router/main.py`
-* **Issue:** `_load_aa_scores()` (which does a blocking synchronous JSON disk read of `aa_scores.json`) was called directly inside `compute_free_model_score()`. When resolving or syncing OpenRouter free models, this synchronous file read was executed sequentially in a loop, blocking the main event loop.
+* **Issue:** `_load_aa_scores()` (which does a blocking synchronous JSON disk read of `aa_scores.json`) was called directly at free-model/roster call sites, specifically `sync_adaptive_router_roster()` and `get_best_free_model()`, rather than inside `compute_free_model_score()`. The fix was to move `_load_aa_scores()` behind `await asyncio.to_thread(...)` and remove the direct synchronous call from the scoring path.
 * **Merged Fix Lost:** The merged PR #98 had offloaded this operation to a background thread pool using `await asyncio.to_thread(_load_aa_scores)` outside the loops in `sync_adaptive_router_roster` and `get_best_free_model`, but this change was completely discarded during automated conflict resolution.
 
 ### The Resolution

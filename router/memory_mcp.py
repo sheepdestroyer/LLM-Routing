@@ -88,7 +88,14 @@ def _memory_value(data: str, tags: list | None) -> str:
 def _parse_memory_value(raw: str) -> dict:
     """Decode stored value back into {data, tags}."""
     try:
-        return json.loads(raw)
+        val = json.loads(raw)
+        if not isinstance(val, dict):
+            return {"data": val, "tags": []}
+        if "data" not in val:
+            val["data"] = str(val)
+        if "tags" not in val or not isinstance(val["tags"], list):
+            val["tags"] = []
+        return val
     except (json.JSONDecodeError, TypeError):
         return {"data": raw, "tags": []}
 
@@ -230,7 +237,8 @@ async def handle_remove_memory_category(args: dict) -> str:
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in to_delete:
             key = entry["key"]
-            await client.delete(f"{API_URL}/{key}", timeout=5.0)
+            quoted_key = urllib.parse.quote(key, safe="")
+            await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
 
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"
@@ -269,7 +277,8 @@ async def handle_remove_specific_memory(args: dict) -> str:
         )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.delete(f"{API_URL}/{target['key']}", timeout=5.0)
+        quoted_key = urllib.parse.quote(target['key'], safe="")
+        r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
         if r.status_code == 200:
             return f"Removed memory in category '{category}' ({target['data'][:60]}...)."
         else:

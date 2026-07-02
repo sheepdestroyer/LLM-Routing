@@ -1,12 +1,19 @@
 import os
-os.environ.setdefault("CONFIG_PATH", "/config/router_dir/config.yaml")
+import sys
+
+# Ensure router directory is in sys.path
+router_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if router_path not in sys.path:
+    sys.path.insert(0, router_path)
+
+os.environ["CONFIG_PATH"] = os.path.join(router_path, "config.yaml")
 
 import json
 import pytest
 from unittest.mock import patch, mock_open
 
-import router.main
-from router.main import load_persisted_stats
+import main
+from main import load_persisted_stats
 
 @pytest.fixture
 def mock_stats():
@@ -16,13 +23,13 @@ def mock_stats():
         "nested_dict": {"a": 1, "b": 2},
         "existing_key": "value"
     }
-    with patch.dict(router.main.stats, clean_stats, clear=True):
-        yield router.main.stats
+    with patch.dict(main.stats, clean_stats, clear=True):
+        yield main.stats
 
 def test_load_persisted_stats_file_not_exists(mock_stats):
-    with patch("router.main.os.path.exists", return_value=False) as mock_exists:
+    with patch("main.os.path.exists", return_value=False) as mock_exists:
         load_persisted_stats()
-        mock_exists.assert_called_once_with(router.main.STATS_JSON_PATH)
+        mock_exists.assert_called_once_with(main.STATS_JSON_PATH)
         # Stats should remain unchanged
         assert mock_stats["total_requests"] == 0
 
@@ -34,9 +41,9 @@ def test_load_persisted_stats_success(mock_stats):
     }
     mock_json = json.dumps(mock_data)
 
-    with patch("router.main.os.path.exists", return_value=True):
-        with patch("router.main.open", mock_open(read_data=mock_json)):
-            with patch("router.main.logger.info") as mock_logger:
+    with patch("main.os.path.exists", return_value=True):
+        with patch("main.open", mock_open(read_data=mock_json)):
+            with patch("main.logger.info") as mock_logger:
                 load_persisted_stats()
 
                 # Assert simple value updated via else block
@@ -51,9 +58,9 @@ def test_load_persisted_stats_success(mock_stats):
                 mock_logger.assert_called_once_with("✓ Successfully loaded persisted gateway statistics from disk.")
 
 def test_load_persisted_stats_exception(mock_stats):
-    with patch("router.main.os.path.exists", return_value=True):
-        with patch("router.main.open", side_effect=Exception("Mock read error")):
-            with patch("router.main.logger.error") as mock_logger:
+    with patch("main.os.path.exists", return_value=True):
+        with patch("main.open", side_effect=Exception("Mock read error")):
+            with patch("main.logger.error") as mock_logger:
                 load_persisted_stats()
 
                 # Stats should remain unchanged

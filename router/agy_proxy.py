@@ -164,6 +164,7 @@ async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool
                     for line in content.splitlines()[-5:]:
                         if "RESOURCE_EXHAUSTED" in line or "code 429" in line:
                             return True
+                    return False
             except Exception:
                 pass
         # Empty stdout+stderr with rc=0 strongly suggests quota exhaustion

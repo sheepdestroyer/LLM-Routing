@@ -57,12 +57,16 @@ per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
 def process_item(item):
-    prompt = item["prompt"]
-    expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
-
     try:
+        if not isinstance(item, dict):
+            raise TypeError("Item is not a dictionary")
+        prompt = item["prompt"]
+        expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = classify(prompt)
     except Exception as e:
+        expected = ""
+        if isinstance(item, dict):
+            expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = f"ERROR: {str(e)[:50]}"
 
     return expected, predicted

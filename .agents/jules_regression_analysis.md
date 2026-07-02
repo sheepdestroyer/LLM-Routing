@@ -32,7 +32,7 @@ git fetch origin
 git rebase origin/master
 ```
 * **Why it works**: Rebase replays each feature branch commit one-by-one on top of the reorganized `master` commit. 
-* **Rename Tracking**: Git's rename tracking algorithm handles moves seamlessly during a rebase. If a file was renamed from `test_a2_verify.py` to `tests/test_a2_verify.py` on `master`, Git will automatically apply the feature branch's modifications to `tests/test_a2_verify.py` instead of leaving them at the root.
+* **Verify Relocated Files**: While Git's rename detection can assist with directory/file moves during rebase, it is not foolproof. The agent must manually verify relocated files (such as renamed test paths) after rebasing to ensure all changes landed in their correct new locations rather than being lost or orphaned.
 
 ### Option B: Merge with explicit Merge Drivers
 If rebasing is not used, the agent must inspect renames before committing:
