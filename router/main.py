@@ -981,7 +981,8 @@ async def classify_request(
         try:
             client = get_http_client()
             # Truncate prompt to prevent 400 Bad Request in llama-server due to cache-ram limit
-            truncated_prompt = prompt[:300] if len(prompt) > 300 else prompt
+            max_chars = int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300"))
+            truncated_prompt = prompt[:max_chars] if len(prompt) > max_chars else prompt
             payload = {
                 "model": router_model_name,
                 "messages": [{"role": "user", "content": system_prompt + truncated_prompt}],
