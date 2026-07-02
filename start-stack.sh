@@ -81,7 +81,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
         echo -n "Please enter your OpenRouter API Key (input will be hidden): "
         read -rs OPENROUTER_API_KEY
         echo ""
-        local escaped_key=$(escape_env_val "$OPENROUTER_API_KEY")
+        escaped_key=$(escape_env_val "$OPENROUTER_API_KEY")
         echo "OPENROUTER_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
@@ -253,7 +253,7 @@ if [ -z "$OLLAMA_API_KEY" ]; then
                 echo "❌ Error: API key cannot be empty. Please try again."
             fi
         done
-        local escaped_key=$(escape_env_val "$OLLAMA_API_KEY")
+        escaped_key=$(escape_env_val "$OLLAMA_API_KEY")
         echo "OLLAMA_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ Ollama API key saved securely to $ENV_FILE"
