@@ -45,7 +45,7 @@ graph TD
     end
 
     subgraph Observability ["Observability Backend (Langfuse v3)"]
-        Langfuse -->|Metadata| Postgres[("PostgreSQL 18\n(Port 5432)")]
+        Langfuse -->|Metadata| Postgres[("PostgreSQL\n(Port 5432)")]
         Langfuse -->|Traces| ClickHouse[("ClickHouse\n(Port 8123/9000)")]
         Langfuse -->|Events| Minio[("Minio S3\n(Port 9002)")]
         Langfuse -->|Job Queues| ValkeyLF[("Valkey-LF\n(Port 6380)")]
@@ -66,7 +66,7 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.90.2`. See §3B for pinning policy.
+> **Version Pin**: LiteLLM Gateway runs a pinned `ghcr.io/berriai/litellm` image tag. See §3B for pinning policy.
 
 ---
 
@@ -76,12 +76,12 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** (9.1.0-alpine) | `tcpSocket` on port 6379 every 10s | Same, every 5s |
+| **valkey-cache** | `tcpSocket` on port 6379 every 10s | Same, every 5s |
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
-| **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
+| **valkey-lf** | `tcpSocket` on port 6380 every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
@@ -269,7 +269,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.90.2` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
+- **Version Pinning**: The LiteLLM gateway runs a pinned `ghcr.io/berriai/litellm` image tag. The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse and Valkey Cache also run version-pinned images (`docker.io/clickhouse/clickhouse-server` and `docker.io/valkey/valkey`), upgraded periodically in `pod.yaml`.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
@@ -391,7 +391,7 @@ Your output should display:
 * `valkey-cache` (Redis-compatible cache)
 * `litellm-gateway` (LiteLLM proxy on :4000)
 * `llm-triage-router` (FastAPI entry point on :5000)
-* `postgres-db` (PostgreSQL 18 + pgvector on :5432)
+* `postgres-db` (PostgreSQL + pgvector on :5432)
 * `clickhouse-db` (ClickHouse for Langfuse v3 traces)
 * `valkey-lf` (Valkey for Langfuse v3 BullMQ on :6380)
 * `langfuse-web` (Langfuse v3 web UI on :3001)
@@ -582,7 +582,7 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 | `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
 | `S3_FORCE_PATH_STYLE` | `true` |
 
-Minio runs on ports **9001** (web console) and **9002** (S3 API). Default credentials (`minioadmin` / `minioadmin`) are only meant for local/dev setups. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Default credentials (`minioadmin` / `minioadmin`) are only meant for local/dev setups. The image tag is pinned in `pod.yaml` and upgraded periodically.
 
 ### Health Check
 
