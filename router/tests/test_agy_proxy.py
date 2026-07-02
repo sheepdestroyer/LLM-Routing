@@ -74,16 +74,16 @@ async def test_is_quota_exhausted_success():
 async def test_is_quota_exhausted_other_error():
     assert await _is_quota_exhausted(1, "", "some other random error") is False
 
-@patch("router.agy_proxy.os.path.exists")
 @patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")
 @pytest.mark.asyncio
-async def test_is_quota_exhausted_empty_reads_log(mock_time, mock_open, mock_exists):
+async def test_is_quota_exhausted_empty_reads_log(mock_time, mock_open):
     mock_time.return_value = 1000.0
-    mock_exists.return_value = True
 
     mock_file = AsyncMock()
-    mock_file.readlines.return_value = ["line 1\n", "RESOURCE_EXHAUSTED info\n", "line 3\n"]
+    mock_file.seek = AsyncMock()
+    mock_file.tell = AsyncMock(return_value=100)
+    mock_file.read = AsyncMock(return_value=b"line 1\nRESOURCE_EXHAUSTED info\nline 3\n")
     mock_open.return_value.__aenter__.return_value = mock_file
 
     with patch("router.agy_proxy._last_log_check", 0):
@@ -98,12 +98,12 @@ async def test_is_quota_exhausted_empty_throttled(mock_time):
         # Even without reading log, falls back to True
         assert await _is_quota_exhausted(0, "", "") is True
 
-@patch("router.agy_proxy.os.path.exists")
+@patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")
 @pytest.mark.asyncio
-async def test_is_quota_exhausted_empty_no_log_fallback(mock_time, mock_exists):
+async def test_is_quota_exhausted_empty_no_log_fallback(mock_time, mock_open):
     mock_time.return_value = 1000.0
-    mock_exists.return_value = False
+    mock_open.side_effect = FileNotFoundError()
 
     with patch("router.agy_proxy._last_log_check", 0):
         assert await _is_quota_exhausted(0, "", "") is True
