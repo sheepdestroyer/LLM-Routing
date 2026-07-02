@@ -18,6 +18,7 @@ import time
 import hashlib
 import httpx
 import urllib.parse
+import asyncio
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -238,17 +239,31 @@ async def handle_remove_memory_category(args: dict) -> str:
         return f"No memories found to remove in category '{category}' ({scope_label})."
 
     deleted_count = 0
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for entry in to_delete:
+    
+    async def delete_item(client, entry, sem):
+        nonlocal deleted_count
+        async with sem:
             key = entry["key"]
             quoted_key = urllib.parse.quote(key, safe="")
-            r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
-            if r.status_code == 200:
-                deleted_count += 1
-            else:
+            try:
+                r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
+                if r.status_code == 200:
+                    deleted_count += 1
+                    return None
+                else:
+                    return r.text
+            except Exception as e:
+                return str(e)
+
+    sem = asyncio.Semaphore(10)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        tasks = [delete_item(client, entry, sem) for entry in to_delete]
+        results = await asyncio.gather(*tasks)
+        for res in results:
+            if res is not None:
                 scope_label = "global" if is_global else "local"
                 cat_label = f"category '{category}'" if category != "*" else "all categories"
-                return f"Error removing memory (deleted {deleted_count} of {len(to_delete)} from {cat_label} ({scope_label})): {r.text}"
+                return f"Error removing memory (deleted {deleted_count} of {len(to_delete)} from {cat_label} ({scope_label})): {res}"
 
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"

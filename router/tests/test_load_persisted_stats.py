@@ -1,13 +1,3 @@
-import os
-import sys
-
-# Ensure router directory is in sys.path
-router_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if router_path not in sys.path:
-    sys.path.insert(0, router_path)
-
-os.environ["CONFIG_PATH"] = os.path.join(router_path, "config.yaml")
-
 import json
 import pytest
 from unittest.mock import patch, mock_open
@@ -41,7 +31,7 @@ def test_load_persisted_stats_success(mock_stats):
     }
     mock_json = json.dumps(mock_data)
 
-    with patch("main.os.path.exists", return_value=True):
+    with patch("main.os.path.exists", side_effect=lambda p: p == main.STATS_JSON_PATH):
         with patch("main.open", mock_open(read_data=mock_json)):
             with patch("main.logger.info") as mock_logger:
                 load_persisted_stats()

@@ -10,39 +10,47 @@ all 5 triage levels and validates the gateway's routing responses.
 import httpx
 import json
 import time
+import os
+import sys
 
-gateway_url = "http://127.0.0.1:5000/v1/chat/completions"
+gateway_url = os.environ.get("GATEWAY_URL", "http://127.0.0.1:5000/v1/chat/completions")
 headers = {
-    "Authorization": "Bearer gateway-pass",
+    "Authorization": f"Bearer {os.environ.get('GATEWAY_TOKEN', 'gateway-pass')}",
     "Content-Type": "application/json"
 }
 
 prompts = [
     {
         "name": "Simple (1/5)",
-        "prompt": "Write a one-line hello world in Python."
+        "prompt": "Write a one-line hello world in Python.",
+        "expected_model": "agent-simple-core"
     },
     {
         "name": "Medium (2/5)",
-        "prompt": "Refactor this Python function to add a docstring and use a type hint: def sum(a, b): return a + b"
+        "prompt": "Refactor this Python function to add a docstring and use a type hint: def sum(a, b): return a + b",
+        "expected_model": "agent-medium-core"
     },
     {
         "name": "Complex (3/5)",
-        "prompt": "Write a multi-file Python script implementing a complete ETL data pipeline that parses a complex nested JSON file of users and logs, validates the data with Pydantic, writes it to a PostgreSQL database using asyncpg, handles connection pool retries with backoff, and includes unit tests with pytest mocks."
+        "prompt": "Write a multi-file Python script implementing a complete ETL data pipeline that parses a complex nested JSON file of users and logs, validates the data with Pydantic, writes it to a PostgreSQL database using asyncpg, handles connection pool retries with backoff, and includes unit tests with pytest mocks.",
+        "expected_model": "agent-complex-core"
     },
     {
         "name": "Reasoning (4/5)",
-        "prompt": "Compare the design trade-offs of using Valkey/Redis Sentinel versus Valkey/Redis Cluster for high availability in a high-throughput, low-latency microservice architecture. Analyze failure detection mechanisms, failover times, read/write scaling, client complexity, and network partition (split-brain) scenarios."
+        "prompt": "Compare the design trade-offs of using Valkey/Redis Sentinel versus Valkey/Redis Cluster for high availability in a high-throughput, low-latency microservice architecture. Analyze failure detection mechanisms, failover times, read/write scaling, client complexity, and network partition (split-brain) scenarios.",
+        "expected_model": "agent-reasoning-core"
     },
     {
         "name": "Advanced (5/5)",
-        "prompt": "Design a highly secure, zero-trust microservice topology for a federated agent-routing system deployed across multiple Kubernetes clusters in different cloud regions. Incorporate mutual TLS via Istio service mesh, automated certificate rotation with cert-manager, OIDC/OAuth2 authentication via an external identity provider, centralized audit logging/distributed tracing using Langfuse and Clickhouse, regional failover routing based on latency, and DDoS protection."
+        "prompt": "Design a highly secure, zero-trust microservice topology for a federated agent-routing system deployed across multiple Kubernetes clusters in different cloud regions. Incorporate mutual TLS via Istio service mesh, automated certificate rotation with cert-manager, OIDC/OAuth2 authentication via an external identity provider, centralized audit logging/distributed tracing using Langfuse and Clickhouse, regional failover routing based on latency, and DDoS protection.",
+        "expected_model": "agent-advanced-core"
     }
 ]
 
 def run_tests():
     print("🚀 Starting 5-tier reasoning test queries...")
     print("=" * 60)
+    failed = False
     for p in prompts:
         print(f"\n📂 Sending {p['name']} Prompt:")
         print(f"   Prompt: {p['prompt'][:100]}...")
@@ -74,14 +82,31 @@ def run_tests():
                         content_clean = "<empty content / tool call>"
                     print(f"   Routed Model: {model_used}")
                     print(f"   Response Preview: {content_clean[:120]}...")
+                    
+                    expected = p["expected_model"]
+                    if model_used != expected:
+                        print(f"   ❌ Mismatch! Expected: {expected}, Got: {model_used}")
+                        failed = True
+                    else:
+                        print(f"   ✅ Routed correctly to {expected}")
                 except Exception as parse_inner:
                     print(f"   Failed to parse response choices: {parse_inner}")
                     print(f"   Raw Data: {data}")
+                    failed = True
                 print(f"   Latency: {elapsed:.2f}s")
             else:
                 print(f"   Error: {r.text}")
+                failed = True
         except Exception as e:
             print(f"   Request Exception: {e}")
+            failed = True
             
+    if failed:
+        print("\n❌ Verification Failed: Some tests misrouted or encountered errors.")
+        sys.exit(1)
+    else:
+        print("\n✅ Verification Successful: All tests routed to expected models.")
+        sys.exit(0)
+
 if __name__ == "__main__":
     run_tests()

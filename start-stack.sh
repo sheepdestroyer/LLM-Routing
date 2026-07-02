@@ -24,6 +24,8 @@ escape_env_val() {
     local val="$1"
     val="${val//\\/\\\\}"
     val="${val//\"/\\\"}"
+    val="${val//\$/\\\$}"
+    val="${val//\`/\\\`}"
     echo "$val"
 }
 

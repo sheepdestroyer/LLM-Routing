@@ -1,6 +1,6 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
-import json, urllib.request, time, sys
+import json, urllib.request, urllib.error, time, sys
 import concurrent.futures
 import threading
 from collections import defaultdict, Counter
@@ -63,7 +63,7 @@ def process_item(item):
         prompt = item["prompt"]
         expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = classify(prompt)
-    except Exception as e:
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError) as e:
         expected = ""
         if isinstance(item, dict):
             expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
@@ -75,12 +75,17 @@ results_list = [None] * total
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
     sem = threading.Semaphore(5)
+    rate_lock = threading.Lock()
+    next_start_time = [time.monotonic()]
     
     def process_item_with_rate_limit(index_and_item):
         i, item = index_and_item
         with sem:
-            # Add a small delay between acquisitions to stagger server load
-            time.sleep(0.05)
+            with rate_lock:
+                now = time.monotonic()
+                if now < next_start_time[0]:
+                    time.sleep(next_start_time[0] - now)
+                next_start_time[0] = time.monotonic() + 0.05
             expected, predicted = process_item(item)
         return i, item, expected, predicted
 
