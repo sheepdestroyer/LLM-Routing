@@ -45,17 +45,21 @@ def _make_key(category: str, is_global: bool, data: str) -> str:
     # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts.
     # Provides uniqueness within the same millisecond.
     h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=HASH_DIGEST_SIZE).hexdigest()
-    safe_category = urllib.parse.quote(category)
-    return f"{PREFIX}:{scope}:{safe_category}::{ts}:{h}"
+    safe_category = urllib.parse.quote(category, safe="")
+    return f"{PREFIX}:v2:{scope}:{safe_category}::{ts}:{h}"
 
 
 def _parse_key(key: str):
     """Parse a structured key back into (scope, category, timestamp, hash)."""
     try:
         parts = key.split("::")
-        prefix = parts[0].split(":")  # memory:{scope}:{category}
-        scope = prefix[1] if len(prefix) > 1 else ""
-        category = urllib.parse.unquote(prefix[2]) if len(prefix) > 2 else ""
+        prefix = parts[0].split(":")  # memory:{scope}:{category} or memory:v2:{scope}:{category}
+        if len(prefix) > 1 and prefix[1] == "v2":
+            scope = prefix[2] if len(prefix) > 2 else ""
+            category = urllib.parse.unquote(prefix[3]) if len(prefix) > 3 else ""
+        else:
+            scope = prefix[1] if len(prefix) > 1 else ""
+            category = prefix[2] if len(prefix) > 2 else ""
         ts_hash = parts[1] if len(parts) > 1 else ""
         ts = ts_hash.split(":")[0] if ts_hash else ""
         return {"scope": scope, "category": category, "timestamp": ts}

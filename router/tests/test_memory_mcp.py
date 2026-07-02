@@ -37,11 +37,11 @@ def test_make_key_global():
     key = _make_key(category, True, data)
     after_ts = int(time.time() * 1000)
 
-    # Expected format: f"{PREFIX}:{scope}:{category}::{ts}:{h}"
-    assert key.startswith(f"{PREFIX}:{SCOPE_GLOBAL}:{category}::")
+    # Expected format: f"{PREFIX}:v2:{scope}:{category}::{ts}:{h}"
+    assert key.startswith(f"{PREFIX}:v2:{SCOPE_GLOBAL}:{category}::")
 
     # Extract timestamp and hash part
-    match = re.match(rf"^{PREFIX}:{SCOPE_GLOBAL}:{category}::(\d+):([a-f0-9]+)$", key)
+    match = re.match(rf"^{PREFIX}:v2:{SCOPE_GLOBAL}:{category}::(\d+):([a-f0-9]+)$", key)
     assert match is not None, f"Key {key} does not match expected format"
 
     ts = int(match.group(1))
@@ -60,9 +60,9 @@ def test_make_key_local():
     key = _make_key(category, False, data)
     after_ts = int(time.time() * 1000)
 
-    assert key.startswith(f"{PREFIX}:{SCOPE_LOCAL}:{category}::")
+    assert key.startswith(f"{PREFIX}:v2:{SCOPE_LOCAL}:{category}::")
 
-    match = re.match(rf"^{PREFIX}:{SCOPE_LOCAL}:{category}::(\d+):([a-f0-9]+)$", key)
+    match = re.match(rf"^{PREFIX}:v2:{SCOPE_LOCAL}:{category}::(\d+):([a-f0-9]+)$", key)
     assert match is not None, f"Key {key} does not match expected format"
 
     ts = int(match.group(1))
@@ -79,10 +79,10 @@ def test_make_key_formatting_details(monkeypatch):
 
     # data="data", ts=1620000000123 -> blake2b("data1620000000123", digest_size=10) -> 5e5dad075ca7764bc51f
     key1 = _make_key("cat1", True, "data")
-    assert key1 == f"{PREFIX}:{SCOPE_GLOBAL}:cat1::1620000000123:5e5dad075ca7764bc51f"
+    assert key1 == f"{PREFIX}:v2:{SCOPE_GLOBAL}:cat1::1620000000123:5e5dad075ca7764bc51f"
 
     key2 = _make_key("cat2", False, "data")
-    assert key2 == f"{PREFIX}:{SCOPE_LOCAL}:cat2::1620000000123:5e5dad075ca7764bc51f"
+    assert key2 == f"{PREFIX}:v2:{SCOPE_LOCAL}:cat2::1620000000123:5e5dad075ca7764bc51f"
 
 
 def test_make_key_determinism_and_uniqueness():
@@ -272,6 +272,10 @@ def test_memory_entry_missing_fields():
             "memory:global:general::20240101T120000Z",
             {"scope": "global", "category": "general", "timestamp": "20240101T120000Z"},
         ),
+        (
+            "memory:v2:local:proj%3Aalpha%2F100%25%20ready::20240101T120000Z:abc123hash",
+            {"scope": "local", "category": "proj:alpha/100% ready", "timestamp": "20240101T120000Z"},
+        ),
     ],
     ids=[
         "happy_path",
@@ -282,6 +286,7 @@ def test_memory_entry_missing_fields():
         "invalid_type",
         "extra_colons_in_category",
         "missing_hash_but_has_timestamp",
+        "v2_escaped_category",
     ]
 )
 def test_parse_key(key, expected):
@@ -295,13 +300,13 @@ def test_parse_memory_value_valid_json():
     assert result == {"data": "some data", "tags": ["tag1", "tag2"]}
 
 
-def test_parse_memory_value_invalid_json():
+def test_parse_memory_value_invalid_json_fallback():
     raw_data = "this is not json"
     result = _parse_memory_value(raw_data)
     assert result == {"data": "this is not json", "tags": []}
 
 
-def test_parse_memory_value_type_error():
+def test_parse_memory_value_type_error_fallback():
     raw_data = 12345
     result = _parse_memory_value(raw_data)  # type: ignore[arg-type]
     assert result == {"data": 12345, "tags": []}
@@ -311,3 +316,17 @@ def test_parse_memory_value_non_dict_json():
     raw_data = '"just a string"'
     result = _parse_memory_value(raw_data)
     assert result == "just a string"
+
+
+def test_make_key_and_parse_key_round_trip():
+    """Verify that _make_key and _parse_key correctly quote and unquote complex categories."""
+    category = "proj:alpha/100% ready"
+    key = _make_key(category, is_global=False, data="test-data")
+    
+    # Assert that the category in the key is URL-encoded
+    assert "proj%3Aalpha%2F100%25%20ready" in key
+    
+    # Assert that the parsed key returns the original unencoded category
+    parsed = _parse_key(key)
+    assert parsed["scope"] == "local"
+    assert parsed["category"] == category

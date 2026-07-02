@@ -7,8 +7,9 @@ import pytest
 import router.main as main
 
 @pytest.fixture(autouse=True)
-def reset_redis_globals():
+def reset_redis_globals(monkeypatch):
     """Reset the global variables before and after each test."""
+    monkeypatch.delenv("VALKEY_URL", raising=False)
     original_client = main._redis_client
     original_last_attempt = main._redis_last_init_attempt
 

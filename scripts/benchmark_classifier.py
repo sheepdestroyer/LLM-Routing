@@ -59,7 +59,7 @@ import threading
 
 def process_item(item):
     prompt = item["prompt"]
-    expected = item.get("tier") or item.get("llm_tier") or item.get("clf_tier", "")
+    expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
 
     try:
         predicted = classify(prompt)

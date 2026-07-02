@@ -3965,6 +3965,7 @@ async def save_annotations(payload: AnnotationPayload):
                 else:
                     existing[k] = item.model_dump()
             await _atomic_write_json_async(str(ann_path), existing)
+            _annotations_cache.pop(str(ann_path), None)
 
         return JSONResponse({"status": "ok", "saved": len(data)})
     except Exception as e:

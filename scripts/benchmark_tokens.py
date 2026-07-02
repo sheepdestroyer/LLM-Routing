@@ -65,12 +65,13 @@ for i in range(10):
             print(f"  --> FAILURE: {case['name']} error exceeds target threshold")
             all_passed = False
 
-    assert all_passed, "Token estimation accuracy benchmark failed"
+    if not all_passed:
+        raise ValueError("Token estimation accuracy benchmark failed")
 
 if __name__ == "__main__":
     try:
         verify_accuracy()
         sys.exit(0)
-    except AssertionError as e:
+    except ValueError as e:
         print(f"\nERROR: {e}")
         sys.exit(1)

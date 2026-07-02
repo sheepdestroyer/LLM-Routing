@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("CONFIG_PATH", "/config/router_dir/config.yaml")
+
 import json
 import pytest
 from unittest.mock import patch, mock_open
