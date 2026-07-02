@@ -73,7 +73,7 @@ def process_item(item):
 
 results_list = [None] * total
 
-with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
     sem = threading.Semaphore(5)
     
     def process_item_with_rate_limit(index_and_item):
@@ -90,8 +90,14 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
     for future in concurrent.futures.as_completed(futures):
         i, item, expected, predicted = future.result()
 
+        prompt_val = ""
+        if isinstance(item, dict):
+            prompt_val = str(item.get("prompt", ""))[:100]
+        else:
+            prompt_val = f"<invalid prompt item: {str(item)[:50]}>"
+
         results_list[i] = {
-            "prompt": item["prompt"][:100],
+            "prompt": prompt_val,
             "expected": expected,
             "predicted": predicted,
         }

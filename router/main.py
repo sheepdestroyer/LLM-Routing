@@ -123,6 +123,9 @@ def _count_tokens_heuristic(text: str) -> float:
     return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
 
 
+METADATA_OVERHEAD = 50
+
+
 def estimate_prompt_tokens(body: dict) -> int:
     """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
     """
@@ -142,7 +145,7 @@ def estimate_prompt_tokens(body: dict) -> int:
 
     # Include a flat estimate for system prompt / metadata overhead.
     # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
-    return max(1, round(total) + 50)
+    return max(1, round(total) + METADATA_OVERHEAD)
 
 
 async def sync_cooldowns_from_valkey() -> None:

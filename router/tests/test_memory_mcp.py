@@ -1,16 +1,8 @@
 import json
 import re
-import sys
 import time
-from pathlib import Path
-
-# Dynamic project root discovery
-root = Path(__file__).resolve()
-while root.parent != root and not (root / ".git").exists():
-    root = root.parent
-sys.path.insert(0, str(root))
-sys.path.insert(0, str(root / "router"))
-
+import urllib.parse
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from memory_mcp import (
     PREFIX,
@@ -339,3 +331,119 @@ def test_make_key_and_parse_key_round_trip():
     parsed = _parse_key(key)
     assert parsed["scope"] == "local"
     assert parsed["category"] == category
+
+
+@pytest.mark.asyncio
+async def test_handle_remove_memory_category_url_encoding():
+    from memory_mcp import handle_remove_memory_category
+    
+    category = "test:cat/100%_done"
+    key = _make_key(category, is_global=False, data="some-value")
+    
+    mock_list_response = MagicMock()
+    mock_list_response.status_code = 200
+    mock_list_response.json.return_value = {
+        "memories": [
+            {
+                "key": key,
+                "value": _memory_value("some-value", ["tag1"])
+            }
+        ]
+    }
+    
+    mock_delete_response = MagicMock()
+    mock_delete_response.status_code = 200
+    
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_list_response
+    mock_client.delete.return_value = mock_delete_response
+    
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        
+        result = await handle_remove_memory_category({"category": category, "is_global": False})
+        
+        assert "Removed 1 memory" in result
+        
+        expected_quoted_key = urllib.parse.quote(key, safe="")
+        mock_client.delete.assert_called_once()
+        called_url = mock_client.delete.call_args[0][0]
+        assert called_url.endswith(expected_quoted_key)
+
+
+@pytest.mark.asyncio
+async def test_handle_remove_specific_memory_url_encoding():
+    from memory_mcp import handle_remove_specific_memory
+    
+    category = "test:cat/100%_done"
+    key = _make_key(category, is_global=False, data="some-value")
+    
+    mock_list_response = MagicMock()
+    mock_list_response.status_code = 200
+    mock_list_response.json.return_value = {
+        "memories": [
+            {
+                "key": key,
+                "value": _memory_value("some-value", ["tag1"])
+            }
+        ]
+    }
+    
+    mock_delete_response = MagicMock()
+    mock_delete_response.status_code = 200
+    
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_list_response
+    mock_client.delete.return_value = mock_delete_response
+    
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        
+        result = await handle_remove_specific_memory({
+            "category": category,
+            "memory_content": "some-value",
+            "is_global": False
+        })
+        
+        assert "Removed memory" in result
+        
+        expected_quoted_key = urllib.parse.quote(key, safe="")
+        mock_client.delete.assert_called_once()
+        called_url = mock_client.delete.call_args[0][0]
+        assert called_url.endswith(expected_quoted_key)
+
+
+@pytest.mark.asyncio
+async def test_handle_remove_memory_category_failure():
+    from memory_mcp import handle_remove_memory_category
+    
+    key1 = _make_key("cat", is_global=False, data="val1")
+    key2 = _make_key("cat", is_global=False, data="val2")
+    
+    mock_list_response = MagicMock()
+    mock_list_response.status_code = 200
+    mock_list_response.json.return_value = {
+        "memories": [
+            {"key": key1, "value": _memory_value("val1", [])},
+            {"key": key2, "value": _memory_value("val2", [])}
+        ]
+    }
+    
+    mock_response_200 = MagicMock()
+    mock_response_200.status_code = 200
+    mock_response_500 = MagicMock()
+    mock_response_500.status_code = 500
+    mock_response_500.text = "Internal Server Error"
+    
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_list_response
+    mock_client.delete.side_effect = [mock_response_200, mock_response_500]
+    
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        
+        result = await handle_remove_memory_category({"category": "cat", "is_global": False})
+        
+        assert "Error removing memory" in result
+        assert "deleted 1 of 2" in result
+        assert "Internal Server Error" in result

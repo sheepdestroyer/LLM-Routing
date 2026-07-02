@@ -793,7 +793,7 @@ For auto-routing modes, the Triage Router handles failures by silently falling b
 ## 9d. Live Stack Tier Testing & Verification
 
 The repository includes an automated integration script to test the 5-tier intent routing pipeline on the live gateway stack:
-* **Location**: [test_reasoning_tiers.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/scripts/verification/test_reasoning_tiers.py)
+* **Location**: [test_reasoning_tiers.py](scripts/verification/test_reasoning_tiers.py)
 
 This script sends five sequential chat completion requests (from simple to advanced prompt complexities) to the gateway's `llm-routing-auto-free` auto-triage route, verifying that:
 1. The local classifier correctly categorizes and labels the prompt intent.

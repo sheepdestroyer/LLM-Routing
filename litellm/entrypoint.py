@@ -114,7 +114,9 @@ if serializer is not None:
         """Serialize datetime to ISO8601 with timezone (UTC if naive)."""
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
     serializer.register(original_datetime, _serialize_dt)
     serializer.register(RobustDatetime, _serialize_dt)
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")

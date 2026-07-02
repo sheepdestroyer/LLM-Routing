@@ -20,6 +20,20 @@ show_help() {
     echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
 }
 
+escape_env_val() {
+    local val="$1"
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    echo "$val"
+}
+
+
+if [ $# -gt 1 ]; then
+    echo "❌ Error: Too many arguments supplied (expected at most 1, got $#)"
+    show_help
+    exit 1
+fi
+
 FULL_REBUILD=false
 REPLACE_MODE=false
 if [ "${1:-}" = "--full-rebuild" ]; then
@@ -67,7 +81,8 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
         echo -n "Please enter your OpenRouter API Key (input will be hidden): "
         read -rs OPENROUTER_API_KEY
         echo ""
-        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" >> "$ENV_FILE"
+        local escaped_key=$(escape_env_val "$OPENROUTER_API_KEY")
+        echo "OPENROUTER_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
     else
@@ -238,7 +253,8 @@ if [ -z "$OLLAMA_API_KEY" ]; then
                 echo "❌ Error: API key cannot be empty. Please try again."
             fi
         done
-        echo "OLLAMA_API_KEY=\"$OLLAMA_API_KEY\"" >> "$ENV_FILE"
+        local escaped_key=$(escape_env_val "$OLLAMA_API_KEY")
+        echo "OLLAMA_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ Ollama API key saved securely to $ENV_FILE"
     else
@@ -463,10 +479,14 @@ fi
 render_pod_yaml() {
     export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
-import os, sys, urllib.parse
+import os, sys, urllib.parse, json
 uid = os.getuid()
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     text = f.read()
+
+def yaml_scalar(val):
+    return json.dumps(val)
+
 placeholders = [
     "/home/gpav/Vrac/LAB/AI/LLM-Routing",
     "/home/gpav/",
@@ -493,22 +513,22 @@ for ph in placeholders:
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
-text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
+text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
+text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
 # URL-encode the postgres password for DSN insertion
 encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
-text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
-text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
-text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
-text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", os.environ["OLLAMA_API_KEY"])
-text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", os.environ["LANGFUSE_PUBLIC_KEY"])
-text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", os.environ["LANGFUSE_SECRET_KEY"])
-text = text.replace("MINIO_USER_PLACEHOLDER", os.environ["MINIO_ROOT_USER"])
-text = text.replace("MINIO_PASSWORD_PLACEHOLDER", os.environ["MINIO_ROOT_PASSWORD"])
-text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", os.environ["LANGFUSE_INIT_USER_PASSWORD"])
-text = text.replace("REDIS_AUTH_PLACEHOLDER", os.environ["REDIS_AUTH"])
-text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", os.environ["CLICKHOUSE_PASSWORD"])
+text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", yaml_scalar(os.environ["NEXTAUTH_SECRET"]))
+text = text.replace("SALT_PLACEHOLDER", yaml_scalar(os.environ["SALT"]))
+text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", yaml_scalar(os.environ["ENCRYPTION_KEY"]))
+text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", yaml_scalar(os.environ["OLLAMA_API_KEY"]))
+text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_PUBLIC_KEY"]))
+text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_SECRET_KEY"]))
+text = text.replace("MINIO_USER_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_USER"]))
+text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_PASSWORD"]))
+text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
+text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
+text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
 sys.stdout.write(text)
 PY
 }

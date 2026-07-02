@@ -9,7 +9,7 @@ os.environ["ROUTER_API_KEY"] = "local-token"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "router"))
 
-from router.main import estimate_prompt_tokens
+from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
 
 def verify_accuracy():
     """Benchmarking utility to verify token estimation accuracy across content types."""
@@ -57,7 +57,7 @@ for i in range(10):
     all_passed = True
     for case in test_cases:
         body = {"messages": [{"content": case["content"]}]}
-        est = estimate_prompt_tokens(body) - 50 # Subtract metadata overhead
+        est = estimate_prompt_tokens(body) - METADATA_OVERHEAD # Subtract metadata overhead
         error = abs(est - case["actual_tokens"]) / case["actual_tokens"]
         print(f"{case['name']:<25} | {case['actual_tokens']:<7} | {est:<9} | {error:.1%}")
         # Acceptance criteria: within ±25% for these rough heuristics

@@ -93,6 +93,9 @@ def _parse_memory_value(raw: str) -> dict:
             return {"data": val, "tags": []}
         if "data" not in val:
             val["data"] = str(val)
+        else:
+            if val["data"] is not None:
+                val["data"] = str(val["data"])
         if "tags" not in val or not isinstance(val["tags"], list):
             val["tags"] = []
         return val
@@ -234,15 +237,22 @@ async def handle_remove_memory_category(args: dict) -> str:
         scope_label = "global" if is_global else "local"
         return f"No memories found to remove in category '{category}' ({scope_label})."
 
+    deleted_count = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in to_delete:
             key = entry["key"]
             quoted_key = urllib.parse.quote(key, safe="")
-            await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
+            r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
+            if r.status_code == 200:
+                deleted_count += 1
+            else:
+                scope_label = "global" if is_global else "local"
+                cat_label = f"category '{category}'" if category != "*" else "all categories"
+                return f"Error removing memory (deleted {deleted_count} of {len(to_delete)} from {cat_label} ({scope_label})): {r.text}"
 
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"
-    return f"Removed {len(to_delete)} memory(ies) from {cat_label} ({scope_label})."
+    return f"Removed {deleted_count} memory(ies) from {cat_label} ({scope_label})."
 
 
 async def handle_remove_specific_memory(args: dict) -> str:
