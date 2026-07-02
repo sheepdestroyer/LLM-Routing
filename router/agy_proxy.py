@@ -20,6 +20,7 @@ Fallback Tiers (same conversation, different model):
 """
 
 import json
+import aiofiles
 import logging
 import os
 import time
@@ -127,7 +128,7 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
 # Track the last log check time to avoid hammering the file
 _last_log_check: float = 0
 
-def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool:
+async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool:
     """
     Detect quota exhaustion from agy subprocess results.
     
@@ -151,11 +152,19 @@ def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool:
             _last_log_check = now
             log_path = os.path.expanduser("~/.gemini/antigravity-cli/cli.log")
             try:
-                if os.path.exists(log_path):
-                    with open(log_path, "r") as f:
-                        for line in f.readlines()[-5:]:
-                            if "RESOURCE_EXHAUSTED" in line or "code 429" in line:
-                                return True
+                async with aiofiles.open(log_path, "rb") as f:
+                    try:
+                        await f.seek(0, 2)
+                        file_size = await f.tell()
+                        await f.seek(max(0, file_size - 1024))
+                    except OSError:
+                        pass
+                    content_bytes = await f.read()
+                    content = content_bytes.decode("utf-8", errors="ignore")
+                    for line in content.splitlines()[-5:]:
+                        if "RESOURCE_EXHAUSTED" in line or "code 429" in line:
+                            return True
+                    return False
             except Exception:
                 pass
         # Empty stdout+stderr with rc=0 strongly suggests quota exhaustion
@@ -346,8 +355,9 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     rc = 0 if raw_rc is None else raw_rc
                     raw_stderr = first_data.get("stderr", "")
                     stderr_content = "" if raw_stderr is None else raw_stderr
-                    if _is_quota_exhausted(rc, "", stderr_content) or rc != 0:
-                        if _is_quota_exhausted(rc, "", stderr_content):
+                    is_exhausted = await _is_quota_exhausted(rc, "", stderr_content)
+                    if is_exhausted or rc != 0:
+                        if is_exhausted:
                             tier_breaker.record_failure()
                             if cooldown_persistence is not None:
                                 try:
@@ -420,7 +430,7 @@ async def try_agy_proxy(prompt: str, messages: list = None,
                     last_conv_id = result_conv_id
 
                 # Check for quota exhaustion
-                if _is_quota_exhausted(returncode, stdout, stderr):
+                if await _is_quota_exhausted(returncode, stdout, stderr):
                     tier_breaker.record_failure()
                     if cooldown_persistence is not None:
                         try:

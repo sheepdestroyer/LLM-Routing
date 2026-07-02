@@ -98,6 +98,30 @@ print("🩹 Applying global runtime patch for flexible date formats...")
 datetime.datetime = RobustDatetime
 sys.stdout.flush()
 
+# Register both RobustDatetime AND the original datetime with Prisma's
+# singledispatch serializer. When entrypoint.py replaces datetime.datetime
+# with RobustDatetime before Prisma loads, Prisma's own
+# @serializer.register(datetime.datetime) ends up registering RobustDatetime.
+# But database drivers (psycopg2) return the *original* C-level datetime
+# instances, which no longer match. We must register both classes.
+try:
+    from prisma.builder import serializer
+except ImportError:
+    serializer = None
+
+if serializer is not None:
+    def _serialize_dt(dt):
+        """Serialize datetime to ISO8601 with timezone (UTC if naive)."""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    serializer.register(original_datetime, _serialize_dt)
+    serializer.register(RobustDatetime, _serialize_dt)
+    print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
+sys.stdout.flush()
+
 # Start LiteLLM Proxy
 import litellm
 from litellm.proxy.proxy_cli import run_server
