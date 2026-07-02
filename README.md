@@ -66,7 +66,7 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
+> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.90.2`. See §3B for pinning policy.
 
 ---
 
@@ -269,7 +269,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
+- **Version Pinning**: The LiteLLM gateway, ClickHouse, and Valkey Cache image tags are explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags` or registry hubs before upgrading.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
@@ -790,7 +790,31 @@ The cooldown mechanism works as follows:
 
 For auto-routing modes, the Triage Router handles failures by silently falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns `429` immediately during cooldown, allowing LiteLLM to skip this model group and cascade to `openrouter-auto`. The cooldown status is visible via the `/metrics` endpoint (`ollama_cooldown_active` and `ollama_cooldown_remaining_seconds` gauges).
 
-## 10. Performance Benchmarks\n\nThrough our local benchmarks, the following performance characteristics have been achieved:
+## 9d. Live Stack Tier Testing & Verification
+
+The repository includes an automated integration script to test the 5-tier intent routing pipeline on the live gateway stack:
+* **Location**: [test_reasoning_tiers.py](scripts/verification/test_reasoning_tiers.py)
+
+This script sends five sequential chat completion requests (from simple to advanced prompt complexities) to the gateway's `llm-routing-auto-free` auto-triage route, verifying that:
+1. The local classifier correctly categorizes and labels the prompt intent.
+2. The gateway successfully routes the prompt to the mapped LiteLLM fallback model group or provider.
+3. The responses are returned successfully with acceptable latency.
+
+### How to Run
+
+Ensure the container stack is deployed and healthy:
+```bash
+./start-stack.sh
+```
+
+Execute the verification script:
+```bash
+./scripts/verification/test_reasoning_tiers.py
+```
+
+## 10. Performance Benchmarks
+
+Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |

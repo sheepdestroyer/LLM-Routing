@@ -17,6 +17,7 @@ import json
 import time
 import hashlib
 import httpx
+import urllib.parse
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -44,16 +45,21 @@ def _make_key(category: str, is_global: bool, data: str) -> str:
     # BLAKE2b: SOTA crypto hash, stdlib, faster than MD5, deterministic across restarts.
     # Provides uniqueness within the same millisecond.
     h = hashlib.blake2b((data + str(ts)).encode("utf-8"), digest_size=HASH_DIGEST_SIZE).hexdigest()
-    return f"{PREFIX}:{scope}:{category}::{ts}:{h}"
+    safe_category = urllib.parse.quote(category, safe="")
+    return f"{PREFIX}:v2:{scope}:{safe_category}::{ts}:{h}"
 
 
 def _parse_key(key: str):
     """Parse a structured key back into (scope, category, timestamp, hash)."""
     try:
         parts = key.split("::")
-        prefix = parts[0].split(":")  # memory:{scope}:{category}
-        scope = prefix[1] if len(prefix) > 1 else ""
-        category = prefix[2] if len(prefix) > 2 else ""
+        prefix = parts[0].split(":")  # memory:{scope}:{category} or memory:v2:{scope}:{category}
+        if len(prefix) > 1 and prefix[1] == "v2":
+            scope = prefix[2] if len(prefix) > 2 else ""
+            category = urllib.parse.unquote(prefix[3]) if len(prefix) > 3 else ""
+        else:
+            scope = prefix[1] if len(prefix) > 1 else ""
+            category = prefix[2] if len(prefix) > 2 else ""
         ts_hash = parts[1] if len(parts) > 1 else ""
         ts = ts_hash.split(":")[0] if ts_hash else ""
         return {"scope": scope, "category": category, "timestamp": ts}
@@ -68,6 +74,8 @@ def _parse_key(key: str):
 
 def _is_memory_key(key: str) -> bool:
     """Check if a key follows the memory:{scope}:{category}:: format."""
+    if not isinstance(key, str):
+        return False
     return key.startswith(f"{PREFIX}:")
 
 
@@ -80,7 +88,17 @@ def _memory_value(data: str, tags: list | None) -> str:
 def _parse_memory_value(raw: str) -> dict:
     """Decode stored value back into {data, tags}."""
     try:
-        return json.loads(raw)
+        val = json.loads(raw)
+        if not isinstance(val, dict):
+            return {"data": val, "tags": []}
+        if "data" not in val:
+            val["data"] = str(val)
+        else:
+            if val["data"] is not None:
+                val["data"] = str(val["data"])
+        if "tags" not in val or not isinstance(val["tags"], list):
+            val["tags"] = []
+        return val
     except (json.JSONDecodeError, TypeError):
         return {"data": raw, "tags": []}
 
@@ -219,14 +237,22 @@ async def handle_remove_memory_category(args: dict) -> str:
         scope_label = "global" if is_global else "local"
         return f"No memories found to remove in category '{category}' ({scope_label})."
 
+    deleted_count = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
         for entry in to_delete:
             key = entry["key"]
-            await client.delete(f"{API_URL}/{key}", timeout=5.0)
+            quoted_key = urllib.parse.quote(key, safe="")
+            r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
+            if r.status_code == 200:
+                deleted_count += 1
+            else:
+                scope_label = "global" if is_global else "local"
+                cat_label = f"category '{category}'" if category != "*" else "all categories"
+                return f"Error removing memory (deleted {deleted_count} of {len(to_delete)} from {cat_label} ({scope_label})): {r.text}"
 
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"
-    return f"Removed {len(to_delete)} memory(ies) from {cat_label} ({scope_label})."
+    return f"Removed {deleted_count} memory(ies) from {cat_label} ({scope_label})."
 
 
 async def handle_remove_specific_memory(args: dict) -> str:
@@ -261,7 +287,8 @@ async def handle_remove_specific_memory(args: dict) -> str:
         )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.delete(f"{API_URL}/{target['key']}", timeout=5.0)
+        quoted_key = urllib.parse.quote(target['key'], safe="")
+        r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
         if r.status_code == 200:
             return f"Removed memory in category '{category}' ({target['data'][:60]}...)."
         else:

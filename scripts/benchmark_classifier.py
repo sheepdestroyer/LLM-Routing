@@ -1,6 +1,8 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
 import json, urllib.request, time, sys
+import concurrent.futures
+import threading
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -54,41 +56,67 @@ correct = 0
 per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
-for i, item in enumerate(dataset.get("prompts", [])):
-    prompt = item["prompt"]
-    # Support both old schema ("tier") and new schema ("llm_tier" / "clf_tier")
-    expected = item.get("tier") or item.get("llm_tier") or item.get("clf_tier", "")
-
+def process_item(item):
     try:
+        if not isinstance(item, dict):
+            raise TypeError("Item is not a dictionary")
+        prompt = item["prompt"]
+        expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = classify(prompt)
     except Exception as e:
+        expected = ""
+        if isinstance(item, dict):
+            expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = f"ERROR: {str(e)[:50]}"
 
-    results.append({
-        "prompt": prompt[:100],
-        "expected": expected,
-        "predicted": predicted,
-    })
+    return expected, predicted
 
-    # Only score against known tiers — skip ERROR/unknown labels gracefully
-    if expected not in per_tier:
-        confusion[expected][predicted] += 1
-        continue
+results_list = [None] * total
 
-    per_tier[expected]["total"] += 1
-    if predicted == expected:
-        correct += 1
-        per_tier[expected]["correct"] += 1
-
-    confusion[expected][predicted] += 1
+with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    sem = threading.Semaphore(5)
     
-    # Progress
-    if (i + 1) % 20 == 0:
-        scored_so_far = sum(t["total"] for t in per_tier.values())
-        acc = (correct / scored_so_far * 100) if scored_so_far > 0 else 0.0
-        print(f"  {i+1}/{total} — accuracy {acc:.1f}%")
+    def process_item_with_rate_limit(index_and_item):
+        i, item = index_and_item
+        with sem:
+            # Add a small delay between acquisitions to stagger server load
+            time.sleep(0.05)
+            expected, predicted = process_item(item)
+        return i, item, expected, predicted
 
-    time.sleep(0.05)  # minimal rate-limit (model handles concurrency via llama-server slots)
+    futures = [executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))]
+    
+    completed_count = 0
+    for future in concurrent.futures.as_completed(futures):
+        i, item, expected, predicted = future.result()
+
+        prompt_val = ""
+        if isinstance(item, dict):
+            prompt_val = str(item.get("prompt", ""))[:100]
+        else:
+            prompt_val = f"<invalid prompt item: {str(item)[:50]}>"
+
+        results_list[i] = {
+            "prompt": prompt_val,
+            "expected": expected,
+            "predicted": predicted,
+        }
+
+        if expected in per_tier:
+            per_tier[expected]["total"] += 1
+            if predicted == expected:
+                correct += 1
+                per_tier[expected]["correct"] += 1
+        confusion[expected][predicted] += 1
+
+        completed_count += 1
+
+        if completed_count % 20 == 0:
+            scored_so_far = sum(t["total"] for t in per_tier.values())
+            acc = (correct / scored_so_far * 100) if scored_so_far > 0 else 0.0
+            print(f"  {completed_count}/{total} — accuracy {acc:.1f}%")
+
+results = [r for r in results_list if r is not None]
 
 # Report
 scored_total = sum(t["total"] for t in per_tier.values())
