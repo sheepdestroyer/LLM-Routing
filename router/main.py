@@ -2170,6 +2170,8 @@ async def chat_completions(request: Request):
                     pass
             logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
 
+    if target_model == "llm-routing-agy":
+        target_model = "agent-advanced-core"
     original_target_model = target_model
 
     # --- OLLAMA (via LiteLLM) ---
