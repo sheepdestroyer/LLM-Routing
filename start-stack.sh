@@ -31,7 +31,12 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Ensure openssl is installed if we need to generate passwords/keys
-
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
+    if ! command -v openssl &>/dev/null; then
+        echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
+        exit 1
+    fi
+fi
 
 if [ -z "$OPENROUTER_API_KEY" ]; then
     if [ -t 0 ]; then
@@ -93,13 +98,6 @@ if curl -s --max-time 2 http://127.0.0.1:5005/run >/dev/null 2>&1; then
     echo "✓ Host agy daemon responsive on port 5005"
 else
     echo "⚠️  Warning: Host agy daemon not responding on port 5005"
-fi
-
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
-    if ! command -v openssl &>/dev/null; then
-        echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
-        exit 1
-    fi
 fi
 
 # Ensure the env file exists and has secure permissions (owner read/write only)
@@ -467,7 +465,7 @@ text = text.replace("/run/user/1000", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
 # URL-encode the postgres password for DSN insertion
-encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'])
+encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
 text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
 text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])

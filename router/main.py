@@ -142,7 +142,7 @@ def estimate_prompt_tokens(body: dict) -> int:
 
     # Include a flat estimate for system prompt / metadata overhead.
     # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
-    return max(1, int(round(total)) + 50)
+    return max(1, round(total) + 50)
 
 
 async def sync_cooldowns_from_valkey() -> None:
