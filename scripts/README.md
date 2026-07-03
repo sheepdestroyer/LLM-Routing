@@ -75,6 +75,7 @@ The integration test suite is located in the `tests/` and `scripts/` directories
 ### Routing & Proxy Tests
 - **`tests/test_agy_tiers.py`**: Validates `agy` proxy model tier routing.
 - **`tests/test_antigravity.py`**: Tests the connection to the host Antigravity CLI daemon (`agentapi`).
+- **`router/tests/test_routing_behavior.py`**: Validates Qwen classifier prompt truncation and direct `llm-routing-agy` request fallback routing.
 
 ### Performance & Monitoring Tests
 - **`tests/test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.

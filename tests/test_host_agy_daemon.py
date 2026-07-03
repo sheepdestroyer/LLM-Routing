@@ -24,9 +24,9 @@ def find_free_port():
         return s.getsockname()[1]
 
 @pytest.fixture
-def daemon_server():
+def daemon_server(monkeypatch):
     port = find_free_port()
-    host_agy_daemon.PORT = port
+    monkeypatch.setattr(host_agy_daemon, "PORT", port)
 
     server = host_agy_daemon.ThreadingHTTPServer(('127.0.0.1', port), host_agy_daemon.AgyDaemonHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -225,6 +225,7 @@ def test_log_message_silenced():
     handler.log_message("format %s", "arg")
 
 def test_run_server_interrupt(monkeypatch):
+    monkeypatch.setattr(host_agy_daemon, "PORT", find_free_port())
     # Mock serve_forever to raise KeyboardInterrupt
     def mock_serve_forever(self):
         raise KeyboardInterrupt()

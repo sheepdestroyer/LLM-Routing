@@ -18,71 +18,24 @@ async def test_get_gemini_oauth_status_no_access_token():
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "missing", "detail": "No access token in file", "expiry_ms": 0}
 
+@pytest.mark.parametrize("delta, expected_status, expected_detail", [
+    (45000, "valid", "Expires in 45s"),
+    (1500000, "valid", "Expires in 25m 0s"),
+    (7500000, "valid", "Expires in 2h 5m"),
+    (-1500000, "expired", "Expired 25 minutes ago"),
+    (-7500000, "expired", "Expired 2 hours ago"),
+    (-172800000, "expired", "Expired 2 days ago"),
+])
 @pytest.mark.asyncio
-async def test_get_gemini_oauth_status_valid_less_than_60s():
+async def test_get_gemini_oauth_status_scenarios(delta, expected_status, expected_detail):
     current_time_ms = 1000000000000
-    expiry_ms = current_time_ms + 45000  # 45 seconds from now
+    expiry_ms = current_time_ms + delta
     mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
     with patch("os.path.exists", return_value=True), \
          patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
          patch("time.time", return_value=current_time_ms / 1000.0):
         result = await main.get_gemini_oauth_status()
-        assert result == {"status": "valid", "detail": "Expires in 45s", "expiry_ms": expiry_ms}
-
-@pytest.mark.asyncio
-async def test_get_gemini_oauth_status_valid_less_than_3600s():
-    current_time_ms = 1000000000000
-    expiry_ms = current_time_ms + 1500000  # 25 minutes from now (25 * 60 = 1500 seconds)
-    mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
-         patch("time.time", return_value=current_time_ms / 1000.0):
-        result = await main.get_gemini_oauth_status()
-        assert result == {"status": "valid", "detail": "Expires in 25m 0s", "expiry_ms": expiry_ms}
-
-@pytest.mark.asyncio
-async def test_get_gemini_oauth_status_valid_more_than_3600s():
-    current_time_ms = 1000000000000
-    expiry_ms = current_time_ms + 7500000  # 2 hours, 5 minutes from now (2 * 3600 + 5 * 60 = 7500)
-    mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
-         patch("time.time", return_value=current_time_ms / 1000.0):
-        result = await main.get_gemini_oauth_status()
-        assert result == {"status": "valid", "detail": "Expires in 2h 5m", "expiry_ms": expiry_ms}
-
-@pytest.mark.asyncio
-async def test_get_gemini_oauth_status_expired_less_than_3600s():
-    current_time_ms = 1000000000000
-    expiry_ms = current_time_ms - 1500000  # Expired 25 minutes ago
-    mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
-         patch("time.time", return_value=current_time_ms / 1000.0):
-        result = await main.get_gemini_oauth_status()
-        assert result == {"status": "expired", "detail": "Expired 25 minutes ago", "expiry_ms": expiry_ms}
-
-@pytest.mark.asyncio
-async def test_get_gemini_oauth_status_expired_less_than_86400s():
-    current_time_ms = 1000000000000
-    expiry_ms = current_time_ms - 7500000  # Expired 2 hours ago
-    mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
-         patch("time.time", return_value=current_time_ms / 1000.0):
-        result = await main.get_gemini_oauth_status()
-        assert result == {"status": "expired", "detail": "Expired 2 hours ago", "expiry_ms": expiry_ms}
-
-@pytest.mark.asyncio
-async def test_get_gemini_oauth_status_expired_more_than_86400s():
-    current_time_ms = 1000000000000
-    expiry_ms = current_time_ms - 172800000  # Expired 2 days ago (2 * 86400 * 1000 = 172800000)
-    mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
-         patch("time.time", return_value=current_time_ms / 1000.0):
-        result = await main.get_gemini_oauth_status()
-        assert result == {"status": "expired", "detail": "Expired 2 days ago", "expiry_ms": expiry_ms}
+        assert result == {"status": expected_status, "detail": expected_detail, "expiry_ms": expiry_ms}
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_exception():

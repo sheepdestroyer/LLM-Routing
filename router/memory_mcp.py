@@ -91,17 +91,16 @@ def _parse_memory_value(raw: str) -> dict:
     try:
         val = json.loads(raw)
         if not isinstance(val, dict):
-            return {"data": val, "tags": []}
-        if "data" not in val:
-            val["data"] = str(val)
+            return {"data": str(val) if val is not None else "", "tags": []}
+        if "data" not in val or val["data"] is None:
+            val["data"] = ""
         else:
-            if val["data"] is not None:
-                val["data"] = str(val["data"])
+            val["data"] = str(val["data"])
         if "tags" not in val or not isinstance(val["tags"], list):
             val["tags"] = []
         return val
     except (json.JSONDecodeError, TypeError):
-        return {"data": raw, "tags": []}
+        return {"data": str(raw) if raw is not None else "", "tags": []}
 
 
 # ---------------------------------------------------------------------------

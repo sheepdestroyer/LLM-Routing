@@ -2017,6 +2017,10 @@ async def chat_completions(request: Request):
 
                                 # Success telemetry
                                 latency_ms = (time.time() - start_time) * 1000.0
+                                stats["total_proxy_time_ms"] += latency_ms
+                                stats["avg_proxy_latency_ms"] = (
+                                    stats["total_proxy_time_ms"] / stats["total_requests"]
+                                )
                                 approx_prompt_tokens = estimate_prompt_tokens(body)
 
                                 record_tool_usage(ToolUsageRecord(
@@ -2066,6 +2070,10 @@ async def chat_completions(request: Request):
                         )
                     else:
                         latency_ms = (time.time() - start_time) * 1000.0
+                        stats["total_proxy_time_ms"] += latency_ms
+                        stats["avg_proxy_latency_ms"] = (
+                            stats["total_proxy_time_ms"] / stats["total_requests"]
+                        )
                         usage = agy_response.get("usage") or {}
                         prompt_tokens = usage.get("prompt_tokens") or 0
                         completion_tokens = usage.get("completion_tokens") or 0

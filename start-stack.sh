@@ -26,7 +26,7 @@ escape_env_val() {
     val="${val//\"/\\\"}"
     val="${val//\$/\\\$}"
     val="${val//\`/\\\`}"
-    echo "$val"
+    printf '%s\n' "$val"
 }
 
 
@@ -59,10 +59,8 @@ fi
 ENV_FILE="${WORKDIR}/.env"
 
 # Ensure the env file exists and has secure permissions (owner read/write only)
-if [ ! -f "$ENV_FILE" ]; then
-    touch "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-fi
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 # 1. Load or prompt for OpenRouter API Key
 if [ -f "$ENV_FILE" ]; then

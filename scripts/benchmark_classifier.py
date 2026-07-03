@@ -81,11 +81,16 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
     def process_item_with_rate_limit(index_and_item):
         i, item = index_and_item
         with sem:
+            sleep_delay = 0.0
             with rate_lock:
                 now = time.monotonic()
-                if now < next_start_time[0]:
-                    time.sleep(next_start_time[0] - now)
-                next_start_time[0] = time.monotonic() + 0.05
+                if next_start_time[0] < now:
+                    next_start_time[0] = now
+                sleep_delay = next_start_time[0] - now
+                next_start_time[0] += 0.05
+
+            if sleep_delay > 0.0:
+                time.sleep(sleep_delay)
             expected, predicted = process_item(item)
         return i, item, expected, predicted
 

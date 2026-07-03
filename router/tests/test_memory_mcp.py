@@ -142,7 +142,7 @@ def test_parse_memory_value_invalid_json():
 def test_parse_memory_value_type_error():
     """Test _parse_memory_value with TypeError (e.g. passing None)."""
     result = _parse_memory_value(None)
-    assert result == {"data": None, "tags": []}
+    assert result == {"data": "", "tags": []}
 
 
 def test_parse_memory_value_invalid_json_string():
@@ -310,7 +310,13 @@ def test_parse_memory_value_invalid_json_fallback():
 def test_parse_memory_value_type_error_fallback():
     raw_data = 12345
     result = _parse_memory_value(raw_data)  # type: ignore[arg-type]
-    assert result == {"data": 12345, "tags": []}
+    assert result == {"data": "12345", "tags": []}
+
+
+def test_parse_memory_value_null_data():
+    raw_data = '{"data": null, "tags": ["tag1"]}'
+    result = _parse_memory_value(raw_data)
+    assert result == {"data": "", "tags": ["tag1"]}
 
 
 def test_parse_memory_value_non_dict_json():
