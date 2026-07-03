@@ -269,7 +269,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs a pinned `ghcr.io/berriai/litellm` image tag. The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse and Valkey Cache also run version-pinned images (`docker.io/clickhouse/clickhouse-server` and `docker.io/valkey/valkey`), upgraded periodically in `pod.yaml`.
+- **Version Pinning**: The LiteLLM gateway, ClickHouse, and Valkey Cache image tags are explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags` or registry hubs before upgrading.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.

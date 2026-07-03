@@ -106,6 +106,10 @@ sys.stdout.flush()
 # instances, which no longer match. We must register both classes.
 try:
     from prisma.builder import serializer
+except ImportError:
+    serializer = None
+
+if serializer is not None:
     def _serialize_dt(dt):
         """Serialize datetime to ISO8601 with timezone (UTC if naive)."""
         if dt.tzinfo is None:
@@ -114,8 +118,6 @@ try:
     serializer.register(original_datetime, _serialize_dt)
     serializer.register(RobustDatetime, _serialize_dt)
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
-except Exception:
-    pass
 sys.stdout.flush()
 
 # Start LiteLLM Proxy

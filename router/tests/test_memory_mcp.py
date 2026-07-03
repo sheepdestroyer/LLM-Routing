@@ -16,6 +16,7 @@ from memory_mcp import (
     PREFIX,
     SCOPE_GLOBAL,
     SCOPE_LOCAL,
+    _is_memory_key,
     _make_key,
     _memory_entry,
     _memory_value,
@@ -235,6 +236,14 @@ def test_memory_entry_missing_fields():
     # Empty dict
     result3 = _memory_entry({})
     assert result3 is None
+
+def test_is_memory_key_types():
+    """Test _is_memory_key works with both string and non-string inputs."""
+    assert _is_memory_key("memory:local:test") is True
+    assert _is_memory_key("other:prefix") is False
+    assert _is_memory_key(None) is False
+    assert _is_memory_key(12345) is False
+    assert _is_memory_key([]) is False
 
 
 @pytest.mark.parametrize(

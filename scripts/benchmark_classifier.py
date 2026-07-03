@@ -1,6 +1,8 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
 import json, urllib.request, time, sys
+import concurrent.futures
+import threading
 from collections import defaultdict, Counter
 from pathlib import Path
 
@@ -54,9 +56,6 @@ correct = 0
 per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
-import concurrent.futures
-import threading
-
 def process_item(item):
     prompt = item["prompt"]
     expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
@@ -71,14 +70,14 @@ def process_item(item):
 results_list = [None] * total
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-    rate_limit_lock = threading.Lock()
+    sem = threading.Semaphore(5)
     
     def process_item_with_rate_limit(index_and_item):
         i, item = index_and_item
-        with rate_limit_lock:
+        with sem:
+            # Add a small delay between acquisitions to stagger server load
             time.sleep(0.05)
-
-        expected, predicted = process_item(item)
+            expected, predicted = process_item(item)
         return i, item, expected, predicted
 
     futures = [executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))]
@@ -93,14 +92,12 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             "predicted": predicted,
         }
 
-        if expected not in per_tier:
-            confusion[expected][predicted] += 1
-        else:
+        if expected in per_tier:
             per_tier[expected]["total"] += 1
             if predicted == expected:
                 correct += 1
                 per_tier[expected]["correct"] += 1
-            confusion[expected][predicted] += 1
+        confusion[expected][predicted] += 1
 
         completed_count += 1
 

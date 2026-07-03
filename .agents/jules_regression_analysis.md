@@ -61,7 +61,7 @@ To prevent automated agents from causing directory and code regressions, the fol
 Add a post-conflict verification script step to the agent workflow:
 ```bash
 # Verify no files were moved to root unexpectedly
-git status | grep -E "renamed:|deleted:|new file:"
+git status --porcelain
 ```
 
 ---
