@@ -250,7 +250,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ## 4. Multi-Tier Gateway Configurations
 
 ### A. Custom Triage Router (`router/main.py`)
-Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local `qwen-2b-routing` (Vulkan offloaded Ryzen PRO APU).
+Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local routing`model.
 - **Thinking Support**: Parses both `content` and `reasoning_content` API response fields to gracefully support local models configured with speculative decoding/thinking blocks.
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
@@ -349,7 +349,7 @@ Connects directly to the high-performance local `valkey-cache` on port `6379`. L
 The stack also supports **semantic** (vector-similarity) caching via `vector_store_settings` in `litellm/config.yaml`:
 - **Embedding Model**: Zero-cost local `nomic-embed-text-v1.5-Q4_K_M` (~137MB GGUF) running on llama-server, loaded as `local-nomic-embed` in LiteLLM. Produces 768-dimension vectors with CLS pooling.
 - **Vector Store**: PostgreSQL with pgvector extension stores embeddings in the `litellm_semantic_cache` collection.
-- **Cost**: Completely free — no OpenRouter API calls for embedding generation. The model runs fully offloaded to GPU (`n-gpu-layers: 99`) on the Ryzen PRO APU.
+- **Cost**: Completely free — no OpenRouter API calls for embedding generation.
 - **Configuration**: The nomic-embed model profile in `models.ini` (`/home/gpav/Vrac/LAB/AI/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
 
 ---
@@ -710,10 +710,10 @@ Additional mounts required in `pod.yaml`:
 
 | Model | Env Var Value | Backend |
 |-------|---------------|---------|
-| Gemini 3.5 Flash | `""` (auto-select) | Cloud Code Assist (default) |
-| Claude Opus 4.6 | `claude-opus-4-6@default` | Anthropic premium tier |
-| Claude Sonnet 4.5 | `claude-sonnet-4-5@20250929` | Anthropic via Vertex AI |
-| Claude Haiku 4.5 | `claude-haiku-4-5@20251001` | Anthropic lightweight |
+| Gemini 3.5 Flash | Cloud Code Assist (default) |
+| Claude Opus 4.6 | Vendor (Anthropic) premium tier |
+| Claude Sonnet 4.6 | Vendor (Anthropic) mid tier |
+| GPT-OSS 120B | `Vendor (OpenAI) low tier |
 
 ### Verification
 
@@ -744,9 +744,9 @@ To support low-latency streaming for agent clients (such as `goose-cli`), the ho
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
 
 #### 2. Parallel Classification Slots (Lock-Free)
-To maximize throughput under concurrent queries, `llama-server` is configured with 4 parallel processing slots (`--parallel 4` in `models.ini`).
+To maximize throughput under concurrent queries, `llama-server` is configured with parallel processing slots (`--parallel in `models.ini, optimal value : To Determine).
 * The sequential `classification_lock` in `router/main.py` has been removed.
-* Triage queries are processed concurrently by the fast local `qwen-2b-routing` model.
+* Triage queries are processed concurrently by the fast local routing` model.
 * Fast local memory caching is retained to bypass inference for exact repeat prompts.
 
 #### 3. Custom Memory Endpoint Proxy & MCP Server
@@ -821,17 +821,16 @@ Execute the verification script:
 Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
-| :--- | :---: | :---: | :---: |
-| **Cold-Run Triage** (First query) | ~15 - 24s | Dynamic HF Download | Includes GGUF fetch & initialization |
-| **Warm-Run Triage** (Local inference) | **~449 ms** | 100% Vulkan GPU (Ryzen APU) | **12x speedup** compared to 35B model |
+| **Cold-Run Triage** (First query) | To Determine | Dynamic HF Download | Includes GGUF fetch & initialization |
+| **Warm-Run Triage** (Local inference) | To Determine 
 | **Triage Cache Hit** (Repeat query) | **0.0 ms** | RAM In-Memory TTL | Infinite speedup, zero backend requests |
-| **Valkey Gateway Cache Hit** | **< 10 ms** | Redis RAM Cache | Zero provider cost, immediate response |
+| **Valkey Gateway Cache Hit** | **< 10 ms** | Valkey RAM Cache | Zero provider cost, immediate response |
 
 ## 11. NotebookLM Companion Knowledge Base
 
 This project is supported by a dedicated NotebookLM companion notebook:
-* **Notebook Name:** `TriageGate-Architect-KB`
+* **Notebook Name:** `LLM-Routing-KB`
 * **Notebook ID:** llm-triage-gateway
-* **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
+* **URL:** [LLM-Routing-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
 
 This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.
