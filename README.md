@@ -744,7 +744,7 @@ To support low-latency streaming for agent clients (such as `goose-cli`), the ho
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
 
 #### 2. Parallel Classification Slots (Lock-Free)
-To maximize throughput under concurrent queries, `llama-server` is configured with parallel processing slots (`--parallel in `models.ini, optimal value : To Determine).
+To maximize throughput under concurrent queries, `llama-server` is configured with parallel processing slots (`--parallel` in `models.ini`, optimal value: To Determine).
 * The sequential `classification_lock` in `router/main.py` has been removed.
 * Triage queries are processed concurrently by the fast local routing model.
 * Fast local memory caching is retained to bypass inference for exact repeat prompts.
