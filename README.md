@@ -356,6 +356,15 @@ The stack also supports **semantic** (vector-similarity) caching via `vector_sto
 
 ## 5. Setup & Deployment Instructions
 
+### Production Deployment User
+For secure production deployments, the gateway services are configured to run under a dedicated, non-privileged (no sudo) service account:
+- **User**: `boy`
+- **Home Directory**: `/mnt/DATA/boy`
+- **Security Profile**: Completely without sudo privileges (no administrative or `wheel` group privileges) to minimize container breakout risks.
+- **Service Persistence**: Systemd user lingering is enabled (`loginctl enable-linger boy`) to allow the rootless services to start at boot and run persistently without active user sessions.
+- **Access**: Configured for direct SSH administration via authorized public keys in `/mnt/DATA/boy/.ssh/authorized_keys`. An SSH host configuration has been added to `~/.ssh/config` so you can connect simply via `ssh boy` (and a shell shortcut alias `boy` has been added to `~/.bashrc` to quickly access the host shell).
+- **Rootless Podman**: Fully configured with container subuids/subgids and a user-level Docker-compatible API socket (`podman.socket` listening at `/run/user/1002/podman/podman.sock`).
+
 ### Prerequisites
 1. **Llama-Server Active**: Verify that your local user-level GPU-accelerated server is active:
    ```bash
