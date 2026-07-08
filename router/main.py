@@ -3070,8 +3070,16 @@ async def get_dashboard_stats():
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard():
+async def get_dashboard(request: Request):
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    external_host = os.getenv("BASEURL") or os.getenv("BASE_URL")
+    if not external_host:
+        external_host = request.base_url.host or "localhost"
+    else:
+        if "://" in external_host:
+            from urllib.parse import urlparse
+            external_host = urlparse(external_host).hostname or "localhost"
+
     data = await get_dashboard_data()
 
     # Unpack data for the f-string template
@@ -3710,7 +3718,7 @@ async def get_dashboard():
                     </div>
                     <div style="text-align: center; padding: 25px 20px;">
                         <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
-                        <a href="http://localhost:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
+                        <a href="http://{external_host}:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
                     </div>
                 </div>
 
@@ -3846,15 +3854,15 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <a href="http://localhost:3001" target="_blank" class="btn">
+                        <a href="http://{external_host}:3001" target="_blank" class="btn">
                             <span>{src_badge("LANGFUSE", "#e879f9")} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:4000/ui" target="_blank" class="btn">
+                        <a href="http://{external_host}:4000/ui" target="_blank" class="btn">
                             <span>{src_badge("LITELLM", "#34d399")} Admin UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:8080" target="_blank" class="btn">
+                        <a href="http://{external_host}:8080" target="_blank" class="btn">
                             <span>{src_badge("LLAMA.CPP", "#fb923c")} Server Router UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
