@@ -821,7 +821,7 @@ Execute the verification script:
 Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
-| **Cold-Run Triage** (First query) | To Determine | Dynamic HF Download | Includes GGUF fetch & initialization |
+| :--- | :---: | :---: | :---: |\n| **Cold-Run Triage** (First query) | To Determine | Dynamic HF Download | Includes GGUF fetch & initialization |
 | **Warm-Run Triage** (Local inference) | To Determine 
 | **Triage Cache Hit** (Repeat query) | **0.0 ms** | RAM In-Memory TTL | Infinite speedup, zero backend requests |
 | **Valkey Gateway Cache Hit** | **< 10 ms** | Valkey RAM Cache | Zero provider cost, immediate response |
