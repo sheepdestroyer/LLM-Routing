@@ -4,13 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-# Set CONFIG_PATH for import
-os.environ["CONFIG_PATH"] = "router/config.yaml"
-
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent / "router"))
-
 from main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
 
 def test_http_client_limits():

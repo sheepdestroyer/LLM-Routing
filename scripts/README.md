@@ -60,26 +60,28 @@ These tools are used to benchmark the prompt classifier and extract datasets fro
 
 ---
 
-## 4. Integration Test Suite (Root Directory)
+## 4. Integration Test Suite
 
-The integration test suite is located in the root directory. Tests are categorized below based on their primary function:
+The integration test suite is located in the `tests/` and `scripts/` directories. Tests are categorized below based on their primary function:
 
 ### Circuit Breaker Tests
-- **`test_circuit_breaker.py`**: Unit/integration tests for the dual circuit breaker (`router/circuit_breaker.py`), covering independent Google/Vendor tiers and probe-granting logic.
-- **`verify_breaker.py`**: Sanity verification check for the circuit breaker.
-- **`test_a2_verify.py`**: Quick sanity integration check for the agy proxy circuit breaker.
+- **`tests/test_circuit_breaker.py`**: Unit/integration tests for the dual circuit breaker (`router/circuit_breaker.py`), covering independent Google/Vendor tiers and probe-granting logic.
+- **`scripts/verification/verify_breaker.py`**: Sanity verification check for the circuit breaker.
+- **`tests/test_a2_verify.py`**: Quick sanity integration check for the agy proxy circuit breaker.
 
 ### Classifier Tests
-- **`test_classifier_accuracy.py`**: Accuracy evaluation suite covering 25 system prompts.
+- **`tests/test_classifier_accuracy.py`**: Accuracy evaluation suite covering 25 system prompts.
 
 ### Routing & Proxy Tests
-- **`test_agy_tiers.py`**: Validates `agy` proxy model tier routing.
-- **`test_antigravity.py`**: Tests the connection to the host Antigravity CLI daemon (`agentapi`).
+- **`tests/test_agy_tiers.py`**: Validates `agy` proxy model tier routing.
+- **`tests/test_antigravity.py`**: Tests the connection to the host Antigravity CLI daemon (`agentapi`).
+- **`router/tests/test_routing_behavior.py`**: Validates Qwen classifier prompt truncation and direct `llm-routing-agy` request fallback routing.
+- **`scripts/verification/verify_reasoning_tiers.py`**: Sends prompts across all 5 triage tiers and validates routing to the expected model.
 
 ### Performance & Monitoring Tests
-- **`test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.
+- **`tests/test_stream_latency.py`**: Measures Time-To-First-Token (TTFT) and token generation speed.
 
 ### Simulation Tests
-- **`test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
-- **`test_quota_reset.sh`**: Simulates/triggers quota reset conditions.
-- **`watch_quota.sh`**: Watch/polling script for observing quota status.
+- **`tests/test_agy_behavior.py`**: Asserts the behavior of the `agy` CLI client under quota limits.
+- **`scripts/test_quota_reset.sh`**: Simulates/triggers quota reset conditions.
+- **`scripts/watch_quota.sh`**: Watch/polling script for observing quota status.

@@ -34,4 +34,5 @@ async def test():
                 if "RESOURCE_EXHAUSTED" in line or "quota" in line.lower():
                     print(f"  {line.rstrip()}")
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(test())

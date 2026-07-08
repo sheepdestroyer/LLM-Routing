@@ -1,14 +1,4 @@
 import pytest
-import sys
-import os
-from pathlib import Path
-
-# Set CONFIG_PATH for import
-os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "config.yaml")
-
-# Add the parent directory to the path so we can import from router
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from main import estimate_prompt_tokens
 
 def test_estimate_prompt_tokens_empty():
@@ -23,25 +13,27 @@ def test_estimate_prompt_tokens_empty_messages():
 def test_estimate_prompt_tokens_string_content():
     body = {
         "messages": [
-            {"content": "1234"},  # 1 token
-            {"content": "12345678"}  # 2 tokens
+            {"content": "word " * 4},  # 4 * 1.2 = 4.8
+            {"content": "word " * 8}   # 8 * 1.2 = 9.6
         ]
     }
-    assert estimate_prompt_tokens(body) == 50 + 1 + 2
+    # Total is int(round(4.8 + 9.6)) + 50 = int(round(14.4)) + 50 = 14 + 50 = 64
+    assert estimate_prompt_tokens(body) == 50 + 14
 
 def test_estimate_prompt_tokens_list_content():
     body = {
         "messages": [
             {
                 "content": [
-                    {"type": "text", "text": "1234"},  # 1 token
+                    {"type": "text", "text": "word " * 4},  # 4.8 tokens
                     {"type": "image_url", "url": "ignored"},  # 0 tokens
-                    {"type": "text", "text": "12345678"}  # 2 tokens
+                    {"type": "text", "text": "word " * 8}  # 9.6 tokens
                 ]
             }
         ]
     }
-    assert estimate_prompt_tokens(body) == 50 + 1 + 2
+    # Total is int(round(4.8 + 9.6)) + 50 = 64
+    assert estimate_prompt_tokens(body) == 50 + 14
 
 def test_estimate_prompt_tokens_mixed_and_invalid_msgs():
     body = {
@@ -52,10 +44,11 @@ def test_estimate_prompt_tokens_mixed_and_invalid_msgs():
                 "invalid_block_type",  # Should be skipped
                 {"type": "text", "text": None}  # None text, handled as empty string
             ]},
-            {"content": "1234"}  # 1 token
+            {"content": "word " * 4}  # 4.8 tokens
         ]
     }
-    assert estimate_prompt_tokens(body) == 50 + 1
+    # Total is int(round(4.8)) + 50 = 5 + 50 = 55
+    assert estimate_prompt_tokens(body) == 50 + 5
 
 def test_estimate_prompt_tokens_missing_content():
     body = {

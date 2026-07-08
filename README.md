@@ -66,7 +66,7 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.88.0`. See §3B for pinning policy.
+> **Version Pin**: LiteLLM Gateway runs `ghcr.io/berriai/litellm:v1.90.2`. See §4B for pinning policy.
 
 ---
 
@@ -80,7 +80,7 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
-| **clickhouse-db** | `clickhouse-client --user clickhouse --password clickhouse --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
+| **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
@@ -218,26 +218,31 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── README.md            # In-depth system and operational guide
 ├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
 ├── start-stack.sh       # Unified startup and credential extraction script
+├── pytest.ini           # Pytest configuration (test discovery, asyncio mode)
 ├── litellm/
 │   ├── config.yaml      # LiteLLM fallback chains, caching definitions & telemetry keys
 │   └── entrypoint.py    # LiteLLM startup wrapper (reads .env + oauth_creds.json)
 ├── router/
-│   ├── Containerfile    # Container construction rules for the FastAPI server
+│   ├── Dockerfile       # Container construction rules for the FastAPI server
 │   ├── config.yaml      # 5-tier classifier prompt + backend connection targets
 │   ├── main.py          # FastAPI Reverse-Proxy + Glassmorphic Control Dashboard
 │   ├── agy_proxy.py     # 3-tier agy fallback with session continuation
 │   ├── circuit_breaker.py # Exponential cooldown breaker for agy proxy
-│   └── memory_mcp.py    # MCP bridge server for Goose memory integration
+│   ├── memory_mcp.py    # MCP bridge server for Goose memory integration
+│   └── tests/           # Unit tests for router components
 ├── scripts/
-│   └── backup.sh        # Database backup with pg_isready retry logic
+│   ├── backup.sh        # Database backup with pg_isready retry logic
+│   ├── benchmark_classifier.py # Classifier accuracy & latency benchmarks
+│   ├── benchmark_tokens.py     # Token-count ground-truth comparisons
+│   └── verification/    # Live-stack E2E verification scripts
+├── tests/               # Project-wide unit & integration tests
+├── data/                # Reference datasets for benchmarks & tests
 ├── backups/             # Timestamped PostgreSQL dumps + config snapshots
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
-├── valkey-lf-data/      # [Git Ignored] Persistent job queues for Langfuse v3
-├── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
-├── test_agy_tiers.py    # agy proxy model tier test suite
-└── test_classifier_accuracy.py # Classifier accuracy benchmark
+├── redis-lf-data/       # [Git Ignored] Persistent job queues for Langfuse v3
+└── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
 ```
 
 ---
@@ -269,7 +274,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
 
 ### B. LiteLLM Proxy Gateway (`litellm/config.yaml`)
-- **Version Pinning**: The LiteLLM gateway runs `ghcr.io/berriai/litellm:v1.88.0` (latest stable as of June 2026). The tag is explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags docker://ghcr.io/berriai/litellm` before upgrading. ClickHouse runs `docker.io/clickhouse/clickhouse-server:26.5.1` (upgraded from 24.8, June 2026). Valkey Cache runs `docker.io/valkey/valkey:9.1.0-alpine` (upgraded from 8, June 2026).
+- **Version Pinning**: The LiteLLM gateway, ClickHouse, and Valkey Cache image tags are explicitly pinned in `pod.yaml` — never use `:latest`. Check available tags with `skopeo list-tags` or registry hubs before upgrading.
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
@@ -572,24 +577,24 @@ Without Minio, Langfuse v3 **will not start** — it validates S3 connectivity a
 ### Configuration
 
 > [!WARNING]
-> The credentials `minioadmin` / `minioadmin` and settings specified below are strictly for **local development and testing**. You **must** override these default credentials before any shared, staging, or production use.
+> Minio credentials are auto-generated by `start-stack.sh` and injected via `.env` placeholders. You **must not** hardcode credentials in `pod.yaml`.
 
 | Env Var | Value |
 |----------|-------|
 | `LANGFUSE_S3_EVENT_UPLOAD_BUCKET` | `langfuse-events` |
 | `LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT` | `http://127.0.0.1:9002` |
-| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | `minioadmin` |
-| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `minioadmin` |
+| `LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID` | `<generated>` (from `MINIO_USER_PLACEHOLDER`) |
+| `LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY` | `<generated>` (from `MINIO_PASSWORD_PLACEHOLDER`) |
 | `S3_FORCE_PATH_STYLE` | `true` |
 
-Minio runs on ports **9001** (web console) and **9002** (S3 API). Default credentials (`minioadmin` / `minioadmin`) are only meant for local/dev setups. Image pinned to `docker.io/minio/minio:RELEASE.2025-10-15T17-29-55Z`.
+Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials are generated at first boot and persisted in `.env`. Image pinned to `docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`.
 
 ### Health Check
 
 MinIO's health is monitored using its native structured endpoints `/minio/health/live` (liveness) and `/minio/health/ready` (readiness) on port 9002:
 
 > [!IMPORTANT]
-> When deploying to staging or production, ensure that custom credentials are configured (rather than the default `minioadmin` keys described in [Configuration](#configuration)), and ensure the deployment's probes and S3 configurations are updated to reference the new values.
+> When deploying to staging or production, ensure that custom auto-generated credentials from `start-stack.sh` are configured (rather than any default credentials), and ensure the deployment's probes and S3 configurations are updated to reference these values.
 
 ```yaml
 livenessProbe:
@@ -725,7 +730,7 @@ agy --print "First message"                    # creates conversation
 agy --conversation <id> --print "Follow-up"    # continues same session
 
 # Run the full tier test suite
-python3 test_agy_tiers.py
+python3 tests/test_agy_tiers.py
 ```
 
 ### 9b. Streaming & Concurrency Optimizations
@@ -790,7 +795,30 @@ The cooldown mechanism works as follows:
 
 For auto-routing modes, the Triage Router handles failures by silently falling back to the classified free tier cascade. For direct requests to `llm-routing-ollama`, the router returns `429` immediately during cooldown, allowing LiteLLM to skip this model group and cascade to `openrouter-auto`. The cooldown status is visible via the `/metrics` endpoint (`ollama_cooldown_active` and `ollama_cooldown_remaining_seconds` gauges).
 
-## 10. Performance Benchmarks\n\nThrough our local benchmarks, the following performance characteristics have been achieved:
+## 9d. Live Stack Tier Testing & Verification
+
+The repository includes an automated integration script to test the 5-tier intent routing pipeline on the live gateway stack:
+* **Location**: [verify_reasoning_tiers.py](scripts/verification/verify_reasoning_tiers.py)
+
+This script acts as an end-to-end routing smoke test by sending five sequential chat completion requests (from simple to advanced prompt complexities) to the gateway's `llm-routing-auto-free` auto-triage route, verifying that:
+1. The gateway successfully routes the prompt to the expected LiteLLM model group or provider.
+2. The responses are returned successfully with acceptable latency.
+
+### How to Run
+
+Ensure the container stack is deployed and healthy:
+```bash
+./start-stack.sh
+```
+
+Execute the verification script:
+```bash
+./scripts/verification/verify_reasoning_tiers.py
+```
+
+## 10. Performance Benchmarks
+
+Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
 | :--- | :---: | :---: | :---: |
