@@ -553,7 +553,8 @@ placeholders = [
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
     "REDIS_AUTH_PLACEHOLDER",
     "CLICKHOUSE_PASSWORD_PLACEHOLDER",
-    "PROXY_BASE_URL_PLACEHOLDER"
+    "PROXY_BASE_URL_PLACEHOLDER",
+    "PUBLIC_BASE_URL_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -582,6 +583,7 @@ text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["C
 public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
 proxy_base_url = f"{public_base_url}/litellm"
 text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
+text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
 import re
 unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
 if unresolved:

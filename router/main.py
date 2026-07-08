@@ -3070,20 +3070,22 @@ async def get_dashboard_stats():
     return await get_dashboard_data()
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard(request: Request):
-    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
-    external_host_env = os.getenv("BASEURL") or os.getenv("BASE_URL")
-    if external_host_env:
-        if "://" not in external_host_env:
-            parsed = urlparse(f"http://{external_host_env}")
+def resolve_external_urls(request: Request) -> tuple[str, str, str]:
+    """Resolve and validate the base URLs for Langfuse, LiteLLM, and Llama.cpp."""
+    # 1. Try to load centralized base URL from config/env
+    base_url_env = os.getenv("PUBLIC_BASE_URL") or os.getenv("BASEURL") or os.getenv("BASE_URL")
+    if base_url_env:
+        if "://" not in base_url_env:
+            parsed = urlparse(f"https://{base_url_env}")
         else:
-            parsed = urlparse(external_host_env)
+            parsed = urlparse(base_url_env)
         external_host = parsed.hostname or "localhost"
         external_netloc = parsed.netloc or "localhost"
+        external_scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
     else:
         external_host = request.base_url.hostname or "localhost"
         external_netloc = request.base_url.netloc or "localhost"
+        external_scheme = request.url.scheme if request.url.scheme in ("http", "https") else "https"
 
     domain = os.getenv("ROUTING_DOMAIN") or "vendeuvre.lan"
     if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-]+$", external_host):
@@ -3096,20 +3098,33 @@ async def get_dashboard(request: Request):
     is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
 
     if is_valid_external:
-        langfuse_url = f"https://{external_netloc}/llm-routing/langfuse"
-        litellm_url = f"https://{external_netloc}/llm-routing/litellm/ui"
-        llama_url = f"https://{external_netloc}/llm-routing/llama/"
+        # Centralized base URL path under subdomain/reverse proxy
+        return (
+            f"{external_scheme}://{external_netloc}/llm-routing/langfuse",
+            f"{external_scheme}://{external_netloc}/llm-routing/litellm/ui",
+            f"{external_scheme}://{external_netloc}/llm-routing/llama/"
+        )
     elif is_valid_base:
-        scheme = request.url.scheme if re.match(r"^(?:http|https)$", request.url.scheme) else "https"
         netloc = request.url.netloc if re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", request.url.netloc) else "localhost"
-        base = f"{scheme}://{netloc}"
-        langfuse_url = f"{base}/llm-routing/langfuse"
-        litellm_url = f"{base}/llm-routing/litellm/ui"
-        llama_url = f"{base}/llm-routing/llama/"
+        base = f"{external_scheme}://{netloc}"
+        return (
+            f"{base}/llm-routing/langfuse",
+            f"{base}/llm-routing/litellm/ui",
+            f"{base}/llm-routing/llama/"
+        )
     else:
-        langfuse_url = f"http://{external_host}:3001"
-        litellm_url = f"http://{external_host}:4000/ui"
-        llama_url = f"http://{external_host}:8080"
+        # Local development fallback
+        return (
+            f"http://{external_host}:3001",
+            f"http://{external_host}:4000/ui",
+            f"http://{external_host}:8080"
+        )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def get_dashboard(request: Request):
+    """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    langfuse_url, litellm_url, llama_url = resolve_external_urls(request)
 
     data = await get_dashboard_data()
 
