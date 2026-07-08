@@ -38,29 +38,29 @@ litellm_settings:
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    # - local-qwen-3.6  # DISABLED: 35B model unloaded (23GB GTT saved)
+    - local-qwen-3.6
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    # - local-qwen-3.6  # DISABLED
+    - local-qwen-3.6
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    # - local-qwen-3.6  # DISABLED
+    - local-qwen-3.6
   - agent-reasoning-core:
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    # - local-qwen-3.6  # DISABLED
+    - local-qwen-3.6
   - agent-advanced-core:
     - llm-routing-ollama
     - openrouter-auto
-    # - local-qwen-3.6  # DISABLED
+    - local-qwen-3.6
 
 model_list:
 - litellm_params:

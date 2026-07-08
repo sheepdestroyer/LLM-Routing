@@ -69,6 +69,14 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+# Derive public/local base URLs from env/config with sensible defaults, removing trailing slash
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.vendeuvre.lan/llm-routing}}}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL%/}"
+export PUBLIC_BASE_URL LOCAL_BASE_URL
+
+
 # Ensure openssl is installed if we need to generate passwords/keys
 if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
     if ! command -v openssl &>/dev/null; then
@@ -511,7 +519,6 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.vendeuvre.lan/llm-routing}}}"
     export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
@@ -602,9 +609,6 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman pod restart agent-router-pod
         setup_minio_buckets
         verify_stack_health
-        # Derive base URLs from configuration/env with sensible defaults
-        PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://x570.vendeuvre.lan/llm-routing}"
-        LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
 
         echo ""
         echo "========================================================================="
@@ -630,9 +634,6 @@ else
     verify_stack_health
 fi
 
-# Derive base URLs from configuration/env with sensible defaults
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://x570.vendeuvre.lan/llm-routing}"
-LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
 
 echo "========================================================================="
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"

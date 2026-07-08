@@ -431,48 +431,48 @@ spec:
   restartPolicy: Always
   volumes:
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/valkey-data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/valkey-data
     name: valkey-storage
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/litellm
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/litellm
     name: litellm-config
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/router
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/router
     name: router-config
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/postgres-data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/postgres-data
     name: postgres-storage
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/clickhouse-data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/clickhouse-data
     name: clickhouse-storage
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/redis-lf-data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/redis-lf-data
     name: redis-lf-storage
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/minio-data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/minio-data
     name: minio-storage
   - hostPath:
-      path: /mnt/DATA/boy/.gemini
+      path: /home/gpav/.gemini
     name: gemini-secrets
   - hostPath:
-      path: /mnt/DATA/boy/.local/share/goose
+      path: /home/gpav/.local/share/goose
     name: goose-sessions
   - hostPath:
-      path: /mnt/DATA/boy/.local/bin
+      path: /home/gpav/.local/bin
     name: agy-bin
   - hostPath:
-      path: /run/user/1002/bus
+      path: /run/user/1000/bus
     name: dbus-socket
   - hostPath:
-      path: /mnt/DATA/boy/.local/share/keyrings
+      path: /home/gpav/.local/share/keyrings
     name: keyring-store
   - hostPath:
-      path: /run/user/1002
+      path: /run/user/1000
     name: xdg-runtime
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing
     name: env-file
   - hostPath:
-      path: /mnt/DATA/boy/LLM-Routing/data
+      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/data
       type: DirectoryOrCreate
     name: dataset-data
