@@ -64,7 +64,7 @@ pkill -f host_agy_daemon.py || true
 nohup python3 ~/LAB/IA/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 &
 
 # 6. Verify end-to-end
-curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
+curl -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
   https://x570.vendeuvre.lan/llm-routing/dashboard | head -5
 ```
 
@@ -72,7 +72,7 @@ curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
 - The `agy-daemon.service` systemd unit cannot be reloaded via `systemctl --user` from
   the agent terminal (DBus is not connected). Start the daemon manually with `nohup` as
   shown above, or instruct the user to run it in their own session.
-- **Sudo Password Precaution**: Always preserve exact bytes (including trailing spaces or newlines) when reading `/home/sheepdestroyer/.sudo_password` (e.g. `'sakamoto   '`). Stripping whitespace will cause authentication to fail.
+- **Sudo Password Precaution**: Always preserve exact bytes (including trailing spaces or newlines) when reading `/home/sheepdestroyer/.sudo_password` (e.g. `'your_password_here   '`). Stripping whitespace will cause authentication to fail.
 - `start-stack.sh` without `--full-rebuild` will do a fast pod restart (reuses images).
   Use `--full-rebuild` after code changes or image updates.
 - **GitHub CLI Authentication**: If running `gh` commands fails with a 401 error, ensure that `GITHUB_TOKEN` is exported (e.g., mapped from `GITHUB_MCP_PAT` in `~/.bashrc` via `export GITHUB_TOKEN="$GITHUB_MCP_PAT"`).

@@ -3081,12 +3081,18 @@ async def get_dashboard(request: Request):
             external_host = urlparse(external_host).hostname or "localhost"
 
     domain = "vendeuvre.lan"
+    import re
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-]+$", external_host):
+        external_host = "localhost"
+
     if external_host and domain in external_host:
         langfuse_url = f"https://{external_host}/llm-routing/langfuse"
         litellm_url = f"https://{external_host}/llm-routing/litellm/ui"
         llama_url = f"https://{external_host}/llm-routing/llama/"
     elif domain in (request.base_url.hostname or ""):
-        base = f"{request.url.scheme}://{request.url.netloc}"
+        scheme = request.url.scheme if re.match(r"^(?:http|https)$", request.url.scheme) else "https"
+        netloc = request.url.netloc if re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", request.url.netloc) else "localhost"
+        base = f"{scheme}://{netloc}"
         langfuse_url = f"{base}/llm-routing/langfuse"
         litellm_url = f"{base}/llm-routing/litellm/ui"
         llama_url = f"{base}/llm-routing/llama/"
