@@ -80,7 +80,7 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
-| **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --query "SELECT 1"` every 10s |
+| **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** (9.1.0-alpine) | `tcpSocket` on port 6380 every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
@@ -241,7 +241,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── valkey-data/         # [Git Ignored] Persistent memory volumes for Valkey Cache
 ├── postgres-data/       # [Git Ignored] Persistent tables for PostgreSQL
 ├── clickhouse-data/     # [Git Ignored] Persistent traces for Langfuse v3
-├── valkey-lf-data/      # [Git Ignored] Persistent job queues for Langfuse v3
+├── redis-lf-data/       # [Git Ignored] Persistent job queues for Langfuse v3
 └── minio-data/          # [Git Ignored] S3-compatible event storage for Langfuse v3
 ```
 
@@ -594,7 +594,7 @@ Minio runs on ports **9001** (web console) and **9002** (S3 API). Credentials ar
 MinIO's health is monitored using its native structured endpoints `/minio/health/live` (liveness) and `/minio/health/ready` (readiness) on port 9002:
 
 > [!IMPORTANT]
-> When deploying to staging or production, ensure that custom credentials are configured (rather than the default `minioadmin` keys described in [Configuration](#configuration)), and ensure the deployment's probes and S3 configurations are updated to reference the new values.
+> When deploying to staging or production, ensure that custom auto-generated credentials from `start-stack.sh` are configured (rather than any default credentials), and ensure the deployment's probes and S3 configurations are updated to reference these values.
 
 ```yaml
 livenessProbe:

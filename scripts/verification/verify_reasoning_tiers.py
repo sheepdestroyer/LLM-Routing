@@ -89,7 +89,7 @@ def run_tests():
                         failed = True
                     else:
                         print(f"   ✅ Routed correctly to {expected}")
-                except Exception as parse_inner:
+                except (KeyError, IndexError) as parse_inner:
                     print(f"   Failed to parse response choices: {parse_inner}")
                     print(f"   Raw Data: {data}")
                     failed = True
@@ -97,7 +97,7 @@ def run_tests():
             else:
                 print(f"   Error: {r.text}")
                 failed = True
-        except Exception as e:
+        except (httpx.HTTPError, ValueError) as e:
             print(f"   Request Exception: {e}")
             failed = True
             

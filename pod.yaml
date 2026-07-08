@@ -209,6 +209,10 @@ spec:
       exec:
         command:
         - clickhouse-client
+        - --user
+        - clickhouse
+        - --password
+        - CLICKHOUSE_PASSWORD_PLACEHOLDER
         - --query
         - SELECT 1
       initialDelaySeconds: 10
@@ -221,6 +225,8 @@ spec:
   # Valkey LF — Langfuse v3 BullMQ job queue
   - command:
     - redis-server
+    - --bind
+    - 127.0.0.1
     - --port
     - '6380'
     - --requirepass

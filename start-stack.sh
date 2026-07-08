@@ -152,37 +152,56 @@ fi
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
-generate_uuid() {
+gen_hex() {
     local val
-    val=$(openssl rand -hex 16 2>/dev/null)
+    val=$(openssl rand -hex "$1" 2>/dev/null)
     local status=$?
-    if [ $status -ne 0 ] || [ ${#val} -ne 32 ]; then
-        echo "❌ Error: Failed to generate secure random UUID (openssl rand returned exit status $status, length ${#val})." >&2
+    local expected_len=$(( $1 * 2 ))
+    if [ $status -ne 0 ] || [ ${#val} -ne $expected_len ]; then
+        echo "❌ Error: Failed to generate secure random hex value of byte length $1 (openssl rand exit $status, length ${#val})." >&2
         return 1
     fi
+    printf '%s' "$val"
+}
+
+gen_base64() {
+    local val
+    val=$(openssl rand -base64 "$1" 2>/dev/null)
+    local status=$?
+    if [ $status -ne 0 ] || [ -z "$val" ]; then
+        echo "❌ Error: Failed to generate secure random base64 value of byte length $1 (openssl rand exit $status)." >&2
+        return 1
+    fi
+    printf '%s' "$val"
+}
+
+generate_uuid() {
+    local val
+    val=$(gen_hex 16) || return 1
     echo "${val:0:8}-${val:8:4}-${val:12:4}-${val:16:4}-${val:20:12}"
 }
 
 if [ -z "$NEXTAUTH_SECRET" ]; then
-    NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+    NEXTAUTH_SECRET="$(gen_base64 32)" || exit 1
     echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
     echo "✓ Generated new NEXTAUTH_SECRET and saved to $ENV_FILE"
 fi
 
 if [ -z "$SALT" ]; then
-    SALT="$(openssl rand -hex 32)"
+    SALT="$(gen_hex 32)" || exit 1
     echo "SALT=\"$SALT\"" >> "$ENV_FILE"
     echo "✓ Generated new SALT and saved to $ENV_FILE"
 fi
 
 if [ -z "$ENCRYPTION_KEY" ]; then
-    ENCRYPTION_KEY="$(openssl rand -hex 32)"
+    ENCRYPTION_KEY="$(gen_hex 32)" || exit 1
     echo "ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ENCRYPTION_KEY and saved to $ENV_FILE"
 fi
 
 if [ -z "$LITELLM_MASTER_KEY" ]; then
-    LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
+    rand_key="$(gen_hex 16)" || exit 1
+    LITELLM_MASTER_KEY="sk-litellm-$rand_key"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
 fi
@@ -193,44 +212,44 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
-    LANGFUSE_INIT_USER_PASSWORD="$(openssl rand -hex 16)"
+    LANGFUSE_INIT_USER_PASSWORD="$(gen_hex 16)" || exit 1
     echo "LANGFUSE_INIT_USER_PASSWORD=\"$LANGFUSE_INIT_USER_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$REDIS_AUTH" ]; then
-    REDIS_AUTH="$(openssl rand -hex 16)"
+    REDIS_AUTH="$(gen_hex 16)" || exit 1
     echo "REDIS_AUTH=\"$REDIS_AUTH\"" >> "$ENV_FILE"
     echo "✓ Generated new REDIS_AUTH and saved to $ENV_FILE"
 fi
 
 if [ -z "$CLICKHOUSE_PASSWORD" ]; then
-    CLICKHOUSE_PASSWORD="$(openssl rand -hex 16)"
+    CLICKHOUSE_PASSWORD="$(gen_hex 16)" || exit 1
     echo "CLICKHOUSE_PASSWORD=\"$CLICKHOUSE_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new CLICKHOUSE_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$ROUTER_API_KEY" ]; then
-    ROUTER_API_KEY="$(openssl rand -hex 32)"
+    ROUTER_API_KEY="$(gen_hex 32)" || exit 1
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
 fi
 
 if [ -z "$MINIO_ROOT_USER" ]; then
-    MINIO_ROOT_USER="minio-$(openssl rand -hex 4)"
+    rand_user="$(gen_hex 4)" || exit 1
+    MINIO_ROOT_USER="minio-$rand_user"
     echo "MINIO_ROOT_USER=\"$MINIO_ROOT_USER\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_USER and saved to $ENV_FILE"
 fi
 
 if [ -z "$MINIO_ROOT_PASSWORD" ]; then
-    MINIO_ROOT_PASSWORD="$(openssl rand -hex 16)"
+    MINIO_ROOT_PASSWORD="$(gen_hex 16)" || exit 1
     echo "MINIO_ROOT_PASSWORD=\"$MINIO_ROOT_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+    if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_PUBLIC_KEY." >&2
         exit 1
     fi
@@ -241,8 +260,7 @@ if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_SECRET_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+    if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_SECRET_KEY." >&2
         exit 1
     fi
