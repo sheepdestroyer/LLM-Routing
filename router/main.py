@@ -984,7 +984,7 @@ async def classify_request(
         try:
             client = get_http_client()
             try:
-                max_chars = int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300"))
+                max_chars = max(0, int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300")))
             except ValueError:
                 max_chars = 300
             truncated_prompt = prompt[:max_chars] if len(prompt) > max_chars else prompt
