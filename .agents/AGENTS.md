@@ -75,4 +75,5 @@ curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
 - **Sudo Password Precaution**: Always preserve exact bytes (including trailing spaces or newlines) when reading `/home/sheepdestroyer/.sudo_password` (e.g. `'sakamoto   '`). Stripping whitespace will cause authentication to fail.
 - `start-stack.sh` without `--full-rebuild` will do a fast pod restart (reuses images).
   Use `--full-rebuild` after code changes or image updates.
+- **GitHub CLI Authentication**: If running `gh` commands fails with a 401 error, ensure that `GITHUB_TOKEN` is exported (e.g., mapped from `GITHUB_MCP_PAT` in `~/.bashrc` via `export GITHUB_TOKEN="$GITHUB_MCP_PAT"`).
 
