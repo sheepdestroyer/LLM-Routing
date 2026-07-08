@@ -47,13 +47,15 @@ spec:
       value: OLLAMA_API_KEY_PLACEHOLDER
     - name: SERVER_ROOT_PATH
       value: /llm-routing/litellm
+    - name: PROXY_BASE_URL
+      value: https://x570.vendeuvre.lan/llm-routing/litellm
     image: ghcr.io/berriai/litellm:v1.91.0
     livenessProbe:
       exec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/llm-routing/litellm/ping')
+        - import urllib.request; urllib.request.urlopen('http://localhost:4000/ping')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
