@@ -63,8 +63,8 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/llm-routing/litellm/health/readiness')
-      initialDelaySeconds: 10
+        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')
+      initialDelaySeconds: 45
       periodSeconds: 10
       timeoutSeconds: 5
     volumeMounts:
