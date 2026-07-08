@@ -66,7 +66,7 @@ graph TD
     style QwenLocal fill:#f0f0f0,stroke:#999,stroke-width:1px;
 ```
 
-> **Version Pin**: LiteLLM Gateway runs a pinned `ghcr.io/berriai/litellm` image tag. See §3B for pinning policy.
+> **Version Pin**: LiteLLM Gateway runs a pinned `ghcr.io/berriai/litellm` image tag. See §4B for pinning policy.
 
 ---
 
