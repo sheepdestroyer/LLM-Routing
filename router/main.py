@@ -26,7 +26,7 @@ try:
 except ImportError:
     from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Literal
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -4419,33 +4419,27 @@ async def get_visualizer():
     return HTMLResponse("<h2>Visualizer not found</h2>", status_code=404)
 
 
-VALID_TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
 MAX_ANNOTATION_KEY_LENGTH = 128
 MAX_ANNOTATION_ITEM_BYTES = 4096
+
+AnnotationTier = Literal[
+    0, 1, 2, 3, 4,
+    "agent-simple-core",
+    "agent-medium-core",
+    "agent-complex-core",
+    "agent-reasoning-core",
+    "agent-advanced-core",
+    "?",
+]
 
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
     model_config = ConfigDict(extra="forbid")
 
-    tier: Union[int, str, None] = None
+    tier: Optional[AnnotationTier] = None
     note: Optional[str] = Field(default=None, max_length=1000)
     ts: Optional[str] = Field(default=None, max_length=100)
 
-    @field_validator("tier")
-    @classmethod
-    def validate_tier(cls, v):
-        """Validate the tier field of an AnnotationItem."""
-        if v is None:
-            return v
-        if isinstance(v, int):
-            if v < 0 or v > 4:
-                raise ValueError(f"Invalid tier index {v}: must be between 0 and 4")
-        elif isinstance(v, str):
-            if v not in VALID_TIERS and v != "?":
-                raise ValueError(f"Invalid tier string '{v}'")
-        else:
-            raise ValueError("Tier must be int, str, or null")
-        return v
 
 class AnnotationPayload(RootModel):
     """Pydantic model representing a payload of multiple annotations."""
