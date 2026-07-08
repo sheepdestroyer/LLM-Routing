@@ -710,10 +710,7 @@ Additional mounts required in `pod.yaml`:
 
 | Model | Env Var Value | Backend |
 |-------|---------------|---------|
-| Gemini 3.5 Flash | Cloud Code Assist (default) |
-| Claude Opus 4.6 | Vendor (Anthropic) premium tier |
-| Claude Sonnet 4.6 | Vendor (Anthropic) mid tier |
-| GPT-OSS 120B | `Vendor (OpenAI) low tier |
+| Gemini 3.5 Flash | - | Cloud Code Assist (default) |\n| Claude Opus 4.6 | - | Vendor (Anthropic) premium tier |\n| Claude Sonnet 4.6 | - | Vendor (Anthropic) mid tier |\n| GPT-OSS 120B | - | Vendor (OpenAI) low tier |
 
 ### Verification
 
