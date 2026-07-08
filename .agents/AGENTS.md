@@ -60,8 +60,8 @@ ssh boy "podman run -d --name production-haproxy --restart always --net host \
   docker.io/library/haproxy:alpine"
 
 # 5. Start the host-side agy daemon 
-pkill -f host_agy_daemon.py || true
-nohup python3 ~/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 &
+ssh boy "pkill -f host_agy_daemon.py || true"
+ssh boy "nohup python3 /mnt/DATA/boy/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 &"
 
 # 6. Verify end-to-end
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
