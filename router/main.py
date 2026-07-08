@@ -3074,7 +3074,7 @@ async def get_dashboard(request: Request):
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
     external_host = os.getenv("BASEURL") or os.getenv("BASE_URL")
     if not external_host:
-        external_host = request.base_url.host or "localhost"
+        external_host = request.base_url.hostname or "localhost"
     else:
         if "://" in external_host:
             from urllib.parse import urlparse
