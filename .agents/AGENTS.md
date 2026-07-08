@@ -64,7 +64,9 @@ pkill -f host_agy_daemon.py || true
 nohup python3 ~/LAB/IA/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 &
 
 # 6. Verify end-to-end
-curl -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
+# NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
+# Replace the cert with a trusted CA-signed cert to remove -k.
+curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
   https://x570.vendeuvre.lan/llm-routing/dashboard | head -5
 ```
 
