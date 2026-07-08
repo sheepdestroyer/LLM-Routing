@@ -530,9 +530,9 @@ def yaml_scalar(val):
     return json.dumps(val)
 
 placeholders = [
-    "/home/gpav/Vrac/LAB/AI/LLM-Routing",
-    "/home/gpav/",
-    "/run/user/1000",
+    "WORKDIR_PLACEHOLDER",
+    "HOME_PLACEHOLDER",
+    "RUN_USER_PLACEHOLDER",
     "LITELLM_MASTER_KEY_PLACEHOLDER",
     "POSTGRES_PASSWORD_RAW_PLACEHOLDER",
     "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER",
@@ -553,9 +553,9 @@ for ph in placeholders:
     if ph not in text:
         sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml. Ensure you are using the latest version of the template.\n")
         sys.exit(1)
-text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
-text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
-text = text.replace("/run/user/1000", f"/run/user/{uid}")
+text = text.replace("WORKDIR_PLACEHOLDER", os.environ["WORKDIR"])
+text = text.replace("HOME_PLACEHOLDER", os.environ["HOME"])
+text = text.replace("RUN_USER_PLACEHOLDER", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
 # URL-encode the postgres password for DSN insertion

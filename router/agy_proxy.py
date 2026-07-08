@@ -42,7 +42,7 @@ from circuit_breaker import get_google_breaker, get_vendor_breaker
 
 logger = logging.getLogger("agy-proxy")
 
-# In container: mounted from host /home/gpav/.local/bin/agy
+# In container: mounted from host ~/.local/bin/agy
 AGY_BINARY = os.environ.get("AGY_BINARY_PATH", "/usr/local/bin/agy")
 if not os.path.exists(AGY_BINARY):
     AGY_BINARY = os.path.expanduser("~/.local/bin/agy")

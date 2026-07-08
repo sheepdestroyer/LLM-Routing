@@ -95,7 +95,7 @@ spec:
     - name: DATABASE_URL
       value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
-      value: unix:path=/run/user/1000/bus
+      value: unix:path=RUN_USER_PLACEHOLDER/bus
     - name: LITELLM_MASTER_KEY
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: LANGFUSE_PUBLIC_KEY
@@ -144,11 +144,11 @@ spec:
     - mountPath: /usr/local/bin/agy
       name: agy-bin
       subPath: agy
-    - mountPath: /run/user/1000/bus
+    - mountPath: RUN_USER_PLACEHOLDER/bus
       name: dbus-socket
     - mountPath: /root/.local/share/keyrings
       name: keyring-store
-    - mountPath: /run/user/1000
+    - mountPath: RUN_USER_PLACEHOLDER
       name: xdg-runtime
     - mountPath: /config/.env
       name: env-file
@@ -431,48 +431,48 @@ spec:
   restartPolicy: Always
   volumes:
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/valkey-data
+      path: WORKDIR_PLACEHOLDER/valkey-data
     name: valkey-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/litellm
+      path: WORKDIR_PLACEHOLDER/litellm
     name: litellm-config
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/router
+      path: WORKDIR_PLACEHOLDER/router
     name: router-config
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/postgres-data
+      path: WORKDIR_PLACEHOLDER/postgres-data
     name: postgres-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/clickhouse-data
+      path: WORKDIR_PLACEHOLDER/clickhouse-data
     name: clickhouse-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/redis-lf-data
+      path: WORKDIR_PLACEHOLDER/redis-lf-data
     name: redis-lf-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/minio-data
+      path: WORKDIR_PLACEHOLDER/minio-data
     name: minio-storage
   - hostPath:
-      path: /home/gpav/.gemini
+      path: HOME_PLACEHOLDER/.gemini
     name: gemini-secrets
   - hostPath:
-      path: /home/gpav/.local/share/goose
+      path: HOME_PLACEHOLDER/.local/share/goose
     name: goose-sessions
   - hostPath:
-      path: /home/gpav/.local/bin
+      path: HOME_PLACEHOLDER/.local/bin
     name: agy-bin
   - hostPath:
-      path: /run/user/1000/bus
+      path: RUN_USER_PLACEHOLDER/bus
     name: dbus-socket
   - hostPath:
-      path: /home/gpav/.local/share/keyrings
+      path: HOME_PLACEHOLDER/.local/share/keyrings
     name: keyring-store
   - hostPath:
-      path: /run/user/1000
+      path: RUN_USER_PLACEHOLDER
     name: xdg-runtime
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing
+      path: WORKDIR_PLACEHOLDER
     name: env-file
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/data
+      path: WORKDIR_PLACEHOLDER/data
       type: DirectoryOrCreate
     name: dataset-data
