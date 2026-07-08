@@ -61,13 +61,12 @@ ssh boy "podman run -d --name production-haproxy --restart always --net host \
 
 # 5. Start the host-side agy daemon 
 ssh boy "pkill -f host_agy_daemon.py || true"
-ssh boy "nohup python3 /mnt/DATA/boy/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 &"
+ssh boy "nohup python3 /mnt/DATA/boy/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &"
 
 # 6. Verify end-to-end
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
 # Replace the cert with a trusted CA-signed cert to remove -k.
-curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
-  https://x570.vendeuvre.lan/llm-routing/dashboard | head -5
+ssh boy "curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 https://x570.vendeuvre.lan/llm-routing/dashboard" | head -5
 ```
 
 ### Notes
@@ -79,3 +78,7 @@ curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 \
   Use `--full-rebuild` after code changes or image updates.
 - **GitHub CLI Authentication**: If running `gh` commands fails with a 401 error, ensure that `GITHUB_TOKEN` is exported (e.g., mapped from `GITHUB_MCP_PAT` in `~/.bashrc` via `export GITHUB_TOKEN="$GITHUB_MCP_PAT"`).
 
+## GitHub API & Operations Policy
+When interacting with the GitHub API or performing repository/PR metadata operations:
+1. **Prefer `gh` CLI**: Always prefer using the GitHub CLI (`gh`) instead of executing raw `curl` commands.
+2. **REST API Fallback via `gh api`**: If standard `gh` commands (like `gh pr view`) fail due to missing GraphQL token scopes (e.g., `read:org`), use `gh api` to run REST queries against the endpoint (e.g., `gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews`) as it does not require GraphQL scopes.

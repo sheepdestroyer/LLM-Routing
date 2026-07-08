@@ -21,6 +21,7 @@ from pathlib import Path
 from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
+from urllib.parse import urlparse
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
@@ -3075,10 +3076,8 @@ async def get_dashboard(request: Request):
     external_host_env = os.getenv("BASEURL") or os.getenv("BASE_URL")
     if external_host_env:
         if "://" not in external_host_env:
-            from urllib.parse import urlparse
             parsed = urlparse(f"http://{external_host_env}")
         else:
-            from urllib.parse import urlparse
             parsed = urlparse(external_host_env)
         external_host = parsed.hostname or "localhost"
         external_netloc = parsed.netloc or "localhost"
@@ -3087,17 +3086,20 @@ async def get_dashboard(request: Request):
         external_netloc = request.base_url.netloc or "localhost"
 
     domain = os.getenv("ROUTING_DOMAIN") or "vendeuvre.lan"
-    import re
     if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-]+$", external_host):
         external_host = "localhost"
     if not isinstance(external_netloc, str) or not re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", external_netloc):
         external_netloc = "localhost"
 
-    if external_netloc and domain in external_netloc:
+    # Enforce strict domain validation to prevent loose substring match bypasses (e.g., attacker-vendeuvre.lan)
+    is_valid_external = external_host == domain or external_host.endswith("." + domain)
+    is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
+
+    if is_valid_external:
         langfuse_url = f"https://{external_netloc}/llm-routing/langfuse"
         litellm_url = f"https://{external_netloc}/llm-routing/litellm/ui"
         llama_url = f"https://{external_netloc}/llm-routing/llama/"
-    elif domain in (request.base_url.hostname or ""):
+    elif is_valid_base:
         scheme = request.url.scheme if re.match(r"^(?:http|https)$", request.url.scheme) else "https"
         netloc = request.url.netloc if re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", request.url.netloc) else "localhost"
         base = f"{scheme}://{netloc}"

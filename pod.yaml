@@ -48,7 +48,7 @@ spec:
     - name: SERVER_ROOT_PATH
       value: /llm-routing/litellm
     - name: PROXY_BASE_URL
-      value: https://x570.vendeuvre.lan/llm-routing/litellm
+      value: PROXY_BASE_URL_PLACEHOLDER
     image: ghcr.io/berriai/litellm:v1.91.0
     livenessProbe:
       exec:
@@ -431,48 +431,48 @@ spec:
   restartPolicy: Always
   volumes:
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/valkey-data
+      path: /mnt/DATA/boy/LLM-Routing/valkey-data
     name: valkey-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/litellm
+      path: /mnt/DATA/boy/LLM-Routing/litellm
     name: litellm-config
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/router
+      path: /mnt/DATA/boy/LLM-Routing/router
     name: router-config
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/postgres-data
+      path: /mnt/DATA/boy/LLM-Routing/postgres-data
     name: postgres-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/clickhouse-data
+      path: /mnt/DATA/boy/LLM-Routing/clickhouse-data
     name: clickhouse-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/redis-lf-data
+      path: /mnt/DATA/boy/LLM-Routing/redis-lf-data
     name: redis-lf-storage
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/minio-data
+      path: /mnt/DATA/boy/LLM-Routing/minio-data
     name: minio-storage
   - hostPath:
-      path: /home/gpav/.gemini
+      path: /mnt/DATA/boy/.gemini
     name: gemini-secrets
   - hostPath:
-      path: /home/gpav/.local/share/goose
+      path: /mnt/DATA/boy/.local/share/goose
     name: goose-sessions
   - hostPath:
-      path: /home/gpav/.local/bin
+      path: /mnt/DATA/boy/.local/bin
     name: agy-bin
   - hostPath:
-      path: /run/user/1000/bus
+      path: /run/user/1002/bus
     name: dbus-socket
   - hostPath:
-      path: /home/gpav/.local/share/keyrings
+      path: /mnt/DATA/boy/.local/share/keyrings
     name: keyring-store
   - hostPath:
-      path: /run/user/1000
+      path: /run/user/1002
     name: xdg-runtime
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing
+      path: /mnt/DATA/boy/LLM-Routing
     name: env-file
   - hostPath:
-      path: /home/gpav/Vrac/LAB/AI/LLM-Routing/data
+      path: /mnt/DATA/boy/LLM-Routing/data
       type: DirectoryOrCreate
     name: dataset-data

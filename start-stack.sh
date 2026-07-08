@@ -511,7 +511,8 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
+    PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.vendeuvre.lan/llm-routing}}}"
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
 uid = os.getuid()
@@ -538,7 +539,8 @@ placeholders = [
     "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
     "REDIS_AUTH_PLACEHOLDER",
-    "CLICKHOUSE_PASSWORD_PLACEHOLDER"
+    "CLICKHOUSE_PASSWORD_PLACEHOLDER",
+    "PROXY_BASE_URL_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -563,6 +565,10 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
+# Derive PROXY_BASE_URL from PUBLIC_BASE_URL
+public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
+proxy_base_url = f"{public_base_url}/litellm"
+text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
 import re
 unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
 if unresolved:
@@ -596,14 +602,18 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman pod restart agent-router-pod
         setup_minio_buckets
         verify_stack_health
+        # Derive base URLs from configuration/env with sensible defaults
+        PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://x570.vendeuvre.lan/llm-routing}"
+        LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
+
         echo ""
         echo "========================================================================="
         echo "🎉 SUCCESS: LLM Triage Gateway restarted!"
-        echo "📍 Entry endpoint  : https://x570.vendeuvre.lan/llm-routing/v1"
-        echo "   (local)          : http://localhost:5000/v1"
-        echo "⚙️  Dashboard URL  : https://x570.vendeuvre.lan/llm-routing/dashboard"
+        echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
+        echo "   (local)          : ${LOCAL_BASE_URL}/v1"
+        echo "⚙️  Dashboard URL  : ${PUBLIC_BASE_URL}/dashboard"
         echo "🔑 Gateway API Key : gateway-pass"
-        echo "🔐 LiteLLM Admin UI: https://x570.vendeuvre.lan/llm-routing/litellm/ui"
+        echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
         echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
         echo "========================================================================="
         exit 0
@@ -620,12 +630,16 @@ else
     verify_stack_health
 fi
 
+# Derive base URLs from configuration/env with sensible defaults
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://x570.vendeuvre.lan/llm-routing}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
+
 echo "========================================================================="
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
-echo "📍 Entry endpoint  : https://x570.vendeuvre.lan/llm-routing/v1"
-echo "   (local)          : http://localhost:5000/v1"
-echo "⚙️  Dashboard URL : https://x570.vendeuvre.lan/llm-routing/dashboard"
+echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
+echo "   (local)          : ${LOCAL_BASE_URL}/v1"
+echo "⚙️  Dashboard URL : ${PUBLIC_BASE_URL}/dashboard"
 echo "🔑 Gateway API Key : gateway-pass"
-echo "🔐 LiteLLM Admin UI: https://x570.vendeuvre.lan/llm-routing/litellm/ui"
+echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
 echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
 echo "========================================================================="
