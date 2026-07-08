@@ -1,11 +1,6 @@
 import pytest
 import sys
-import os
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-
-os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "config.yaml")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from main import get_goose_sessions
 

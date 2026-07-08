@@ -106,15 +106,19 @@ sys.stdout.flush()
 # instances, which no longer match. We must register both classes.
 try:
     from prisma.builder import serializer
-except ImportError:
+except ImportError as e:
+    if e.name is not None and e.name not in ("prisma", "prisma.builder", "serializer"):
+        raise
     serializer = None
 
 if serializer is not None:
     def _serialize_dt(dt):
         """Serialize datetime to ISO8601 with timezone (UTC if naive)."""
-        if dt.tzinfo is None:
+        if dt.utcoffset() is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
     serializer.register(original_datetime, _serialize_dt)
     serializer.register(RobustDatetime, _serialize_dt)
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")

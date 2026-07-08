@@ -123,6 +123,9 @@ def _count_tokens_heuristic(text: str) -> float:
     return word_total + (non_ascii_count * 0.35) + (punc_count * 0.4)
 
 
+METADATA_OVERHEAD = 50
+
+
 def estimate_prompt_tokens(body: dict) -> int:
     """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
     """
@@ -142,7 +145,7 @@ def estimate_prompt_tokens(body: dict) -> int:
 
     # Include a flat estimate for system prompt / metadata overhead.
     # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
-    return max(1, round(total) + 50)
+    return max(1, round(total) + METADATA_OVERHEAD)
 
 
 async def sync_cooldowns_from_valkey() -> None:
@@ -980,9 +983,14 @@ async def classify_request(
 
         try:
             client = get_http_client()
+            try:
+                max_chars = max(0, int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300")))
+            except ValueError:
+                max_chars = 300
+            truncated_prompt = prompt[:max_chars] if len(prompt) > max_chars else prompt
             payload = {
                 "model": router_model_name,
-                "messages": [{"role": "user", "content": system_prompt + prompt}],
+                "messages": [{"role": "user", "content": system_prompt + truncated_prompt}],
                 "temperature": 0.0,
                 "max_tokens": 15,
             }
@@ -1472,7 +1480,7 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
         pass
 
 
-async def _save_best_model_to_disk(best_model: dict) -> None:
+def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
     import datetime as _dt
@@ -2011,6 +2019,10 @@ async def chat_completions(request: Request):
 
                                 # Success telemetry
                                 latency_ms = (time.time() - start_time) * 1000.0
+                                stats["total_proxy_time_ms"] += latency_ms
+                                stats["avg_proxy_latency_ms"] = (
+                                    stats["total_proxy_time_ms"] / stats["total_requests"]
+                                )
                                 approx_prompt_tokens = estimate_prompt_tokens(body)
 
                                 record_tool_usage(ToolUsageRecord(
@@ -2060,6 +2072,10 @@ async def chat_completions(request: Request):
                         )
                     else:
                         latency_ms = (time.time() - start_time) * 1000.0
+                        stats["total_proxy_time_ms"] += latency_ms
+                        stats["avg_proxy_latency_ms"] = (
+                            stats["total_proxy_time_ms"] / stats["total_requests"]
+                        )
                         usage = agy_response.get("usage") or {}
                         prompt_tokens = usage.get("prompt_tokens") or 0
                         completion_tokens = usage.get("completion_tokens") or 0
@@ -2168,6 +2184,8 @@ async def chat_completions(request: Request):
                     pass
             logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
 
+    if target_model == "llm-routing-agy":
+        target_model = "agent-advanced-core"
     original_target_model = target_model
 
     # --- OLLAMA (via LiteLLM) ---
@@ -3936,7 +3954,7 @@ async def _read_annotations_async(path) -> dict:
             data = await asyncio.to_thread(json.loads, content)
             _annotations_cache[path] = {"mtime": current_mtime, "data": data}
 
-    return await asyncio.to_thread(copy.deepcopy, _annotations_cache[path]["data"])
+    return copy.deepcopy(_annotations_cache[path]["data"])
 
 
 @app.post("/dashboard/save-annotations")

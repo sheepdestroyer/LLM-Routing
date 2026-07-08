@@ -18,6 +18,7 @@ import time
 import hashlib
 import httpx
 import urllib.parse
+import asyncio
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -88,9 +89,20 @@ def _memory_value(data: str, tags: list | None) -> str:
 def _parse_memory_value(raw: str) -> dict:
     """Decode stored value back into {data, tags}."""
     try:
-        return json.loads(raw)
+        val = json.loads(raw)
+        if not isinstance(val, dict):
+            return {"data": str(val) if val is not None else "", "tags": []}
+        if "data" not in val or val["data"] is None:
+            data_val = ""
+        else:
+            data_val = str(val["data"])
+        if "tags" not in val or not isinstance(val["tags"], list):
+            tags_val = []
+        else:
+            tags_val = val["tags"]
+        return {"data": data_val, "tags": tags_val}
     except (json.JSONDecodeError, TypeError):
-        return {"data": raw, "tags": []}
+        return {"data": str(raw) if raw is not None else "", "tags": []}
 
 
 # ---------------------------------------------------------------------------
@@ -227,14 +239,36 @@ async def handle_remove_memory_category(args: dict) -> str:
         scope_label = "global" if is_global else "local"
         return f"No memories found to remove in category '{category}' ({scope_label})."
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for entry in to_delete:
+    deleted_count = 0
+    
+    async def delete_item(client, entry, sem):
+        nonlocal deleted_count
+        async with sem:
             key = entry["key"]
-            await client.delete(f"{API_URL}/{key}", timeout=5.0)
+            quoted_key = urllib.parse.quote(key, safe="")
+            try:
+                r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
+                if r.status_code == 200:
+                    deleted_count += 1
+                    return None
+                else:
+                    return r.text
+            except httpx.HTTPError as e:
+                return str(e)
+
+    sem = asyncio.Semaphore(10)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        tasks = [delete_item(client, entry, sem) for entry in to_delete]
+        results = await asyncio.gather(*tasks)
+        for res in results:
+            if res is not None:
+                scope_label = "global" if is_global else "local"
+                cat_label = f"category '{category}'" if category != "*" else "all categories"
+                return f"Error removing memory (deleted {deleted_count} of {len(to_delete)} from {cat_label} ({scope_label})): {res}"
 
     scope_label = "global" if is_global else "local"
     cat_label = f"category '{category}'" if category != "*" else "all categories"
-    return f"Removed {len(to_delete)} memory(ies) from {cat_label} ({scope_label})."
+    return f"Removed {deleted_count} memory(ies) from {cat_label} ({scope_label})."
 
 
 async def handle_remove_specific_memory(args: dict) -> str:
@@ -269,7 +303,8 @@ async def handle_remove_specific_memory(args: dict) -> str:
         )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.delete(f"{API_URL}/{target['key']}", timeout=5.0)
+        quoted_key = urllib.parse.quote(target['key'], safe="")
+        r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
         if r.status_code == 200:
             return f"Removed memory in category '{category}' ({target['data'][:60]}...)."
         else:

@@ -12,16 +12,55 @@ set -e
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORKDIR"
 
+show_help() {
+    echo "Usage:"
+    echo "  ./start-stack.sh                   → Restart existing pod (fast, preserves logs)"
+    echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
+    echo "  ./start-stack.sh --full-rebuild    → Rebuild router image and recreate/redeploy pod"
+    echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
+}
+
+escape_env_val() {
+    local val="$1"
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    val="${val//\$/\\\$}"
+    val="${val//\`/\\\`}"
+    printf '%s\n' "$val"
+}
+
+
+if [ $# -gt 1 ]; then
+    echo "❌ Error: Too many arguments supplied (expected at most 1, got $#)"
+    show_help
+    exit 1
+fi
+
 # Ensure local volume directories exist on the host for Podman mounts
 mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
+
+FULL_REBUILD=false
+REPLACE_MODE=false
+if [ "${1:-}" = "--full-rebuild" ]; then
+    FULL_REBUILD=true
+elif [ "${1:-}" = "--replace" ]; then
+    REPLACE_MODE=true
+elif [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    show_help
+    exit 0
+elif [ -n "${1:-}" ]; then
+    echo "❌ Error: Unknown argument '${1}'"
+    show_help
+    exit 1
+fi
+
+
 
 ENV_FILE="${WORKDIR}/.env"
 
 # Ensure the env file exists and has secure permissions (owner read/write only)
-if [ ! -f "$ENV_FILE" ]; then
-    touch "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-fi
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 # 1. Load or prompt for OpenRouter API Key
 if [ -f "$ENV_FILE" ]; then
@@ -41,10 +80,19 @@ fi
 if [ -z "$OPENROUTER_API_KEY" ]; then
     if [ -t 0 ]; then
         echo "🔑 OpenRouter API Key not found."
-        echo -n "Please enter your OpenRouter API Key (input will be hidden): "
-        read -rs OPENROUTER_API_KEY
-        echo ""
-        echo "OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\"" >> "$ENV_FILE"
+        while [ -z "$OPENROUTER_API_KEY" ]; do
+            echo -n "Please enter your OpenRouter API Key (input will be hidden): "
+            if ! read -rs OPENROUTER_API_KEY; then
+                echo -e "\n❌ Error: Failed to read OpenRouter API Key (EOF reached). Aborting." >&2
+                exit 1
+            fi
+            echo ""
+            if [ -z "$OPENROUTER_API_KEY" ]; then
+                echo "❌ Error: API key cannot be empty. Please try again."
+            fi
+        done
+        escaped_key=$(escape_env_val "$OPENROUTER_API_KEY")
+        echo "OPENROUTER_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ API key saved securely to $ENV_FILE"
     else
@@ -73,7 +121,7 @@ if [ -f "$OAUTH_CREDS" ]; then
     fi
 fi
 if $NEED_SYNC; then
-    python3 sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
+    python3 scripts/sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
 fi
 
 ACTIVE_OAUTH=""
@@ -104,37 +152,56 @@ fi
 touch "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
-generate_uuid() {
+gen_hex() {
     local val
-    val=$(openssl rand -hex 16 2>/dev/null)
+    val=$(openssl rand -hex "$1" 2>/dev/null)
     local status=$?
-    if [ $status -ne 0 ] || [ ${#val} -ne 32 ]; then
-        echo "❌ Error: Failed to generate secure random UUID (openssl rand returned exit status $status, length ${#val})." >&2
+    local expected_len=$(( $1 * 2 ))
+    if [ $status -ne 0 ] || [ ${#val} -ne $expected_len ]; then
+        echo "❌ Error: Failed to generate secure random hex value of byte length $1 (openssl rand exit $status, length ${#val})." >&2
         return 1
     fi
+    printf '%s' "$val"
+}
+
+gen_base64() {
+    local val
+    val=$(openssl rand -base64 "$1" 2>/dev/null)
+    local status=$?
+    if [ $status -ne 0 ] || [ -z "$val" ]; then
+        echo "❌ Error: Failed to generate secure random base64 value of byte length $1 (openssl rand exit $status)." >&2
+        return 1
+    fi
+    printf '%s' "$val"
+}
+
+generate_uuid() {
+    local val
+    val=$(gen_hex 16) || return 1
     echo "${val:0:8}-${val:8:4}-${val:12:4}-${val:16:4}-${val:20:12}"
 }
 
 if [ -z "$NEXTAUTH_SECRET" ]; then
-    NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+    NEXTAUTH_SECRET="$(gen_base64 32)" || exit 1
     echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
     echo "✓ Generated new NEXTAUTH_SECRET and saved to $ENV_FILE"
 fi
 
 if [ -z "$SALT" ]; then
-    SALT="$(openssl rand -hex 32)"
+    SALT="$(gen_hex 32)" || exit 1
     echo "SALT=\"$SALT\"" >> "$ENV_FILE"
     echo "✓ Generated new SALT and saved to $ENV_FILE"
 fi
 
 if [ -z "$ENCRYPTION_KEY" ]; then
-    ENCRYPTION_KEY="$(openssl rand -hex 32)"
+    ENCRYPTION_KEY="$(gen_hex 32)" || exit 1
     echo "ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ENCRYPTION_KEY and saved to $ENV_FILE"
 fi
 
 if [ -z "$LITELLM_MASTER_KEY" ]; then
-    LITELLM_MASTER_KEY="sk-litellm-$(openssl rand -hex 16)"
+    rand_key="$(gen_hex 16)" || exit 1
+    LITELLM_MASTER_KEY="sk-litellm-$rand_key"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
 fi
@@ -145,44 +212,44 @@ if [ -z "$LITELLM_MASTER_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
-    LANGFUSE_INIT_USER_PASSWORD="$(openssl rand -hex 16)"
+    LANGFUSE_INIT_USER_PASSWORD="$(gen_hex 16)" || exit 1
     echo "LANGFUSE_INIT_USER_PASSWORD=\"$LANGFUSE_INIT_USER_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$REDIS_AUTH" ]; then
-    REDIS_AUTH="$(openssl rand -hex 16)"
+    REDIS_AUTH="$(gen_hex 16)" || exit 1
     echo "REDIS_AUTH=\"$REDIS_AUTH\"" >> "$ENV_FILE"
     echo "✓ Generated new REDIS_AUTH and saved to $ENV_FILE"
 fi
 
 if [ -z "$CLICKHOUSE_PASSWORD" ]; then
-    CLICKHOUSE_PASSWORD="$(openssl rand -hex 16)"
+    CLICKHOUSE_PASSWORD="$(gen_hex 16)" || exit 1
     echo "CLICKHOUSE_PASSWORD=\"$CLICKHOUSE_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new CLICKHOUSE_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$ROUTER_API_KEY" ]; then
-    ROUTER_API_KEY="$(openssl rand -hex 32)"
+    ROUTER_API_KEY="$(gen_hex 32)" || exit 1
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
 fi
 
 if [ -z "$MINIO_ROOT_USER" ]; then
-    MINIO_ROOT_USER="minio-$(openssl rand -hex 4)"
+    rand_user="$(gen_hex 4)" || exit 1
+    MINIO_ROOT_USER="minio-$rand_user"
     echo "MINIO_ROOT_USER=\"$MINIO_ROOT_USER\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_USER and saved to $ENV_FILE"
 fi
 
 if [ -z "$MINIO_ROOT_PASSWORD" ]; then
-    MINIO_ROOT_PASSWORD="$(openssl rand -hex 16)"
+    MINIO_ROOT_PASSWORD="$(gen_hex 16)" || exit 1
     echo "MINIO_ROOT_PASSWORD=\"$MINIO_ROOT_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_PASSWORD and saved to $ENV_FILE"
 fi
 
 if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+    if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_PUBLIC_KEY." >&2
         exit 1
     fi
@@ -193,8 +260,7 @@ if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
 fi
 
 if [ -z "$LANGFUSE_SECRET_KEY" ]; then
-    uuid=$(generate_uuid)
-    if [ $? -ne 0 ] || [ -z "$uuid" ]; then
+    if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_SECRET_KEY." >&2
         exit 1
     fi
@@ -207,10 +273,19 @@ fi
 if [ -z "$OLLAMA_API_KEY" ]; then
     if [ -t 0 ]; then
         echo "🔑 OLLAMA_API_KEY not found."
-        echo -n "Please enter your Ollama API Key (input will be hidden): "
-        read -rs OLLAMA_API_KEY
-        echo ""
-        echo "OLLAMA_API_KEY=\"$OLLAMA_API_KEY\"" >> "$ENV_FILE"
+        while [ -z "$OLLAMA_API_KEY" ]; do
+            echo -n "Please enter your Ollama API Key (input will be hidden): "
+            if ! read -rs OLLAMA_API_KEY; then
+                echo -e "\n❌ Error: Failed to read Ollama API Key (EOF reached). Aborting." >&2
+                exit 1
+            fi
+            echo ""
+            if [ -z "$OLLAMA_API_KEY" ]; then
+                echo "❌ Error: API key cannot be empty. Please try again."
+            fi
+        done
+        escaped_key=$(escape_env_val "$OLLAMA_API_KEY")
+        echo "OLLAMA_API_KEY=\"$escaped_key\"" >> "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         echo "✓ Ollama API key saved securely to $ENV_FILE"
     else
@@ -222,17 +297,18 @@ if [ -z "$OLLAMA_API_KEY" ]; then
     fi
 fi
 
+if [ -z "$CLASSIFIER_INPUT_MAX_CHARS" ]; then
+    CLASSIFIER_INPUT_MAX_CHARS="300"
+    echo "CLASSIFIER_INPUT_MAX_CHARS=\"$CLASSIFIER_INPUT_MAX_CHARS\"" >> "$ENV_FILE"
+    echo "✓ Set default CLASSIFIER_INPUT_MAX_CHARS=300 and saved to $ENV_FILE"
+fi
+
+
 
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
-FULL_REBUILD=false
-REPLACE_MODE=false
-if [ "${1:-}" = "--full-rebuild" ]; then
-    FULL_REBUILD=true
-elif [ "${1:-}" = "--replace" ]; then
-    REPLACE_MODE=true
-fi
+# Arguments parsed at top of script
 
 # ── Cleanup zombie host-network ports ──
 # Podman with host networking can leave stuck LISTEN sockets after SIGKILL.
@@ -314,10 +390,10 @@ setup_minio_buckets() {
     echo ""
     echo "📦 Ensuring MinIO buckets exist..."
 
-    # Wait for MinIO to be ready (console on :9001)
+    # Wait for MinIO S3 API to be ready (port 9002)
     while [ $waited -lt $MAX_WAIT ]; do
-        if curl -sf --max-time 3 http://127.0.0.1:9001 >/dev/null 2>&1; then
-            echo "   ✓ MinIO ready after ${waited}s"
+        if curl -sf --max-time 3 http://127.0.0.1:9002/minio/health/live >/dev/null 2>&1; then
+            echo "   ✓ MinIO S3 API ready after ${waited}s"
             break
         fi
         sleep 3
@@ -331,7 +407,10 @@ setup_minio_buckets() {
     # Ensure mc alias points to the correct MinIO S3 API port (9002, not 9000)
     # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
     # not MinIO. We must override it.
-    podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null
+    if ! podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
+        echo "❌ Error: Failed to set MinIO alias 'local' on http://127.0.0.1:9002" >&2
+        exit 1
+    fi
 
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
@@ -432,12 +511,16 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
     python3 - "$WORKDIR/pod.yaml" <<'PY'
-import os, sys, urllib.parse
+import os, sys, urllib.parse, json
 uid = os.getuid()
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     text = f.read()
+
+def yaml_scalar(val):
+    return json.dumps(val)
+
 placeholders = [
     "/home/gpav/Vrac/LAB/AI/LLM-Routing",
     "/home/gpav/",
@@ -453,7 +536,9 @@ placeholders = [
     "LANGFUSE_SECRET_KEY_PLACEHOLDER",
     "MINIO_USER_PLACEHOLDER",
     "MINIO_PASSWORD_PLACEHOLDER",
-    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER"
+    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
+    "REDIS_AUTH_PLACEHOLDER",
+    "CLICKHOUSE_PASSWORD_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -462,20 +547,31 @@ for ph in placeholders:
 text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
 text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
 text = text.replace("/run/user/1000", f"/run/user/{uid}")
-text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", os.environ["LITELLM_MASTER_KEY"])
-text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", os.environ["POSTGRES_PASSWORD"])
+text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
+text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
 # URL-encode the postgres password for DSN insertion
 encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
-text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", os.environ["NEXTAUTH_SECRET"])
-text = text.replace("SALT_PLACEHOLDER", os.environ["SALT"])
-text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", os.environ["ENCRYPTION_KEY"])
-text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", os.environ["OLLAMA_API_KEY"])
-text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", os.environ["LANGFUSE_PUBLIC_KEY"])
-text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", os.environ["LANGFUSE_SECRET_KEY"])
-text = text.replace("MINIO_USER_PLACEHOLDER", os.environ["MINIO_ROOT_USER"])
-text = text.replace("MINIO_PASSWORD_PLACEHOLDER", os.environ["MINIO_ROOT_PASSWORD"])
-text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", os.environ["LANGFUSE_INIT_USER_PASSWORD"])
+text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", yaml_scalar(os.environ["NEXTAUTH_SECRET"]))
+text = text.replace("SALT_PLACEHOLDER", yaml_scalar(os.environ["SALT"]))
+text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", yaml_scalar(os.environ["ENCRYPTION_KEY"]))
+text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", yaml_scalar(os.environ["OLLAMA_API_KEY"]))
+text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_PUBLIC_KEY"]))
+text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_SECRET_KEY"]))
+text = text.replace("MINIO_USER_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_USER"]))
+text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_PASSWORD"]))
+text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
+text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
+text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
+import re
+unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
+if unresolved:
+    sys.stderr.write(
+        "Error: Unresolved placeholders remain in rendered pod.yaml: "
+        + ", ".join(unresolved)
+        + "\n"
+    )
+    sys.exit(1)
 sys.stdout.write(text)
 PY
 }

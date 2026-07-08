@@ -1,6 +1,6 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
-import json, urllib.request, time, sys
+import json, urllib.request, urllib.error, time, sys
 import concurrent.futures
 import threading
 from collections import defaultdict, Counter
@@ -57,27 +57,39 @@ per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
 def process_item(item):
-    prompt = item["prompt"]
-    expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
-
     try:
+        if not isinstance(item, dict):
+            raise TypeError("Item is not a dictionary")
+        prompt = item["prompt"]
+        expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = classify(prompt)
     except Exception as e:
+        expected = ""
+        if isinstance(item, dict):
+            expected = item.get("tier") or item.get("clf_tier") or item.get("llm_tier", "")
         predicted = f"ERROR: {str(e)[:50]}"
 
     return expected, predicted
 
 results_list = [None] * total
 
-with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-    sem = threading.Semaphore(5)
+with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    rate_lock = threading.Lock()
+    next_start_time = [time.monotonic()]
     
     def process_item_with_rate_limit(index_and_item):
         i, item = index_and_item
-        with sem:
-            # Add a small delay between acquisitions to stagger server load
-            time.sleep(0.05)
-            expected, predicted = process_item(item)
+        sleep_delay = 0.0
+        with rate_lock:
+            now = time.monotonic()
+            if next_start_time[0] < now:
+                next_start_time[0] = now
+            sleep_delay = next_start_time[0] - now
+            next_start_time[0] += 0.05
+
+        if sleep_delay > 0.0:
+            time.sleep(sleep_delay)
+        expected, predicted = process_item(item)
         return i, item, expected, predicted
 
     futures = [executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))]
@@ -86,8 +98,14 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
     for future in concurrent.futures.as_completed(futures):
         i, item, expected, predicted = future.result()
 
+        prompt_val = ""
+        if isinstance(item, dict):
+            prompt_val = str(item.get("prompt", ""))[:100]
+        else:
+            prompt_val = f"<invalid prompt item: {str(item)[:50]}>"
+
         results_list[i] = {
-            "prompt": item["prompt"][:100],
+            "prompt": prompt_val,
             "expected": expected,
             "predicted": predicted,
         }

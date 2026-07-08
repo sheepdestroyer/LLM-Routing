@@ -4,6 +4,10 @@ import subprocess
 import time
 
 def test_antigravity_connection():
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        import pytest
+        pytest.skip("Skipping antigravity connection test in CI.")
+
     creds_path = os.path.expanduser("~/.gemini/oauth_creds.json")
     if not os.path.exists(creds_path):
         print(f"Error: {creds_path} not found.")

@@ -42,6 +42,9 @@ def get_pr_status(pr_id: str = "") -> None:
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to fetch PR status: {e.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print("Error: gh CLI command timed out after 30 seconds", file=sys.stderr)
+        sys.exit(1)
     except json.JSONDecodeError:
         print("Error: Failed to parse gh CLI output", file=sys.stderr)
         sys.exit(1)

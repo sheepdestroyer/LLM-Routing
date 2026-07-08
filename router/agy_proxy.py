@@ -158,12 +158,13 @@ async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool
                         file_size = await f.tell()
                         await f.seek(max(0, file_size - 1024))
                     except OSError:
-                        pass
+                        raise
                     content_bytes = await f.read()
                     content = content_bytes.decode("utf-8", errors="ignore")
                     for line in content.splitlines()[-5:]:
                         if "RESOURCE_EXHAUSTED" in line or "code 429" in line:
                             return True
+                    return False
             except Exception:
                 pass
         # Empty stdout+stderr with rc=0 strongly suggests quota exhaustion

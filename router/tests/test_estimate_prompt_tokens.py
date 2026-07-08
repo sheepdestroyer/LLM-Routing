@@ -1,14 +1,4 @@
 import pytest
-import sys
-import os
-from pathlib import Path
-
-# Set CONFIG_PATH for import
-os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "config.yaml")
-
-# Add the parent directory to the path so we can import from router
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from main import estimate_prompt_tokens
 
 def test_estimate_prompt_tokens_empty():

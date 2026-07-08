@@ -7,8 +7,8 @@ spec:
   # Valkey Cache — LiteLLM response cache (exact-match & semantic)
   - command:
     - valkey-server
-    - --protected-mode
-    - 'no'
+    - --bind
+    - 127.0.0.1
     - --loglevel
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine
@@ -45,7 +45,7 @@ spec:
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
-    image: ghcr.io/berriai/litellm:v1.90.2
+    image: ghcr.io/berriai/litellm:v1.91.0
     livenessProbe:
       exec:
         command:
@@ -157,6 +157,8 @@ spec:
       value: POSTGRES_PASSWORD_RAW_PLACEHOLDER
     - name: POSTGRES_DB
       value: langfuse
+    - name: PGDATA
+      value: /var/lib/postgresql/data/pg18
     image: docker.io/pgvector/pgvector:0.8.3-pg18
     livenessProbe:
       exec:
@@ -187,7 +189,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     image: docker.io/clickhouse/clickhouse-server:26.6.1.1193
     livenessProbe:
       exec:
@@ -196,7 +198,7 @@ spec:
         - --user
         - clickhouse
         - --password
-        - clickhouse
+        - CLICKHOUSE_PASSWORD_PLACEHOLDER
         - --query
         - SELECT 1
       initialDelaySeconds: 20
@@ -207,6 +209,10 @@ spec:
       exec:
         command:
         - clickhouse-client
+        - --user
+        - clickhouse
+        - --password
+        - CLICKHOUSE_PASSWORD_PLACEHOLDER
         - --query
         - SELECT 1
       initialDelaySeconds: 10
@@ -219,10 +225,12 @@ spec:
   # Valkey LF — Langfuse v3 BullMQ job queue
   - command:
     - redis-server
+    - --bind
+    - 127.0.0.1
     - --port
     - '6380'
     - --requirepass
-    - langfuse-redis-2026
+    - REDIS_AUTH_PLACEHOLDER
     - --maxmemory-policy
     - noeviction
     - --loglevel
@@ -242,7 +250,7 @@ spec:
         - -p
         - "6380"
         - -a
-        - langfuse-redis-2026
+        - REDIS_AUTH_PLACEHOLDER
         - ping
       initialDelaySeconds: 2
       periodSeconds: 5
@@ -287,7 +295,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -295,7 +303,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: langfuse-redis-2026
+      value: REDIS_AUTH_PLACEHOLDER
     - name: LANGFUSE_INIT_ORG_ID
       value: org-local-dev-id
     - name: LANGFUSE_INIT_ORG_NAME
@@ -343,7 +351,7 @@ spec:
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
-      value: clickhouse
+      value: CLICKHOUSE_PASSWORD_PLACEHOLDER
     - name: CLICKHOUSE_CLUSTER_ENABLED
       value: 'false'
     - name: REDIS_HOST
@@ -351,7 +359,7 @@ spec:
     - name: REDIS_PORT
       value: '6380'
     - name: REDIS_AUTH
-      value: langfuse-redis-2026
+      value: REDIS_AUTH_PLACEHOLDER
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
