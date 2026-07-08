@@ -71,6 +71,12 @@ fi
 
 # Derive public/local base URLs from env/config with sensible defaults, removing trailing slash
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.vendeuvre.lan/llm-routing}}}"
+if [[ ! "$PUBLIC_BASE_URL" =~ ^https?:// ]]; then
+    PUBLIC_BASE_URL="https://${PUBLIC_BASE_URL}"
+fi
+if [[ ! "$PUBLIC_BASE_URL" =~ /llm-routing ]]; then
+    PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}/llm-routing"
+fi
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL%/}"
