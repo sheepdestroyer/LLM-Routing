@@ -250,7 +250,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ## 4. Multi-Tier Gateway Configurations
 
 ### A. Custom Triage Router (`router/main.py`)
-Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local routing`model.
+Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local routing model.
 - **Thinking Support**: Parses both `content` and `reasoning_content` API response fields to gracefully support local models configured with speculative decoding/thinking blocks.
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
