@@ -3082,13 +3082,14 @@ async def get_dashboard(request: Request):
 
     domain = "vendeuvre.lan"
     if external_host and domain in external_host:
-        langfuse_url = f"https://langfuse.{domain}"
-        litellm_url = f"https://litellm.{domain}/ui"
-        llama_url = f"https://llama.{domain}"
+        langfuse_url = f"https://{external_host}/llm-routing/langfuse"
+        litellm_url = f"https://{external_host}/llm-routing/litellm/ui"
+        llama_url = f"https://{external_host}/llm-routing/llama/"
     elif domain in (request.base_url.hostname or ""):
-        langfuse_url = f"https://langfuse.{domain}"
-        litellm_url = f"https://litellm.{domain}/ui"
-        llama_url = f"https://llama.{domain}"
+        base = f"{request.url.scheme}://{request.url.netloc}"
+        langfuse_url = f"{base}/llm-routing/langfuse"
+        litellm_url = f"{base}/llm-routing/litellm/ui"
+        llama_url = f"{base}/llm-routing/llama/"
     else:
         langfuse_url = f"http://{external_host}:3001"
         litellm_url = f"http://{external_host}:4000/ui"
