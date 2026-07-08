@@ -112,7 +112,7 @@ let selectedIdx = -1;
 // Load data
 async function init() {
   try {
-    const resp = await fetch('/data/classified_dataset.json');
+    const resp = await fetch('../data/classified_dataset.json');
     const raw = await resp.json();
     dataset = raw.prompts || [];
     // Extract global stats from combined dataset
@@ -127,7 +127,7 @@ async function init() {
   
   // Load benchmark results if available
   try {
-    const resp = await fetch('/data/benchmark_results.json');
+    const resp = await fetch('../data/benchmark_results.json');
     benchmark = await resp.json();
     // Map benchmark results to dataset by index
   } catch(e) {
@@ -136,7 +136,7 @@ async function init() {
   
   // Load annotations
   try {
-    const resp = await fetch('/data/annotations.json');
+    const resp = await fetch('../data/annotations.json');
     const serverAnn = await resp.json();
     annotations = { ...serverAnn, ...annotations };
   } catch(e) {
@@ -351,7 +351,7 @@ function saveAnnotations() {
   // Save to localStorage
   localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
   // Auto-sync by posting to dashboard save endpoint
-  fetch('/dashboard/save-annotations', {
+  fetch('../dashboard/save-annotations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(annotations),

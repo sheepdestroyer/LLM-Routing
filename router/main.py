@@ -3501,7 +3501,7 @@ async def get_dashboard():
         <script>
             async function refreshDashboard() {{
                 try {{
-                    const res = await fetch("/api/dashboard-stats");
+                    const res = await fetch("api/dashboard-stats");
                     if (!res.ok) throw new Error(`HTTP error! status: ${{res.status}}`);
                     const data = await res.json();
 
@@ -3596,7 +3596,7 @@ async def get_dashboard():
             </div>
             <div class="dashboard-title">System Control Center</div>
             <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-                <a href="/visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
+                <a href="visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
             </div>
         </header>
 

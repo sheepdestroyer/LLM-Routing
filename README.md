@@ -362,7 +362,7 @@ For secure production deployments, the gateway services are configured to run un
 - **Home Directory**: `/mnt/DATA/boy`
 - **Security Profile**: Completely sudoless (no administrative or `wheel` group privileges) to minimize container breakout risks.
 - **Service Persistence**: Systemd user lingering is enabled (`loginctl enable-linger boy`) to allow the rootless services to start at boot and run persistently without active user sessions.
-- **Access**: Configured for direct SSH administration via authorized public keys in `/mnt/DATA/boy/.ssh/authorized_keys`.
+- **Access**: Configured for direct SSH administration via authorized public keys in `/mnt/DATA/boy/.ssh/authorized_keys`. An SSH host configuration has been added to `~/.ssh/config` so you can connect simply via `ssh boy` (and a shell shortcut alias `boy` has been added to `~/.bashrc` to quickly access the host shell).
 - **Rootless Podman**: Fully configured with container subuids/subgids and a user-level Docker-compatible API socket (`podman.socket` listening at `/run/user/1002/podman/podman.sock`).
 
 ### Prerequisites
