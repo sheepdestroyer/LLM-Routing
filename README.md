@@ -212,7 +212,7 @@ The gateway supports multiple routing modes controlled by the `model` field:
 All configurations, automation scripts, and databases are self-contained within this repository directory:
 
 ```
-/home/gpav/Vrac/LAB/AI/LLM-Routing/
+/path/to/LLM-Routing/
 ├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
@@ -350,7 +350,7 @@ The stack also supports **semantic** (vector-similarity) caching via `vector_sto
 - **Embedding Model**: Zero-cost local `nomic-embed-text-v1.5-Q4_K_M` (~137MB GGUF) running on llama-server, loaded as `local-nomic-embed` in LiteLLM. Produces 768-dimension vectors with CLS pooling.
 - **Vector Store**: PostgreSQL with pgvector extension stores embeddings in the `litellm_semantic_cache` collection.
 - **Cost**: Completely free — no OpenRouter API calls for embedding generation.
-- **Configuration**: The nomic-embed model profile in `models.ini` (`/home/gpav/Vrac/LAB/AI/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
+- **Configuration**: The nomic-embed model profile in `models.ini` (e.g., `/path/to/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
 
 ---
 
@@ -456,7 +456,7 @@ Uvicorn's log level follows the same env var via `${LOG_LEVEL:-warning}` in the 
 | `PrivateTmp` | `yes` | Isolates `/tmp` namespace for the daemon |
 | `PrivateDevices` | `yes` | Restricts access to `/dev` (no raw disk/device access) |
 | `ProtectSystem` | `strict` | Makes `/usr` and `/etc` read-only |
-| `ProtectHome` | `read-only` | `/home/gpav` is read-only except specific paths |
+| `ProtectHome` | `read-only` | The user home directory is read-only except specific paths |
 | `ProtectKernelTunables` | `yes` | Makes `/sys` and `/proc/sys` read-only |
 | `ProtectKernelModules` | `yes` | Blocks loading or listing kernel modules |
 | `ProtectControlGroups` | `yes` | Makes cgroup filesystem read-only |
@@ -758,7 +758,7 @@ To maximize throughput under concurrent queries, `llama-server` is configured wi
 #### 3. Custom Memory Endpoint Proxy & MCP Server
 To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
 * **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
-* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
+* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
 
 ## 9c. Ollama Proxy Integration (via LiteLLM ollama_chat)
