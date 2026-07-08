@@ -372,10 +372,10 @@ setup_minio_buckets() {
     echo ""
     echo "📦 Ensuring MinIO buckets exist..."
 
-    # Wait for MinIO to be ready (console on :9001)
+    # Wait for MinIO S3 API to be ready (port 9002)
     while [ $waited -lt $MAX_WAIT ]; do
-        if curl -sf --max-time 3 http://127.0.0.1:9001 >/dev/null 2>&1; then
-            echo "   ✓ MinIO ready after ${waited}s"
+        if curl -sf --max-time 3 http://127.0.0.1:9002/minio/health/live >/dev/null 2>&1; then
+            echo "   ✓ MinIO S3 API ready after ${waited}s"
             break
         fi
         sleep 3

@@ -74,24 +74,22 @@ def process_item(item):
 results_list = [None] * total
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-    sem = threading.Semaphore(5)
     rate_lock = threading.Lock()
     next_start_time = [time.monotonic()]
     
     def process_item_with_rate_limit(index_and_item):
         i, item = index_and_item
-        with sem:
-            sleep_delay = 0.0
-            with rate_lock:
-                now = time.monotonic()
-                if next_start_time[0] < now:
-                    next_start_time[0] = now
-                sleep_delay = next_start_time[0] - now
-                next_start_time[0] += 0.05
+        sleep_delay = 0.0
+        with rate_lock:
+            now = time.monotonic()
+            if next_start_time[0] < now:
+                next_start_time[0] = now
+            sleep_delay = next_start_time[0] - now
+            next_start_time[0] += 0.05
 
-            if sleep_delay > 0.0:
-                time.sleep(sleep_delay)
-            expected, predicted = process_item(item)
+        if sleep_delay > 0.0:
+            time.sleep(sleep_delay)
+        expected, predicted = process_item(item)
         return i, item, expected, predicted
 
     futures = [executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))]

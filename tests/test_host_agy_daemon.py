@@ -36,7 +36,7 @@ def daemon_server(monkeypatch):
 
     server.shutdown()
     server.server_close()
-    server_thread.join()
+    server_thread.join(timeout=5)
 
 def test_get_last_conversation_id(monkeypatch, tmp_path):
     cache_file = tmp_path / "last_conversations.json"
@@ -72,7 +72,7 @@ def test_get_last_conversation_id_io_error(monkeypatch):
 def test_daemon_post_404(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/invalid", method="POST")
     with pytest.raises(urllib.error.HTTPError) as exc:
-        urllib.request.urlopen(req)
+        urllib.request.urlopen(req, timeout=5)
     assert exc.value.code == 404
 
 def test_daemon_post_stream_false(daemon_server, monkeypatch):
@@ -98,7 +98,7 @@ def test_daemon_post_stream_false(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "last_conv_456")
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_abc", "--print", "test prompt")
@@ -124,7 +124,7 @@ def test_daemon_post_stream_false_timeout(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == -1
@@ -158,7 +158,7 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -177,7 +177,7 @@ def test_daemon_post_stream_true_exec_error(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -210,7 +210,7 @@ def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -260,7 +260,7 @@ def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon.os.environ, "copy", lambda: {"CASCADE_DEFAULT_MODEL_OVERRIDE": "old-model"})
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert "CASCADE_DEFAULT_MODEL_OVERRIDE" not in captured.get("env", {})
@@ -282,7 +282,7 @@ def test_daemon_post_stream_true_read_oserror(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -307,7 +307,7 @@ def test_daemon_post_stream_true_timeout_kill_fail(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -329,7 +329,7 @@ def test_daemon_post_stream_true_wait_exception(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
@@ -352,7 +352,7 @@ def test_daemon_post_stream_false_timeout_kill_fail(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == -1
@@ -371,7 +371,7 @@ def test_daemon_post_stream_false_wait_exception(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == -1
@@ -392,7 +392,7 @@ def test_daemon_post_stream_false_file_read_error(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == 0
@@ -415,7 +415,7 @@ def test_daemon_post_stream_false_unlink_error(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.os, "unlink", mock_unlink)
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == 0
@@ -435,7 +435,7 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "conv_789")
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
 
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 

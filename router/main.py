@@ -1478,7 +1478,7 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
         pass
 
 
-async def _save_best_model_to_disk(best_model: dict) -> None:
+def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import json as _json
     import datetime as _dt
@@ -3952,7 +3952,7 @@ async def _read_annotations_async(path) -> dict:
             data = await asyncio.to_thread(json.loads, content)
             _annotations_cache[path] = {"mtime": current_mtime, "data": data}
 
-    return await asyncio.to_thread(copy.deepcopy, _annotations_cache[path]["data"])
+    return copy.deepcopy(_annotations_cache[path]["data"])
 
 
 @app.post("/dashboard/save-annotations")

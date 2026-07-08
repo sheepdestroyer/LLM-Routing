@@ -325,6 +325,12 @@ def test_parse_memory_value_non_dict_json():
     assert result == {"data": "just a string", "tags": []}
 
 
+def test_parse_memory_value_drops_extra_fields():
+    raw_data = json.dumps({"data": "some data", "tags": ["tag1"], "extra": {"nested": True}})
+    result = _parse_memory_value(raw_data)
+    assert result == {"data": "some data", "tags": ["tag1"]}
+
+
 def test_make_key_and_parse_key_round_trip():
     """Verify that _make_key and _parse_key correctly quote and unquote complex categories."""
     category = "proj:alpha/100% ready"

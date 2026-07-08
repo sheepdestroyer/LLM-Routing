@@ -7,8 +7,8 @@ spec:
   # Valkey Cache — LiteLLM response cache (exact-match & semantic)
   - command:
     - valkey-server
-    - --protected-mode
-    - 'no'
+    - --bind
+    - 127.0.0.1
     - --loglevel
     - warning
     image: docker.io/valkey/valkey:9.1.0-alpine

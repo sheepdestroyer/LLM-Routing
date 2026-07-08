@@ -38,7 +38,7 @@ async def test_classify_request_truncation_default():
 
         assert decision == "agent-medium-core"
         # Verify the client post payload content contains qwen system prompt template + truncated prompt (300 'a's)
-        called_args, called_kwargs = mock_client.post.call_args
+        _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
         sent_content = json_payload["messages"][0]["content"]
         assert sent_content.endswith("a" * 300)
@@ -64,7 +64,7 @@ async def test_classify_request_truncation_custom_env():
 
         assert decision == "agent-complex-core"
         # Verify the client post payload content contains qwen system prompt template + truncated prompt (10 'a's)
-        called_args, called_kwargs = mock_client.post.call_args
+        _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
         sent_content = json_payload["messages"][0]["content"]
         assert sent_content.endswith("a" * 10)
@@ -100,6 +100,6 @@ def test_llm_routing_agy_fallback_to_advanced_core():
         
         # Verify the outgoing request had model set to agent-advanced-core
         mock_client.post.assert_called_once()
-        called_args, called_kwargs = mock_client.post.call_args
+        _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
         assert json_payload["model"] == "agent-advanced-core"
