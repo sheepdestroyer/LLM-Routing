@@ -45,7 +45,7 @@ spec:
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
-    image: ghcr.io/berriai/litellm:v1.90.2
+    image: ghcr.io/berriai/litellm:v1.91.0
     livenessProbe:
       exec:
         command:
