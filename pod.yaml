@@ -108,6 +108,8 @@ spec:
       value: OLLAMA_API_KEY_PLACEHOLDER
     - name: PUBLIC_BASE_URL
       value: PUBLIC_BASE_URL_PLACEHOLDER
+    - name: ROUTING_DOMAIN
+      value: ROUTING_DOMAIN_PLACEHOLDER
     - name: LOG_LEVEL
       value: info
     image: localhost/llm-triage-router:latest

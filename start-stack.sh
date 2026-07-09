@@ -69,8 +69,12 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+# Define and export the routing domain
+ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
+export ROUTING_DOMAIN
+
 # Derive public/local base URLs from env/config with sensible defaults, removing trailing slash
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.vendeuvre.lan/llm-routing}}}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.${ROUTING_DOMAIN}/llm-routing}}}"
 if [[ ! "$PUBLIC_BASE_URL" =~ ^https?:// ]]; then
     PUBLIC_BASE_URL="https://${PUBLIC_BASE_URL}"
 fi
@@ -525,7 +529,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL ROUTING_DOMAIN
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
 uid = os.getuid()
@@ -554,7 +558,8 @@ placeholders = [
     "REDIS_AUTH_PLACEHOLDER",
     "CLICKHOUSE_PASSWORD_PLACEHOLDER",
     "PROXY_BASE_URL_PLACEHOLDER",
-    "PUBLIC_BASE_URL_PLACEHOLDER"
+    "PUBLIC_BASE_URL_PLACEHOLDER",
+    "ROUTING_DOMAIN_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -584,6 +589,7 @@ public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
 proxy_base_url = f"{public_base_url}/litellm"
 text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
 text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
+text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
 import re
 unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
 if unresolved:

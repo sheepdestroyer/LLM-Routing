@@ -18,15 +18,15 @@ from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from urllib.parse import urlparse
 from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 from urllib.parse import urlparse
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
-    "/"
-)
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or "http://127.0.0.1:3001").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
 
@@ -234,7 +234,7 @@ def get_langfuse():
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-                host=os.getenv("LANGFUSE_HOST", "http://127.0.0.1:3001"),
+                host=LANGFUSE_HOST,
                 release="llm-triage-router-v1",
             )
             logger.info("Langfuse client initialized")
@@ -3088,10 +3088,36 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
         external_scheme = request.url.scheme if request.url.scheme in ("http", "https") else "https"
 
     domain = os.getenv("ROUTING_DOMAIN") or "vendeuvre.lan"
+
+    # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
+    # fall back to the request base URL rather than silently forcing localhost.
     if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-]+$", external_host):
-        external_host = "localhost"
-    if not isinstance(external_netloc, str) or not re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", external_netloc):
-        external_netloc = "localhost"
+        logger.warning(
+            "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
+            external_host,
+            request.base_url.hostname,
+        )
+        external_host = request.base_url.hostname or "localhost"
+
+    # Relax external_netloc validation: use urlparse so IPv6 literals, IDN/punycode,
+    # and reverse-proxy-modified netlocs are supported. Log and fall back instead of
+    # silently forcing localhost when invalid.
+    if isinstance(external_netloc, str):
+        parsed_netloc = urlparse(f"{external_scheme}://{external_netloc}")
+        if not parsed_netloc.hostname:
+            logger.warning(
+                "Invalid external_netloc %r, falling back to request.base_url.netloc (%r)",
+                external_netloc,
+                request.base_url.netloc,
+            )
+            external_netloc = request.base_url.netloc or "localhost"
+    else:
+        logger.warning(
+            "Non-string external_netloc %r, falling back to request.base_url.netloc (%r)",
+            external_netloc,
+            request.base_url.netloc,
+        )
+        external_netloc = request.base_url.netloc or "localhost"
 
     # Enforce strict domain validation to prevent loose substring match bypasses (e.g., attacker-vendeuvre.lan)
     is_valid_external = external_host == domain or external_host.endswith("." + domain)
@@ -3113,11 +3139,25 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
             f"{base}/llm-routing/llama/"
         )
     else:
-        # Local development fallback
+        # Local development fallback: derive ports and paths dynamically from configuration constants
+        parsed_lf = urlparse(LANGFUSE_HOST)
+        parsed_ll = urlparse(LITELLM_URL)
+        parsed_lm = urlparse(LLAMA_SERVER_URL)
+
+        lf_port = f":{parsed_lf.port}" if parsed_lf.port else ""
+        ll_port = f":{parsed_ll.port}" if parsed_ll.port else ""
+        lm_port = f":{parsed_lm.port}" if parsed_lm.port else ""
+
+        lf_path = parsed_lf.path
+        ll_path = parsed_ll.path or "/ui"
+        if not ll_path.endswith("/ui") and not ll_path.endswith("/ui/"):
+            ll_path = ll_path.rstrip("/") + "/ui"
+        lm_path = parsed_lm.path
+
         return (
-            f"http://{external_host}:3001",
-            f"http://{external_host}:4000/ui",
-            f"http://{external_host}:8080"
+            f"http://{external_host}{lf_port}{lf_path}",
+            f"http://{external_host}{ll_port}{ll_path}",
+            f"http://{external_host}{lm_port}{lm_path}"
         )
 
 

@@ -27,46 +27,48 @@ To prevent directory reorganization regressions, outdated file restorations, or 
 3. **Verify Security Credentials**: Never accept resolutions that overwrite configuration files (`pod.yaml`, `start-stack.sh`) with hardcoded default passwords. Ensure placeholder-based configurations are preserved.
 4. **Enforce Test Suite Count**: Run the full unit test suite (`pytest`) after conflict resolution. Verify that the total number of passing tests is equal to or greater than before the resolution.
 
-## Production Deployment Checklist (boy user)
+## Production Deployment Checklist
 
-### One-Time Host Prerequisites (already configured on x570.vendeuvre.lan)
+Note: Throughout this checklist, the production host SSH alias is represented by `<prod-host>` (e.g., `boy`), the deployer home path is represented by `<prod-home>` (e.g., `/mnt/DATA/boy`), and the domain is represented by `<prod-domain>` (e.g., `vendeuvre.lan`).
+
+### One-Time Host Prerequisites
 - `net.ipv4.ip_unprivileged_port_start=80` persisted in `/etc/sysctl.d/99-unprivileged-ports.conf`
 - Host firewall ports `80/tcp` and `443/tcp` opened in `firewalld` (e.g. `sudo firewall-cmd --zone=public --add-port=80/tcp --permanent && sudo firewall-cmd --zone=public --add-port=443/tcp --permanent && sudo firewall-cmd --reload`)
-- `boy` SSH host alias in `~/.ssh/config` — use `ssh boy` / `rsync ... boy:` throughout
-- Required mount directories created under `boy`'s home:
-  - `/mnt/DATA/boy/.gemini/`
-  - `/mnt/DATA/boy/.local/bin/agy` (copy of the `agy` binary)
-  - `/mnt/DATA/boy/.local/share/goose/`
-  - `/mnt/DATA/boy/.local/share/keyrings/`
-- HAProxy SSL cert: `/mnt/DATA/boy/haproxy/certs/vendeuvre.pem`
-- HAProxy config: `/mnt/DATA/boy/haproxy/haproxy.cfg`
+- SSH host alias configured in `~/.ssh/config` — use `ssh <prod-host>` / `rsync ... <prod-host>:` throughout
+- Required mount directories created under `<prod-home>`:
+  - `<prod-home>/.gemini/`
+  - `<prod-home>/.local/bin/agy` (copy of the `agy` binary)
+  - `<prod-home>/.local/share/goose/`
+  - `<prod-home>/.local/share/keyrings/`
+- HAProxy SSL cert: `<prod-home>/haproxy/certs/<prod-domain>.pem`
+- HAProxy config: `<prod-home>/haproxy/haproxy.cfg`
 
 ### Fresh Deploy Steps (after a PR is merged to master)
 ```bash
-# 1. Clean up old deploy on boy
-ssh boy "rm -rf /mnt/DATA/boy/LLM-Routing"
+# 1. Clean up old deploy
+ssh <prod-host> "rm -rf <prod-home>/LLM-Routing"
 
 # 2. Clone fresh from master
-ssh boy "git clone https://github.com/sheepdestroyer/LLM-Routing.git /mnt/DATA/boy/LLM-Routing"
+ssh <prod-host> "git clone https://github.com/sheepdestroyer/LLM-Routing.git <prod-home>/LLM-Routing"
 
 # 3. Start the full stack (builds and launches all containers)
-ssh boy "cd /mnt/DATA/boy/LLM-Routing && ./start-stack.sh --full-rebuild"
+ssh <prod-host> "cd <prod-home>/LLM-Routing && ./start-stack.sh --full-rebuild"
 
 # 4. Start (or restart) production HAProxy
-ssh boy "podman rm -f production-haproxy || true"
-ssh boy "podman run -d --name production-haproxy --restart always --net host \
-  -v /mnt/DATA/boy/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro \
-  -v /mnt/DATA/boy/haproxy/certs:/usr/local/etc/haproxy/certs:ro \
+ssh <prod-host> "podman rm -f production-haproxy || true"
+ssh <prod-host> "podman run -d --name production-haproxy --restart always --net host \
+  -v <prod-home>/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro \
+  -v <prod-home>/haproxy/certs:/usr/local/etc/haproxy/certs:ro \
   docker.io/library/haproxy:alpine"
 
 # 5. Start the host-side agy daemon 
-ssh boy "pkill -f host_agy_daemon.py || true"
-ssh boy "nohup python3 /mnt/DATA/boy/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &"
+ssh <prod-host> "pkill -f host_agy_daemon.py || true"
+ssh <prod-host> "nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &"
 
 # 6. Verify end-to-end
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
 # Replace the cert with a trusted CA-signed cert to remove -k.
-ssh boy "curl -k -s --resolve x570.vendeuvre.lan:443:127.0.0.1 https://x570.vendeuvre.lan/llm-routing/dashboard" | head -5
+ssh <prod-host> "curl -k -s --resolve <prod-host>.<prod-domain>:443:127.0.0.1 https://<prod-host>.<prod-domain>/llm-routing/dashboard" | head -5
 ```
 
 ### Notes
