@@ -22,7 +22,6 @@ from urllib.parse import urlparse
 from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
-from urllib.parse import urlparse
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
@@ -3091,7 +3090,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
 
     # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
     # fall back to the request base URL rather than silently forcing localhost.
-    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-]+$", external_host):
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-:]+$", external_host):
         logger.warning(
             "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
             external_host,
@@ -3131,7 +3130,8 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
             f"{external_scheme}://{external_netloc}/llm-routing/llama/"
         )
     elif is_valid_base:
-        netloc = request.url.netloc if re.match(r"^[a-zA-Z0-9.-]+(?::\d+)?$", request.url.netloc) else "localhost"
+        parsed_netloc = urlparse(f"{external_scheme}://{request.url.netloc}")
+        netloc = request.url.netloc if parsed_netloc.hostname else "localhost"
         base = f"{external_scheme}://{netloc}"
         return (
             f"{base}/llm-routing/langfuse",
@@ -3139,25 +3139,31 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
             f"{base}/llm-routing/llama/"
         )
     else:
-        # Local development fallback: derive ports and paths dynamically from configuration constants
+        # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants
         parsed_lf = urlparse(LANGFUSE_HOST)
         parsed_ll = urlparse(LITELLM_URL)
         parsed_lm = urlparse(LLAMA_SERVER_URL)
+
+        lf_scheme = parsed_lf.scheme or "http"
+        ll_scheme = parsed_ll.scheme or "http"
+        lm_scheme = parsed_lm.scheme or "http"
 
         lf_port = f":{parsed_lf.port}" if parsed_lf.port else ""
         ll_port = f":{parsed_ll.port}" if parsed_ll.port else ""
         lm_port = f":{parsed_lm.port}" if parsed_lm.port else ""
 
-        lf_path = parsed_lf.path
+        lf_path = parsed_lf.path or ""
         ll_path = parsed_ll.path or "/ui"
         if not ll_path.endswith("/ui") and not ll_path.endswith("/ui/"):
             ll_path = ll_path.rstrip("/") + "/ui"
-        lm_path = parsed_lm.path
+        lm_path = parsed_lm.path or ""
+
+        host_formatted = f"[{external_host}]" if ":" in external_host else external_host
 
         return (
-            f"http://{external_host}{lf_port}{lf_path}",
-            f"http://{external_host}{ll_port}{ll_path}",
-            f"http://{external_host}{lm_port}{lm_path}"
+            f"{lf_scheme}://{host_formatted}{lf_port}{lf_path}",
+            f"{ll_scheme}://{host_formatted}{ll_port}{ll_path}",
+            f"{lm_scheme}://{host_formatted}{lm_port}{lm_path}"
         )
 
 
