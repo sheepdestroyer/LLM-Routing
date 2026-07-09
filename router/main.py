@@ -18,14 +18,14 @@ from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from urllib.parse import urlparse
 from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
-    "/"
-)
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or "http://127.0.0.1:3001").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
 
@@ -233,7 +233,7 @@ def get_langfuse():
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-                host=os.getenv("LANGFUSE_HOST", "http://127.0.0.1:3001"),
+                host=LANGFUSE_HOST,
                 release="llm-triage-router-v1",
             )
             logger.info("Langfuse client initialized")
@@ -3069,9 +3069,109 @@ async def get_dashboard_stats():
     return await get_dashboard_data()
 
 
+def resolve_external_urls(request: Request) -> tuple[str, str, str]:
+    """Resolve and validate the base URLs for Langfuse, LiteLLM, and Llama.cpp."""
+    # 1. Try to load centralized base URL from config/env
+    base_url_env = os.getenv("PUBLIC_BASE_URL") or os.getenv("BASEURL") or os.getenv("BASE_URL")
+    if base_url_env:
+        if "://" not in base_url_env:
+            parsed = urlparse(f"https://{base_url_env}")
+        else:
+            parsed = urlparse(base_url_env)
+        external_host = parsed.hostname or "localhost"
+        external_netloc = parsed.netloc or "localhost"
+        external_scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
+    else:
+        external_host = request.base_url.hostname or "localhost"
+        external_netloc = request.base_url.netloc or "localhost"
+        external_scheme = request.url.scheme if request.url.scheme in ("http", "https") else "https"
+
+    domain = os.getenv("ROUTING_DOMAIN") or "vendeuvre.lan"
+
+    # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
+    # fall back to the request base URL rather than silently forcing localhost.
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-:]+$", external_host):
+        logger.warning(
+            "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
+            external_host,
+            request.base_url.hostname,
+        )
+        external_host = request.base_url.hostname or "localhost"
+
+    # Relax external_netloc validation: use urlparse so IPv6 literals, IDN/punycode,
+    # and reverse-proxy-modified netlocs are supported. Log and fall back instead of
+    # silently forcing localhost when invalid.
+    if isinstance(external_netloc, str):
+        parsed_netloc = urlparse(f"{external_scheme}://{external_netloc}")
+        if not parsed_netloc.hostname:
+            logger.warning(
+                "Invalid external_netloc %r, falling back to request.base_url.netloc (%r)",
+                external_netloc,
+                request.base_url.netloc,
+            )
+            external_netloc = request.base_url.netloc or "localhost"
+    else:
+        logger.warning(
+            "Non-string external_netloc %r, falling back to request.base_url.netloc (%r)",
+            external_netloc,
+            request.base_url.netloc,
+        )
+        external_netloc = request.base_url.netloc or "localhost"
+
+    # Enforce strict domain validation to prevent loose substring match bypasses (e.g., attacker-vendeuvre.lan)
+    is_valid_external = external_host == domain or external_host.endswith("." + domain)
+    is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
+
+    if is_valid_external:
+        # Centralized base URL path under subdomain/reverse proxy
+        return (
+            f"{external_scheme}://{external_netloc}/llm-routing/langfuse",
+            f"{external_scheme}://{external_netloc}/llm-routing/litellm/ui",
+            f"{external_scheme}://{external_netloc}/llm-routing/llama/"
+        )
+    elif is_valid_base:
+        parsed_netloc = urlparse(f"{external_scheme}://{request.url.netloc}")
+        netloc = request.url.netloc if parsed_netloc.hostname else "localhost"
+        base = f"{external_scheme}://{netloc}"
+        return (
+            f"{base}/llm-routing/langfuse",
+            f"{base}/llm-routing/litellm/ui",
+            f"{base}/llm-routing/llama/"
+        )
+    else:
+        # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants
+        parsed_lf = urlparse(LANGFUSE_HOST)
+        parsed_ll = urlparse(LITELLM_URL)
+        parsed_lm = urlparse(LLAMA_SERVER_URL)
+
+        lf_scheme = parsed_lf.scheme or "http"
+        ll_scheme = parsed_ll.scheme or "http"
+        lm_scheme = parsed_lm.scheme or "http"
+
+        lf_port = f":{parsed_lf.port}" if parsed_lf.port else ""
+        ll_port = f":{parsed_ll.port}" if parsed_ll.port else ""
+        lm_port = f":{parsed_lm.port}" if parsed_lm.port else ""
+
+        lf_path = parsed_lf.path or ""
+        ll_path = parsed_ll.path or "/ui"
+        if not ll_path.endswith("/ui") and not ll_path.endswith("/ui/"):
+            ll_path = ll_path.rstrip("/") + "/ui"
+        lm_path = parsed_lm.path or ""
+
+        host_formatted = f"[{external_host}]" if ":" in external_host else external_host
+
+        return (
+            f"{lf_scheme}://{host_formatted}{lf_port}{lf_path}",
+            f"{ll_scheme}://{host_formatted}{ll_port}{ll_path}",
+            f"{lm_scheme}://{host_formatted}{lm_port}{lm_path}"
+        )
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard():
+async def get_dashboard(request: Request):
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    langfuse_url, litellm_url, llama_url = resolve_external_urls(request)
+
     data = await get_dashboard_data()
 
     # Unpack data for the f-string template
@@ -3710,7 +3810,7 @@ async def get_dashboard():
                     </div>
                     <div style="text-align: center; padding: 25px 20px;">
                         <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
-                        <a href="http://localhost:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
+                        <a href="{langfuse_url}" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
                     </div>
                 </div>
 
@@ -3846,15 +3946,15 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <a href="http://localhost:3001" target="_blank" class="btn">
+                        <a href="{langfuse_url}" target="_blank" class="btn">
                             <span>{src_badge("LANGFUSE", "#e879f9")} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:4000/ui" target="_blank" class="btn">
+                        <a href="{litellm_url}" target="_blank" class="btn">
                             <span>{src_badge("LITELLM", "#34d399")} Admin UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:8080" target="_blank" class="btn">
+                        <a href="{llama_url}" target="_blank" class="btn">
                             <span>{src_badge("LLAMA.CPP", "#fb923c")} Server Router UI</span>
                             <span class="btn-arrow">→</span>
                         </a>

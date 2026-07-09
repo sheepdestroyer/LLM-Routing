@@ -69,6 +69,24 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+# Define and export the routing domain
+ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
+export ROUTING_DOMAIN
+
+# Derive public/local base URLs from env/config with sensible defaults, removing trailing slash
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.${ROUTING_DOMAIN}/llm-routing}}}"
+if [[ ! "$PUBLIC_BASE_URL" =~ ^https?:// ]]; then
+    PUBLIC_BASE_URL="https://${PUBLIC_BASE_URL}"
+fi
+if [[ ! "$PUBLIC_BASE_URL" =~ /llm-routing ]]; then
+    PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}/llm-routing"
+fi
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL%/}"
+export PUBLIC_BASE_URL LOCAL_BASE_URL
+
+
 # Ensure openssl is installed if we need to generate passwords/keys
 if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
     if ! command -v openssl &>/dev/null; then
@@ -511,7 +529,7 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 fi
 
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL ROUTING_DOMAIN
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
 uid = os.getuid()
@@ -522,9 +540,9 @@ def yaml_scalar(val):
     return json.dumps(val)
 
 placeholders = [
-    "/home/gpav/Vrac/LAB/AI/LLM-Routing",
-    "/home/gpav/",
-    "/run/user/1000",
+    "WORKDIR_PLACEHOLDER",
+    "HOME_PLACEHOLDER",
+    "RUN_USER_PLACEHOLDER",
     "LITELLM_MASTER_KEY_PLACEHOLDER",
     "POSTGRES_PASSWORD_RAW_PLACEHOLDER",
     "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER",
@@ -538,15 +556,18 @@ placeholders = [
     "MINIO_PASSWORD_PLACEHOLDER",
     "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
     "REDIS_AUTH_PLACEHOLDER",
-    "CLICKHOUSE_PASSWORD_PLACEHOLDER"
+    "CLICKHOUSE_PASSWORD_PLACEHOLDER",
+    "PROXY_BASE_URL_PLACEHOLDER",
+    "PUBLIC_BASE_URL_PLACEHOLDER",
+    "ROUTING_DOMAIN_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
         sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml. Ensure you are using the latest version of the template.\n")
         sys.exit(1)
-text = text.replace("/home/gpav/Vrac/LAB/AI/LLM-Routing", os.environ["WORKDIR"])
-text = text.replace("/home/gpav/", os.environ["HOME"] + "/")
-text = text.replace("/run/user/1000", f"/run/user/{uid}")
+text = text.replace("WORKDIR_PLACEHOLDER", os.environ["WORKDIR"])
+text = text.replace("HOME_PLACEHOLDER", os.environ["HOME"])
+text = text.replace("RUN_USER_PLACEHOLDER", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
 # URL-encode the postgres password for DSN insertion
@@ -563,6 +584,12 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
+# Derive PROXY_BASE_URL from PUBLIC_BASE_URL
+public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
+proxy_base_url = f"{public_base_url}/litellm"
+text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
+text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
+text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
 import re
 unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
 if unresolved:
@@ -596,13 +623,15 @@ if podman pod exists agent-router-pod 2>/dev/null; then
         podman pod restart agent-router-pod
         setup_minio_buckets
         verify_stack_health
+
         echo ""
         echo "========================================================================="
         echo "🎉 SUCCESS: LLM Triage Gateway restarted!"
-        echo "📍 Entry endpoint  : http://localhost:5000/v1"
-        echo "⚙️  Dashboard URL  : http://localhost:5000/dashboard"
+        echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
+        echo "   (local)          : ${LOCAL_BASE_URL}/v1"
+        echo "⚙️  Dashboard URL  : ${PUBLIC_BASE_URL}/dashboard"
         echo "🔑 Gateway API Key : gateway-pass"
-        echo "🔐 LiteLLM Admin UI: http://localhost:4000/ui"
+        echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
         echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
         echo "========================================================================="
         exit 0
@@ -619,11 +648,13 @@ else
     verify_stack_health
 fi
 
+
 echo "========================================================================="
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
-echo "📍 Entry endpoint  : http://localhost:5000/v1"
-echo "⚙️  Dashboard URL : http://localhost:5000/dashboard"
+echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
+echo "   (local)          : ${LOCAL_BASE_URL}/v1"
+echo "⚙️  Dashboard URL : ${PUBLIC_BASE_URL}/dashboard"
 echo "🔑 Gateway API Key : gateway-pass"
-echo "🔐 LiteLLM Admin UI: http://localhost:4000/ui"
+echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
 echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
 echo "========================================================================="

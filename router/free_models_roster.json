@@ -43,6 +43,18 @@
       "context_length": 256000
     },
     {
+      "id": "tencent/hy3:free",
+      "name": "Tencent: Hy3 (free)",
+      "score": 25.0,
+      "context_length": 262144
+    },
+    {
+      "id": "poolside/laguna-xs-2.1:free",
+      "name": "Poolside: Laguna XS 2.1 (free)",
+      "score": 25.0,
+      "context_length": 262144
+    },
+    {
       "id": "cohere/north-mini-code:free",
       "name": "Cohere: North Mini Code (free)",
       "score": 25.0,
@@ -54,12 +66,7 @@
       "score": 25.0,
       "context_length": 128000
     },
-    {
-      "id": "openrouter/owl-alpha",
-      "name": "Owl Alpha",
-      "score": 25.0,
-      "context_length": 1048756
-    },
+
     {
       "id": "google/lyria-3-pro-preview",
       "name": "Google: Lyria 3 Pro Preview",
@@ -139,6 +146,6 @@
       "context_length": 32768
     }
   ],
-  "updated_at": "2026-06-24T18:40:15.482014Z",
-  "count": 23
+  "updated_at": "2026-07-08T22:55:47.271165Z",
+  "count": 24
 }
