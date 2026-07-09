@@ -55,7 +55,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/ping')
+        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveness')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -273,7 +273,7 @@ spec:
     - name: NEXTAUTH_SECRET
       value: NEXTAUTH_SECRET_PLACEHOLDER
     - name: NEXTAUTH_URL
-      value: http://localhost:3001
+      value: NEXTAUTH_URL_PLACEHOLDER
     - name: SALT
       value: SALT_PLACEHOLDER
     - name: ENCRYPTION_KEY

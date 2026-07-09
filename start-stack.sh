@@ -559,7 +559,8 @@ placeholders = [
     "CLICKHOUSE_PASSWORD_PLACEHOLDER",
     "PROXY_BASE_URL_PLACEHOLDER",
     "PUBLIC_BASE_URL_PLACEHOLDER",
-    "ROUTING_DOMAIN_PLACEHOLDER"
+    "ROUTING_DOMAIN_PLACEHOLDER",
+    "NEXTAUTH_URL_PLACEHOLDER"
 ]
 for ph in placeholders:
     if ph not in text:
@@ -584,10 +585,12 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
-# Derive PROXY_BASE_URL from PUBLIC_BASE_URL
+# Derive PROXY_BASE_URL and NEXTAUTH_URL from PUBLIC_BASE_URL
 public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
 proxy_base_url = f"{public_base_url}/litellm"
+nextauth_url = f"{public_base_url}/langfuse"
 text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
+text = text.replace("NEXTAUTH_URL_PLACEHOLDER", yaml_scalar(nextauth_url))
 text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
 text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
 import re
