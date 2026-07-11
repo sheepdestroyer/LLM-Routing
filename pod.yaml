@@ -18,6 +18,8 @@ spec:
       exec:
         command:
         - valkey-cli
+        - -p
+        - 'VALKEY_CACHE_PORT_PLACEHOLDER'
         - ping
       initialDelaySeconds: 5
       periodSeconds: 10
@@ -27,6 +29,8 @@ spec:
       exec:
         command:
         - valkey-cli
+        - -p
+        - 'VALKEY_CACHE_PORT_PLACEHOLDER'
         - ping
       initialDelaySeconds: 2
       periodSeconds: 5
