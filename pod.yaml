@@ -507,7 +507,7 @@ spec:
       path: WORKDIR_PLACEHOLDER
     name: env-file
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/data
+      path: DATA_ROOT_PLACEHOLDER/datasets
       type: DirectoryOrCreate
     name: dataset-data
   - hostPath:
