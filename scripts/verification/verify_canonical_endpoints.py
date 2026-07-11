@@ -107,6 +107,15 @@ def test_router_endpoints(cfg: dict) -> tuple[int, int]:
     except Exception as e:
         passed += check("/api/dashboard-stats", False, str(e))
 
+    # /visualizer
+    total += 1
+    try:
+        r = httpx.get(f"{base}/visualizer", timeout=10)
+        ok = r.status_code == 200 and "<html" in r.text.lower()
+        passed += check("/visualizer", ok)
+    except Exception as e:
+        passed += check("/visualizer", False, str(e))
+
     return passed, total
 
 
@@ -262,6 +271,72 @@ def test_e2e_chat(cfg: dict) -> tuple[int, int]:
     return passed, total
 
 
+def test_infra_health(cfg: dict) -> tuple[int, int]:
+    """Test infrastructure services: MinIO, ClickHouse. Returns (passed, total)."""
+    passed = total = 0
+
+    print(f"\n── Infrastructure health ──")
+
+    # MinIO S3 health
+    total += 1
+    try:
+        r = httpx.get("http://127.0.0.1:9002/minio/health/live", timeout=10)
+        passed += check("MinIO /minio/health/live", r.status_code == 200)
+    except Exception as e:
+        passed += check("MinIO /minio/health/live", False, str(e))
+
+    # ClickHouse HTTP ping
+    total += 1
+    try:
+        r = httpx.get("http://127.0.0.1:8123/ping", timeout=10)
+        passed += check("ClickHouse /ping", r.status_code == 200 and r.text.strip() == "Ok.")
+    except Exception as e:
+        passed += check("ClickHouse /ping", False, str(e))
+
+    return passed, total
+
+
+def test_litellm_direct_chat(cfg: dict) -> tuple[int, int]:
+    """Test a direct chat completion through LiteLLM (bypassing the triage router)."""
+    base = f"http://127.0.0.1:{cfg['litellm_port']}"
+    key = cfg["litellm_master_key"]
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    passed = total = 0
+
+    print(f"\n── LiteLLM direct chat ({base}/v1/chat/completions) ──")
+
+    total += 1
+    payload = {
+        "model": "agent-simple-core",
+        "messages": [{"role": "user", "content": "Say 'ok' and nothing else."}],
+        "max_tokens": 5,
+    }
+    try:
+        start = time.time()
+        r = httpx.post(f"{base}/v1/chat/completions", json=payload, headers=headers, timeout=60)
+        elapsed = time.time() - start
+        if r.status_code == 200:
+            data = r.json()
+            content = (data["choices"][0]["message"].get("content") or "").strip()
+            reasoning = (data["choices"][0]["message"].get("reasoning_content") or "").strip()
+            ok = len(content) > 0 or len(reasoning) > 0
+            detail = f"{elapsed:.1f}s"
+            if content:
+                detail += f", '{content[:40]}'"
+            elif reasoning:
+                detail += f", reasoning='{reasoning[:40]}'"
+            passed += check("agent-simple-core (direct)", ok, detail)
+        else:
+            passed += check("agent-simple-core (direct)", False, f"HTTP {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        passed += check("agent-simple-core (direct)", False, str(e))
+
+    return passed, total
+
+
 def test_canonical_urls(cfg: dict) -> tuple[int, int]:
     """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set)."""
     passed = total = 0
@@ -275,6 +350,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
         ("/v1/models", "router models"),
         ("/dashboard", "dashboard"),
         ("/metrics", "metrics"),
+        ("/visualizer", "visualizer"),
         ("/litellm/ui/", "LiteLLM admin UI"),
         ("/langfuse", "Langfuse web UI"),
     ]
@@ -322,7 +398,9 @@ def main():
         ("Router API", test_router_endpoints),
         ("LiteLLM health", test_litellm_endpoints),
         ("Langfuse health", test_langfuse_endpoints),
-        ("E2E chat", test_e2e_chat),
+        ("Infrastructure", test_infra_health),
+        ("E2E chat (router)", test_e2e_chat),
+        ("LiteLLM direct chat", test_litellm_direct_chat),
         ("Canonical URLs", test_canonical_urls),
     ]:
         p, t = fn(cfg)
