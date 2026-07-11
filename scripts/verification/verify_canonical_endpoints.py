@@ -18,6 +18,10 @@ from pathlib import Path
 
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 
+# Import shared chat response parser (also used by classifier scripts)
+sys.path.insert(0, str(WORKDIR / "scripts"))
+from chat_helpers import parse_chat_response
+
 
 def load_env(dev: bool = False) -> dict:
     """Load .env (and optionally .env.dev overlay), return resolved config dict."""
@@ -60,8 +64,7 @@ def load_env(dev: bool = False) -> dict:
         "langfuse_web_port": env.get("LANGFUSE_WEB_PORT", "3001"),
         "litellm_master_key": env.get("LITELLM_MASTER_KEY", "gateway-pass"),
         "router_api_key": env.get("ROUTER_API_KEY", "gateway-pass"),
-        "public_base_url": env.get("PUBLIC_BASE_URL", ""),
-        "base_url": env.get("BASE_URL", env.get("BASEURL", "x570.vendeuvre.lan")),
+        "public_base_url": env.get("PUBLIC_BASE_URL", "").rstrip("/"),
         "minio_s3_port": env.get("MINIO_S3_PORT", "9002"),
         "clickhouse_http_port": env.get("CLICKHOUSE_HTTP_PORT", "8123"),
     }
@@ -72,25 +75,6 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     extra = f" — {detail}" if detail else ""
     print(f"  {mark} {label}{extra}")
     return ok
-
-
-def parse_chat_response(data: dict) -> tuple[str, str]:
-    """Safely extract content and reasoning_content from a chat completion response.
-    Returns (content, reasoning_content) — both may be empty strings."""
-    if not isinstance(data, dict):
-        return "", ""
-    choices = data.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return "", ""
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        return "", ""
-    message = first_choice.get("message")
-    if not isinstance(message, dict):
-        return "", ""
-    content = (message.get("content") or "").strip()
-    reasoning = (message.get("reasoning_content") or "").strip()
-    return content, reasoning
 
 
 def test_router_endpoints(cfg: dict) -> tuple[int, int]:
@@ -401,7 +385,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
         except httpx.ConnectError as e:
             # DNS/unreachable — skip gracefully (host may not resolve from test machine)
             skipped += 1
-            check(f"GET {url}", True, f"SKIP: DNS/unreachable ({e})")
+            print(f"  ⚠ GET {url} — SKIP: DNS/unreachable")
         except Exception as e:
             passed += check(f"GET {url}", False, str(e)[:100])
 
@@ -427,7 +411,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
             passed += check(f"POST {url}", False, f"HTTP {r.status_code}: {r.text[:80]}")
     except httpx.ConnectError as e:
         skipped += 1
-        check(f"POST {url}", True, f"SKIP: DNS/unreachable ({e})")
+        print(f"  ⚠ POST {url} — SKIP: DNS/unreachable")
     except Exception as e:
         passed += check(f"POST {url}", False, str(e)[:100])
 

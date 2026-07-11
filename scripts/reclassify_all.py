@@ -7,6 +7,10 @@ import urllib.request
 from pathlib import Path
 from collections import Counter
 
+# Shared chat response parser (used by verification scripts too)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from chat_helpers import parse_chat_response
+
 TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
 
 LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
@@ -32,18 +36,8 @@ def classify(prompt):
     req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization': f'Bearer {os.environ.get("ROUTER_API_KEY", "local-token")}'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    if not isinstance(data, dict):
-        return "ERROR: empty response"
-    choices = data.get('choices')
-    if not isinstance(choices, list) or not choices:
-        return "ERROR: empty response"
-    first = choices[0]
-    if not isinstance(first, dict):
-        return "ERROR: invalid choice"
-    message = first.get('message')
-    if not isinstance(message, dict):
-        return "ERROR: invalid message"
-    return (message.get('content') or '').strip()
+    content, _ = parse_chat_response(data)
+    return content if content else "ERROR: empty response"
 
 # Load existing dataset (kanban/llm evals)
 data_dir = Path(__file__).resolve().parent.parent / 'data'

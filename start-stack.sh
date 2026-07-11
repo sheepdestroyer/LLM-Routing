@@ -670,7 +670,7 @@ text = text.replace("HOME_PLACEHOLDER", os.environ["HOME"])
 text = text.replace("RUN_USER_PLACEHOLDER", f"/run/user/{uid}")
 text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
 text = text.replace("LITELLM_UI_USERNAME_PLACEHOLDER", yaml_scalar(os.environ.get("UI_USERNAME") or "admin"))
-text = text.replace("LITELLM_UI_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ.get("UI_PASSWORD") or "admin"))
+text = text.replace("LITELLM_UI_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ.get("UI_PASSWORD") or os.environ.get("LITELLM_MASTER_KEY") or "admin"))
 text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
 # URL-encode the postgres password for DSN insertion
 encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
