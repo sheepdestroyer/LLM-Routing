@@ -13,17 +13,21 @@ spec:
     - 'VALKEY_CACHE_PORT_PLACEHOLDER'
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0
     livenessProbe:
-      tcpSocket:
-        port: VALKEY_CACHE_PORT_PLACEHOLDER
+      exec:
+        command:
+        - valkey-cli
+        - ping
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
     name: valkey-cache
     readinessProbe:
-      tcpSocket:
-        port: VALKEY_CACHE_PORT_PLACEHOLDER
+      exec:
+        command:
+        - valkey-cli
+        - ping
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -272,10 +276,16 @@ spec:
     - noeviction
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0
     livenessProbe:
-      tcpSocket:
-        port: VALKEY_LF_PORT_PLACEHOLDER
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - "VALKEY_LF_PORT_PLACEHOLDER"
+        - -a
+        - REDIS_AUTH_PLACEHOLDER
+        - ping
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
