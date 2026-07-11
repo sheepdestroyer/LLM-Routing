@@ -146,6 +146,15 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
     except Exception as e:
         passed += check("/v1/models", False, str(e))
 
+    # /llm-routing/litellm/ui/ (LiteLLM admin UI — requires SERVER_ROOT_PATH prefix)
+    total += 1
+    try:
+        r = httpx.get(f"{base}/llm-routing/litellm/ui/", timeout=10, follow_redirects=True)
+        ok = r.status_code == 200 and "<html" in r.text.lower()
+        passed += check("/llm-routing/litellm/ui/", ok)
+    except Exception as e:
+        passed += check("/llm-routing/litellm/ui/", False, str(e))
+
     return passed, total
 
 
@@ -163,6 +172,15 @@ def test_langfuse_endpoints(cfg: dict) -> tuple[int, int]:
         passed += check("/api/public/health", ok, r.json() if ok else r.text[:80])
     except Exception as e:
         passed += check("/api/public/health", False, str(e))
+
+    # / (Langfuse web UI)
+    total += 1
+    try:
+        r = httpx.get(f"{base}/", timeout=10, follow_redirects=True)
+        ok = r.status_code == 200 and "<html" in r.text.lower()
+        passed += check("/ (web UI)", ok)
+    except Exception as e:
+        passed += check("/ (web UI)", False, str(e))
 
     return passed, total
 
@@ -257,6 +275,8 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
         ("/v1/models", "router models"),
         ("/dashboard", "dashboard"),
         ("/metrics", "metrics"),
+        ("/litellm/ui/", "LiteLLM admin UI"),
+        ("/langfuse", "Langfuse web UI"),
     ]
 
     for path, label in endpoints:
