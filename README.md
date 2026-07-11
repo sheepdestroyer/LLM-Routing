@@ -822,6 +822,32 @@ Execute the verification script:
 ./scripts/verification/verify_reasoning_tiers.py
 ```
 
+### Canonical Endpoint Verification
+
+A comprehensive endpoint health check that validates all services across both prod and dev environments:
+
+```bash
+# Prod (default)
+python scripts/verification/verify_canonical_endpoints.py
+
+# Dev
+python scripts/verification/verify_canonical_endpoints.py --dev
+```
+
+Tests cover:
+
+| Section | Endpoints |
+|---------|-----------|
+| Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
+| LiteLLM | `/health/liveness`, `/health/readiness`, `/v1/models`, `/llm-routing/litellm/ui/` |
+| Langfuse | `/api/public/health`, `/` (web UI) |
+| Infrastructure | MinIO `/minio/health/live`, ClickHouse `/ping` |
+| E2E chat | 3 completions through triage router |
+| LiteLLM direct | 1 completion directly to LiteLLM |
+| Canonical URLs | 6 GET + 1 POST through public HTTPS (graceful DNS skip) |
+
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
+
 ## 10. Performance Benchmarks
 
 Through our local benchmarks, the following performance characteristics have been achieved:
