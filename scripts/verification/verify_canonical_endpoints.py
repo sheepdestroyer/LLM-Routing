@@ -59,14 +59,14 @@ def load_env(dev: bool = False) -> dict:
 
     # Resolve with defaults, respecting shell env overrides
     return {
-        "router_port": os.environ.get("ROUTER_PORT") or env.get("ROUTER_PORT", "5000"),
-        "litellm_port": os.environ.get("LITELLM_PORT") or env.get("LITELLM_PORT", "4000"),
-        "langfuse_web_port": os.environ.get("LANGFUSE_WEB_PORT") or env.get("LANGFUSE_WEB_PORT", "3001"),
-        "litellm_master_key": os.environ.get("LITELLM_MASTER_KEY") or env.get("LITELLM_MASTER_KEY", "gateway-pass"),
-        "router_api_key": os.environ.get("ROUTER_API_KEY") or env.get("ROUTER_API_KEY", "gateway-pass"),
-        "public_base_url": (os.environ.get("PUBLIC_BASE_URL") or env.get("PUBLIC_BASE_URL", "")).rstrip("/"),
-        "minio_s3_port": os.environ.get("MINIO_S3_PORT") or env.get("MINIO_S3_PORT", "9002"),
-        "clickhouse_http_port": os.environ.get("CLICKHOUSE_HTTP_PORT") or env.get("CLICKHOUSE_HTTP_PORT", "8123"),
+        "router_port": os.environ.get("ROUTER_PORT") or env.get("ROUTER_PORT") or "5000",
+        "litellm_port": os.environ.get("LITELLM_PORT") or env.get("LITELLM_PORT") or "4000",
+        "langfuse_web_port": os.environ.get("LANGFUSE_WEB_PORT") or env.get("LANGFUSE_WEB_PORT") or "3001",
+        "litellm_master_key": os.environ.get("LITELLM_MASTER_KEY") or env.get("LITELLM_MASTER_KEY") or "gateway-pass",
+        "router_api_key": os.environ.get("ROUTER_API_KEY") or env.get("ROUTER_API_KEY") or "gateway-pass",
+        "public_base_url": (os.environ.get("PUBLIC_BASE_URL") or env.get("PUBLIC_BASE_URL") or "").rstrip("/"),
+        "minio_s3_port": os.environ.get("MINIO_S3_PORT") or env.get("MINIO_S3_PORT") or "9002",
+        "clickhouse_http_port": os.environ.get("CLICKHOUSE_HTTP_PORT") or env.get("CLICKHOUSE_HTTP_PORT") or "8123",
     }
 
 
@@ -90,10 +90,11 @@ def test_router_endpoints(cfg: dict) -> tuple[int, int]:
     total += 1
     try:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
-        models = r.json()
-        model_ids = [m["id"] for m in models.get("data", [])]
-        ok = r.status_code == 200 and len(model_ids) > 0
-        passed += check("/v1/models", ok, f"{len(model_ids)} models")
+        ok = r.status_code == 200
+        models = r.json() if ok else {}
+        model_ids = [m["id"] for m in models.get("data", [])] if isinstance(models, dict) else []
+        ok = ok and len(model_ids) > 0
+        passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
         passed += check("/v1/models", False, str(e))
 
@@ -119,9 +120,10 @@ def test_router_endpoints(cfg: dict) -> tuple[int, int]:
     total += 1
     try:
         r = httpx.get(f"{base}/api/dashboard-stats", timeout=10)
-        data = r.json()
-        ok = r.status_code == 200 and isinstance(data, dict)
-        passed += check("/api/dashboard-stats", ok)
+        ok = r.status_code == 200
+        data = r.json() if ok else None
+        ok = ok and isinstance(data, dict)
+        passed += check("/api/dashboard-stats", ok, "" if ok else f"HTTP {r.status_code}")
     except Exception as e:
         passed += check("/api/dashboard-stats", False, str(e))
 
@@ -166,10 +168,11 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
     total += 1
     try:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
-        models = r.json()
-        model_ids = [m["id"] for m in models.get("data", [])]
-        ok = r.status_code == 200 and len(model_ids) > 0
-        passed += check("/v1/models", ok, f"{len(model_ids)} models")
+        ok = r.status_code == 200
+        models = r.json() if ok else {}
+        model_ids = [m["id"] for m in models.get("data", [])] if isinstance(models, dict) else []
+        ok = ok and len(model_ids) > 0
+        passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
         passed += check("/v1/models", False, str(e))
 
