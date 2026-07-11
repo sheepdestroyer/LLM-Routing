@@ -25,6 +25,9 @@ router/router_timeline.json
 router/best_free_model.json
 router/free_models_roster.json
 
+# Dev venv
+.venv/
+
 # agent artifacts
 .hermes/
 .jules/
