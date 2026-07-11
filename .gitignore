@@ -32,5 +32,8 @@ router/free_models_roster.json
 workdirs/
 pr_description.txt
 
+# Python virtual environment
+.venv/
+
 .cache/
 test_output*.log
