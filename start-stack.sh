@@ -769,9 +769,15 @@ else
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
         podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
+    if [[ "$ROUTER_IMAGE" == localhost/* ]]; then
+        if ! podman image exists "${ROUTER_IMAGE}"; then
+            echo "🔨 Local image not found. Building custom local triage router image..."
+            podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
+        fi
     else
         echo "🚚 Pulling latest triage router image from GHCR..."
         podman pull "${ROUTER_IMAGE}"
+    fi
     fi
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
