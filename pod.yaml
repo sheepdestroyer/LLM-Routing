@@ -471,7 +471,8 @@ spec:
       type: DirectoryOrCreate
     name: litellm-rendered
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/router
+      path: DATA_ROOT_PLACEHOLDER/router-rendered
+      type: DirectoryOrCreate
     name: router-config
   - hostPath:
       path: DATA_ROOT_PLACEHOLDER/postgres-data

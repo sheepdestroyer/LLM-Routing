@@ -587,6 +587,17 @@ render_litellm_config() {
     echo "✓ LiteLLM config rendered to ${rendered_dir}/config.yaml"
 }
 
+# ── Router rendered config ──
+# Generates a rendered config.yaml (with port substitutions) into DATA_ROOT/router-rendered/
+# so prod and dev each get their own copy with the correct LiteLLM port.
+render_router_config() {
+    local rendered_dir="${DATA_ROOT}/router-rendered"
+    mkdir -p "$rendered_dir"
+    sed -e "s/LITELLM_PORT_PLACEHOLDER/${LITELLM_PORT}/g" \
+        "${WORKDIR}/router/config.yaml" > "${rendered_dir}/config.yaml"
+    echo "✓ Router config rendered to ${rendered_dir}/config.yaml"
+}
+
 render_pod_yaml() {
     export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT
     python3 - "$WORKDIR/pod.yaml" <<'PY'
@@ -703,6 +714,7 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🚀 Deploying fresh triage pod..."
         generate_clickhouse_config
         render_litellm_config
+        render_router_config
         render_pod_yaml | podman play kube -
         setup_minio_buckets
         verify_stack_health
@@ -713,6 +725,7 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🚀 Deploying fresh triage pod with pulled image..."
         generate_clickhouse_config
         render_litellm_config
+        render_router_config
         render_pod_yaml | podman play kube -
         setup_minio_buckets
         verify_stack_health
@@ -721,6 +734,7 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🚀 Deploying replacement pod from YAML..."
         generate_clickhouse_config
         render_litellm_config
+        render_router_config
         render_pod_yaml | podman play kube -
         setup_minio_buckets
         verify_stack_health
@@ -756,6 +770,7 @@ else
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
     generate_clickhouse_config
     render_litellm_config
+    render_router_config
     render_pod_yaml | podman play kube -
     setup_minio_buckets
     verify_stack_health
