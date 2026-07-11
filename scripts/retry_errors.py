@@ -50,6 +50,8 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
+    if not isinstance(data, dict):
+        return "ERROR"
     choices = data.get("choices")
     content = ""
     if isinstance(choices, list) and choices:

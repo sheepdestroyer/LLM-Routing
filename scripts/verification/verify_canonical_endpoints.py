@@ -29,19 +29,14 @@ def load_env(dev: bool = False) -> dict:
             print(f"  ⚠ env file not found: {path}")
             return
         loaded_files.append(str(path.name))
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                # Skip empty lines and full-line comments
+                # Skip empty lines and full-line comments (no inline comments —
+                # they would risk corrupting values containing literal # characters
+                # such as passwords or URL fragments)
                 if not line or line.startswith("#"):
                     continue
-                # Strip inline comments (but not inside quoted values)
-                if "#" in line:
-                    # Simple heuristic: split on first # that's preceded by whitespace
-                    for i, ch in enumerate(line):
-                        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
-                            line = line[:i].strip()
-                            break
                 # Handle export prefix
                 if line.startswith("export "):
                     line = line[7:].strip()
@@ -399,7 +394,8 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
         total += 1
         url = f"{public}{path}"
         try:
-            r = httpx.get(url, timeout=15, follow_redirects=True)
+            r = httpx.get(url, timeout=15, follow_redirects=True,
+                          headers={"Authorization": f"Bearer {cfg['router_api_key']}"})
             ok = r.status_code == 200
             passed += check(f"GET {url}", ok, f"HTTP {r.status_code}")
         except httpx.ConnectError as e:
@@ -479,13 +475,14 @@ def main():
         total_passed += p
         total_tests += t
 
-    print(f"\n{'='*60}")
-    parts = [f"{total_passed}/{total_tests} passed"]
+    print(f"\\n{'='*60}")
+    actual_tests = total_tests - total_skipped
+    parts = [f"{total_passed}/{actual_tests} passed"]
     if total_skipped:
         parts.append(f"{total_skipped} skipped")
     print(f"Results [{env_label}]: {', '.join(parts)}")
-    if total_passed < total_tests:
-        print(f"FAILED: {total_tests - total_passed} test(s)")
+    if total_passed < actual_tests:
+        print(f"FAILED: {actual_tests - total_passed} test(s)")
         sys.exit(1)
     else:
         print("ALL PASSED")

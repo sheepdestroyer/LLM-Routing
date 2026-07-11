@@ -32,6 +32,8 @@ def classify(prompt):
     req = urllib.request.Request(LLAMA_SERVER_URL, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json','Authorization': f'Bearer {os.environ.get("ROUTER_API_KEY", "local-token")}'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
+    if not isinstance(data, dict):
+        return "ERROR: empty response"
     choices = data.get('choices')
     if not isinstance(choices, list) or not choices:
         return "ERROR: empty response"

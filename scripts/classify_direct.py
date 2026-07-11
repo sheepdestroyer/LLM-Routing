@@ -33,7 +33,18 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"].get("content", "").strip()
+    if not isinstance(data, dict):
+        return "ERROR"
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "ERROR"
+    first = choices[0]
+    if not isinstance(first, dict):
+        return "ERROR"
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return "ERROR"
+    return (message.get("content") or "").strip()
 
 # Load prompts
 data_dir = Path(__file__).resolve().parent.parent / "data"
