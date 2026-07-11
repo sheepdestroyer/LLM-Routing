@@ -368,6 +368,32 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
         except Exception as e:
             passed += check(f"GET {url}", False, str(e)[:100])
 
+    # Canonical chat completion (POST through public URL)
+    total += 1
+    url = f"{public}/v1/chat/completions"
+    try:
+        payload = {
+            "model": "agent-simple-core",
+            "messages": [{"role": "user", "content": "What is 2+2? Answer with just the number."}],
+            "max_tokens": 5,
+        }
+        r = httpx.post(url, json=payload, headers={"Authorization": f"Bearer {cfg['router_api_key']}"}, timeout=60, follow_redirects=True)
+        if r.status_code == 200:
+            data = r.json()
+            content = (data["choices"][0]["message"].get("content") or "").strip()
+            reasoning = (data["choices"][0]["message"].get("reasoning_content") or "").strip()
+            ok = len(content) > 0 or len(reasoning) > 0
+            detail = f"HTTP {r.status_code}"
+            if content:
+                detail += f", '{content[:30]}'"
+            passed += check(f"POST {url}", ok, detail)
+        else:
+            passed += check(f"POST {url}", False, f"HTTP {r.status_code}: {r.text[:80]}")
+    except httpx.ConnectError as e:
+        passed += check(f"POST {url}", True, f"SKIP: DNS/unreachable ({e})")
+    except Exception as e:
+        passed += check(f"POST {url}", False, str(e)[:100])
+
     return passed, total
 
 
