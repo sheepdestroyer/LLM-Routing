@@ -50,10 +50,14 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    choices = data.get("choices", [])
+    choices = data.get("choices")
     content = ""
-    if choices:
-        content = choices[0].get("message", {}).get("content", "").strip()
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message")
+            if isinstance(message, dict):
+                content = (message.get("content") or "").strip()
     # Normalize: strip "tier:" prefix, extract just the tier name
     for tier in TIERS:
         if tier in content:

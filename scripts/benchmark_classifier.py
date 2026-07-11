@@ -42,10 +42,16 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    choices = data.get("choices", [])
-    if not choices:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
         return "ERROR"
-    return choices[0].get("message", {}).get("content", "").strip()
+    first = choices[0]
+    if not isinstance(first, dict):
+        return "ERROR"
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return "ERROR"
+    return (message.get("content") or "").strip()
 
 total = len(dataset.get("prompts", []))
 print(f"Benchmark: gemma4-26a4b-routing vs {total} labeled prompts\n")
