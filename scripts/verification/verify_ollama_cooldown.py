@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import os
 import sys
-from verification_helpers import load_litellm_key, get_triage_request_count, send_litellm_request
+try:
+    from .verification_helpers import load_litellm_key, get_triage_request_count, send_litellm_request
+except ImportError:
+    from verification_helpers import load_litellm_key, get_triage_request_count, send_litellm_request
 
 # Resolve the absolute path to .env file in the workspace
 workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

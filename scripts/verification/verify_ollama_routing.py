@@ -12,7 +12,10 @@ URL = "http://localhost:5000/v1/chat/completions"
 
 # Resolve the absolute path to .env file in the workspace
 workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from verification_helpers import load_litellm_key
+try:
+    from .verification_helpers import load_litellm_key
+except ImportError:
+    from verification_helpers import load_litellm_key
 
 # Read LITELLM_MASTER_KEY from .env
 litellm_key = load_litellm_key(workspace_dir)
