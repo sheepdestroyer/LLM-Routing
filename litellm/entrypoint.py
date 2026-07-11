@@ -46,7 +46,12 @@ def check_tcp_port(ip: str, port: int) -> bool:
         return False
 
 max_wait = 60
-postgres_port = int(os.environ.get("POSTGRES_PORT", "5432"))
+postgres_port_str = os.environ.get("POSTGRES_PORT", "5432")
+try:
+    postgres_port = int(postgres_port_str)
+except ValueError:
+    print(f"⚠️ Invalid POSTGRES_PORT '{postgres_port_str}', defaulting to 5432")
+    postgres_port = 5432
 print(f"🔌 Waiting for PostgreSQL on :{postgres_port} (max {max_wait}s)...")
 for i in range(max_wait):
     if check_tcp_port("127.0.0.1", postgres_port):
