@@ -17,6 +17,9 @@ LOG_FILE="/tmp/llm-backup-${TIMESTAMP}.log"
 if [ -f "${WORKDIR}/.env" ]; then
     set -a; source "${WORKDIR}/.env"; set +a
 fi
+if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
+    set -a; source "$DEV_ENV_FILE"; set +a
+fi
 POD_NAME="${POD_NAME:-agent-router-pod}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
