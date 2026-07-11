@@ -77,12 +77,12 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
 | **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
-| **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
+| **langfuse-web** | `wget` GET `/api/public/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
 
@@ -234,6 +234,7 @@ All configurations, automation scripts, and databases are self-contained within 
 │   ├── backup.sh        # Database backup with pg_isready retry logic
 │   ├── benchmark_classifier.py # Classifier accuracy & latency benchmarks
 │   ├── benchmark_tokens.py     # Token-count ground-truth comparisons
+│   ├── upgrade-prod.sh  # Release-driven prod sync & redeploy
 │   └── verification/    # Live-stack E2E verification scripts
 ├── tests/               # Project-wide unit & integration tests
 ├── data/                # Reference datasets for benchmarks & tests
