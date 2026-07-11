@@ -77,10 +77,15 @@ echo "⚠️  This will OVERWRITE the following in $PROD_DIR:"
 echo "     pod.yaml  start-stack.sh  litellm/  router/  scripts/"
 echo "   .env and data/ are NEVER touched."
 echo ""
-read -rp "Proceed with upgrade to $TAG? [y/N] " confirm
-if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
+# Require interactive confirmation in TTY mode; auto-proceed in non-interactive
+if [ -t 0 ]; then
+    read -rp "Proceed with upgrade to $TAG? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+else
+    echo "Non-interactive shell detected, proceeding with upgrade..."
 fi
 
 # ── stop the pod gracefully before touching files ──
@@ -95,9 +100,9 @@ echo "📋 Syncing runtime files..."
 rsync -a --delete \
     "$TEMP_DIR/pod.yaml" \
     "$TEMP_DIR/start-stack.sh" \
-    "$TEMP_DIR/litellm/" \
-    "$TEMP_DIR/router/" \
-    "$TEMP_DIR/scripts/" \
+    "$TEMP_DIR/litellm" \
+    "$TEMP_DIR/router" \
+    "$TEMP_DIR/scripts" \
     "$PROD_DIR/"
 
 echo "✓ Runtime files synced from $TAG"

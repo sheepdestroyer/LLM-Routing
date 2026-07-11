@@ -460,7 +460,7 @@ def main():
         total_passed += p
         total_tests += t
 
-    print(f"\\n{'='*60}")
+    print(f"\n{'='*60}")
     actual_tests = total_tests - total_skipped
     parts = [f"{total_passed}/{actual_tests} passed"]
     if total_skipped:
