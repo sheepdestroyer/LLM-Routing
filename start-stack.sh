@@ -583,7 +583,7 @@ render_litellm_config() {
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
     # Validate no unresolved placeholders remain
-    if grep -q 'VALKEY_CACHE_PORT_PLACEHOLDER\|ROUTER_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
         echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
         exit 1
     fi
