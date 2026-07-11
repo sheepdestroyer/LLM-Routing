@@ -41,9 +41,14 @@ _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
-def _valkey_port() -> str:
+def _valkey_port() -> int:
     """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
-    return os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+    port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+    try:
+        return int(port_str)
+    except ValueError:
+        logger.warning(f"Invalid Valkey port '{port_str}', defaulting to 6379")
+        return 6379
 
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
