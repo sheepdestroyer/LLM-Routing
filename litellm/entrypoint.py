@@ -16,8 +16,7 @@ if os.path.exists(env_path):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
-                val = val.strip().strip('"').strip("'")
-                os.environ[key] = val
+                os.environ.setdefault(key, val)
 
 # Load Gemini OAuth token from credentials JSON
 creds_path = "/config/gemini_auth/oauth_creds.json"
@@ -46,9 +45,10 @@ def check_tcp_port(ip: str, port: int) -> bool:
         return False
 
 max_wait = 60
-print(f"🔌 Waiting for PostgreSQL on :5432 (max {max_wait}s)...")
+postgres_port = int(os.environ.get("POSTGRES_PORT", "5432"))
+print(f"🔌 Waiting for PostgreSQL on :{postgres_port} (max {max_wait}s)...")
 for i in range(max_wait):
-    if check_tcp_port("127.0.0.1", 5432):
+    if check_tcp_port("127.0.0.1", postgres_port):
         print(f"✅ PostgreSQL ready after {i+1}s")
         break
     time.sleep(1)
@@ -127,5 +127,6 @@ sys.stdout.flush()
 # Start LiteLLM Proxy
 import litellm
 from litellm.proxy.proxy_cli import run_server
-sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
+litellm_port = os.environ.get("LITELLM_PORT", os.environ.get("PORT", "4000"))
+sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
 run_server()

@@ -11,6 +11,8 @@ valkey-data/
 clickhouse-data/
 minio-data/
 redis-lf-data/
+dev-data/
+
 
 # Exclude auto-generated backups
 backups/
