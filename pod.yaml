@@ -59,8 +59,6 @@ spec:
       value: /llm-routing/litellm
     - name: PROXY_BASE_URL
       value: PROXY_BASE_URL_PLACEHOLDER
-    - name: PORT
-      value: 'LITELLM_PORT_PLACEHOLDER'
     - name: LITELLM_PORT
       value: 'LITELLM_PORT_PLACEHOLDER'
     - name: POSTGRES_PORT

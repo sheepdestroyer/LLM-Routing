@@ -40,7 +40,7 @@ fi
 PULL_MODE=false
 FULL_REBUILD=false
 REPLACE_MODE=false
-if [ "${1:-}" = "--pull" ] || [ "${1:-}" = "--pull-latest" ]; then
+if [ "${1:-}" = "--pull" ]; then
     PULL_MODE=true
 elif [ "${1:-}" = "--full-rebuild" ]; then
     FULL_REBUILD=true
@@ -602,6 +602,11 @@ render_router_config() {
     mkdir -p "$rendered_dir"
     sed -e "s/LITELLM_PORT_PLACEHOLDER/${LITELLM_PORT}/g" \
         "${WORKDIR}/router/config.yaml" > "${rendered_dir}/config.yaml"
+    # Validate no unresolved placeholders remain
+    if grep -q 'LITELLM_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+        echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
+        exit 1
+    fi
     chmod 644 "${rendered_dir}/config.yaml"
     echo "✓ Router config rendered to ${rendered_dir}/config.yaml"
 }
@@ -714,38 +719,32 @@ sys.stdout.write(text)
 PY
 }
 
+deploy_fresh_pod() {
+    generate_clickhouse_config
+    render_litellm_config
+    render_router_config
+    render_pod_yaml | podman play kube -
+    setup_minio_buckets
+    verify_stack_health
+}
+
 if podman pod exists ${POD_NAME} 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
         podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        generate_clickhouse_config
-        render_litellm_config
-        render_router_config
-        render_pod_yaml | podman play kube -
-        setup_minio_buckets
-        verify_stack_health
+        deploy_fresh_pod
     elif $PULL_MODE; then
         echo "🚚 Pulling latest triage router image from GHCR..."
         podman pull "${ROUTER_IMAGE}"
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod with pulled image..."
-        generate_clickhouse_config
-        render_litellm_config
-        render_router_config
-        render_pod_yaml | podman play kube -
-        setup_minio_buckets
-        verify_stack_health
+        deploy_fresh_pod
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        generate_clickhouse_config
-        render_litellm_config
-        render_router_config
-        render_pod_yaml | podman play kube -
-        setup_minio_buckets
-        verify_stack_health
+        deploy_fresh_pod
     else
         echo "🔄 Restarting existing ${POD_NAME} (use --replace or --pull to recreate)..."
         podman pod restart ${POD_NAME}
@@ -776,12 +775,7 @@ else
     fi
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    generate_clickhouse_config
-    render_litellm_config
-    render_router_config
-    render_pod_yaml | podman play kube -
-    setup_minio_buckets
-    verify_stack_health
+    deploy_fresh_pod
 fi
 
 

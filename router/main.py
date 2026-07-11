@@ -2677,7 +2677,7 @@ async def get_dashboard_data():
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", _valkey_port()),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT', '4000')}/"),
-        check_http_endpoint("http://127.0.0.1:8080/health"),
+        check_http_endpoint(f"{LLAMA_SERVER_URL}/health"),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT', '3001')}"),
         get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),

@@ -13,11 +13,12 @@ BACKUP_DIR="${WORKDIR}/backups"
 RETENTION_DAYS=14
 LOG_FILE="/tmp/llm-backup-${TIMESTAMP}.log"
 
-# Source .env for POD_NAME (with prod default)
+# Source .env for POD_NAME and POSTGRES_PORT (with prod defaults)
 if [ -f "${WORKDIR}/.env" ]; then
     set -a; source "${WORKDIR}/.env"; set +a
 fi
 POD_NAME="${POD_NAME:-agent-router-pod}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -32,7 +33,7 @@ if [ "$PG_RUNNING" != "true" ]; then
     log "⚠️  PostgreSQL container not running — skipping DB backup"
 else
     for i in {1..15}; do
-        if podman exec ${POD_NAME}-postgres-db pg_isready -U postgres 2>/dev/null; then
+        if podman exec ${POD_NAME}-postgres-db pg_isready -U postgres -p ${POSTGRES_PORT} 2>/dev/null; then
             PG_READY=1
             log "✅ PostgreSQL is ready"
             break
