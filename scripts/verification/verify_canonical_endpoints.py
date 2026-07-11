@@ -22,14 +22,30 @@ WORKDIR = Path(__file__).resolve().parent.parent.parent
 def load_env(dev: bool = False) -> dict:
     """Load .env (and optionally .env.dev overlay), return resolved config dict."""
     env = {}
+    loaded_files = []
 
     def _parse(path: Path):
         if not path.exists():
+            print(f"  ⚠ env file not found: {path}")
             return
+        loaded_files.append(str(path.name))
         with open(path) as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
+                # Skip empty lines and full-line comments
+                if not line or line.startswith("#"):
+                    continue
+                # Strip inline comments (but not inside quoted values)
+                if "#" in line:
+                    # Simple heuristic: split on first # that's preceded by whitespace
+                    for i, ch in enumerate(line):
+                        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+                            line = line[:i].strip()
+                            break
+                # Handle export prefix
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
                     continue
                 key, _, val = line.partition("=")
                 key = key.strip()
@@ -40,6 +56,8 @@ def load_env(dev: bool = False) -> dict:
     if dev:
         _parse(WORKDIR / ".env.dev")
 
+    print(f"  Loaded env files: {', '.join(loaded_files)}")
+
     # Resolve with defaults
     return {
         "router_port": env.get("ROUTER_PORT", "5000"),
@@ -49,6 +67,8 @@ def load_env(dev: bool = False) -> dict:
         "router_api_key": env.get("ROUTER_API_KEY", "gateway-pass"),
         "public_base_url": env.get("PUBLIC_BASE_URL", ""),
         "base_url": env.get("BASE_URL", env.get("BASEURL", "x570.vendeuvre.lan")),
+        "minio_s3_port": env.get("MINIO_S3_PORT", "9002"),
+        "clickhouse_http_port": env.get("CLICKHOUSE_HTTP_PORT", "8123"),
     }
 
 
@@ -57,6 +77,25 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     extra = f" — {detail}" if detail else ""
     print(f"  {mark} {label}{extra}")
     return ok
+
+
+def parse_chat_response(data: dict) -> tuple[str, str]:
+    """Safely extract content and reasoning_content from a chat completion response.
+    Returns (content, reasoning_content) — both may be empty strings."""
+    if not isinstance(data, dict):
+        return "", ""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "", ""
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return "", ""
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        return "", ""
+    content = (message.get("content") or "").strip()
+    reasoning = (message.get("reasoning_content") or "").strip()
+    return content, reasoning
 
 
 def test_router_endpoints(cfg: dict) -> tuple[int, int]:
@@ -245,11 +284,8 @@ def test_e2e_chat(cfg: dict) -> tuple[int, int]:
             elapsed = time.time() - start
             if r.status_code == 200:
                 data = r.json()
-                choices = data.get("choices")
-                message = choices[0].get("message", {}) if choices else {}
-                content = (message.get("content") or "").strip()
-                reasoning = (message.get("reasoning_content") or "").strip()
-                model_used = data.get("model", "?")
+                content, reasoning = parse_chat_response(data)
+                model_used = data.get("model", "?") if isinstance(data, dict) else "?"
                 ok = len(content) > 0 or len(reasoning) > 0
                 detail = f"model={model_used}, {elapsed:.1f}s"
                 if content:
@@ -282,7 +318,8 @@ def test_infra_health(cfg: dict) -> tuple[int, int]:
     # MinIO S3 health
     total += 1
     try:
-        r = httpx.get("http://127.0.0.1:9002/minio/health/live", timeout=10)
+        minio_port = cfg.get("minio_s3_port", "9002")
+        r = httpx.get(f"http://127.0.0.1:{minio_port}/minio/health/live", timeout=10)
         passed += check("MinIO /minio/health/live", r.status_code == 200)
     except Exception as e:
         passed += check("MinIO /minio/health/live", False, str(e))
@@ -290,7 +327,8 @@ def test_infra_health(cfg: dict) -> tuple[int, int]:
     # ClickHouse HTTP ping
     total += 1
     try:
-        r = httpx.get("http://127.0.0.1:8123/ping", timeout=10)
+        ch_port = cfg.get("clickhouse_http_port", "8123")
+        r = httpx.get(f"http://127.0.0.1:{ch_port}/ping", timeout=10)
         passed += check("ClickHouse /ping", r.status_code == 200 and r.text.strip() == "Ok.")
     except Exception as e:
         passed += check("ClickHouse /ping", False, str(e))
@@ -322,10 +360,7 @@ def test_litellm_direct_chat(cfg: dict) -> tuple[int, int]:
         elapsed = time.time() - start
         if r.status_code == 200:
             data = r.json()
-            choices = data.get("choices")
-            message = choices[0].get("message", {}) if choices else {}
-            content = (message.get("content") or "").strip()
-            reasoning = (message.get("reasoning_content") or "").strip()
+            content, reasoning = parse_chat_response(data)
             ok = len(content) > 0 or len(reasoning) > 0
             detail = f"{elapsed:.1f}s"
             if content:
@@ -386,10 +421,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
         r = httpx.post(url, json=payload, headers={"Authorization": f"Bearer {cfg['router_api_key']}"}, timeout=60, follow_redirects=True)
         if r.status_code == 200:
             data = r.json()
-            choices = data.get("choices")
-            message = choices[0].get("message", {}) if choices else {}
-            content = (message.get("content") or "").strip()
-            reasoning = (message.get("reasoning_content") or "").strip()
+            content, reasoning = parse_chat_response(data)
             ok = len(content) > 0 or len(reasoning) > 0
             detail = f"HTTP {r.status_code}"
             if content:
