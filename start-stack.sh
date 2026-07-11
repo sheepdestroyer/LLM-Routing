@@ -37,9 +37,6 @@ if [ $# -gt 1 ]; then
     exit 1
 fi
 
-# Ensure local volume directories exist on the host for Podman mounts
-mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
-
 PULL_MODE=false
 FULL_REBUILD=false
 REPLACE_MODE=false
@@ -97,6 +94,9 @@ MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
 ROUTER_IMAGE="${ROUTER_IMAGE:-ghcr.io/sheepdestroyer/llm-routing:latest}"
 DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"
 export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT
+
+# Ensure local volume directories exist on the host for Podman mounts
+mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data"
 
 # Define and export the routing domain
 ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
@@ -582,8 +582,15 @@ render_litellm_config() {
     sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
+    # Validate no unresolved placeholders remain
+    if grep -q 'VALKEY_CACHE_PORT_PLACEHOLDER\|ROUTER_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+        echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
+        exit 1
+    fi
+    chmod 644 "${rendered_dir}/config.yaml"
     # Copy entrypoint.py unchanged
     cp "${WORKDIR}/litellm/entrypoint.py" "${rendered_dir}/entrypoint.py"
+    chmod 644 "${rendered_dir}/entrypoint.py"
     echo "✓ LiteLLM config rendered to ${rendered_dir}/config.yaml"
 }
 
@@ -595,6 +602,7 @@ render_router_config() {
     mkdir -p "$rendered_dir"
     sed -e "s/LITELLM_PORT_PLACEHOLDER/${LITELLM_PORT}/g" \
         "${WORKDIR}/router/config.yaml" > "${rendered_dir}/config.yaml"
+    chmod 644 "${rendered_dir}/config.yaml"
     echo "✓ Router config rendered to ${rendered_dir}/config.yaml"
 }
 
@@ -709,7 +717,7 @@ PY
 if podman pod exists ${POD_NAME} 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
-        podman build -t ghcr.io/sheepdestroyer/llm-routing:latest -f router/Dockerfile router
+        podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
         generate_clickhouse_config
@@ -720,7 +728,7 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         verify_stack_health
     elif $PULL_MODE; then
         echo "🚚 Pulling latest triage router image from GHCR..."
-        podman pull ghcr.io/sheepdestroyer/llm-routing:latest
+        podman pull "${ROUTER_IMAGE}"
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod with pulled image..."
         generate_clickhouse_config
@@ -761,10 +769,10 @@ else
     cleanup_zombie_ports
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
-        podman build -t ghcr.io/sheepdestroyer/llm-routing:latest -f router/Dockerfile router
+        podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
     else
         echo "🚚 Pulling latest triage router image from GHCR..."
-        podman pull ghcr.io/sheepdestroyer/llm-routing:latest
+        podman pull "${ROUTER_IMAGE}"
     fi
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."

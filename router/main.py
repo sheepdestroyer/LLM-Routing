@@ -41,6 +41,10 @@ _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
+def _valkey_port() -> str:
+    """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
+    return os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
     Returns None if connection fails or is disabled (non-fatal fallback)."""
@@ -57,7 +61,7 @@ def get_redis():
                 logger.info("Valkey client initialized from URL")
             else:
                 host = os.getenv("VALKEY_HOST", "127.0.0.1")
-                port = int(os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379"))
+                port = int(_valkey_port())
                 _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
                 logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
@@ -2666,7 +2670,7 @@ async def get_dashboard_data():
         llamacpp,
     ) = await asyncio.gather(
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
-        check_tcp_port("127.0.0.1", int(os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379"))),
+        check_tcp_port("127.0.0.1", int(_valkey_port())),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT', '4000')}/"),
         check_http_endpoint("http://127.0.0.1:8080/health"),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT', '3001')}"),
@@ -3885,7 +3889,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Valkey Cache</span>
-                            <span class="service-port">:{os.getenv('VALKEY_CACHE_PORT') or os.getenv('VALKEY_PORT', '6379')}</span>
+                            <span class="service-port">:{_valkey_port()}</span>
                         </div>
                         <span id="valkey-status" class="badge {"badge-online" if valkey_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if valkey_status else "Offline"}
@@ -3905,7 +3909,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:3001</span>
+                            <span class="service-port">:{os.getenv('LANGFUSE_WEB_PORT', '3001')}</span>
                         </div>
                         <span id="langfuse-status" class="badge {"badge-online" if langfuse_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if langfuse_status else "Offline"}

@@ -16,6 +16,7 @@ if os.path.exists(env_path):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
+                val = val.strip().strip('"').strip("'")
                 os.environ.setdefault(key, val)
 
 # Load Gemini OAuth token from credentials JSON
