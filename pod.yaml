@@ -73,7 +73,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/ping')
+        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -383,7 +383,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -395,7 +395,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
