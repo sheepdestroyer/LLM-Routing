@@ -245,8 +245,10 @@ def test_e2e_chat(cfg: dict) -> tuple[int, int]:
             elapsed = time.time() - start
             if r.status_code == 200:
                 data = r.json()
-                content = (data["choices"][0]["message"].get("content") or "").strip()
-                reasoning = (data["choices"][0]["message"].get("reasoning_content") or "").strip()
+                choices = data.get("choices")
+                message = choices[0].get("message", {}) if choices else {}
+                content = (message.get("content") or "").strip()
+                reasoning = (message.get("reasoning_content") or "").strip()
                 model_used = data.get("model", "?")
                 ok = len(content) > 0 or len(reasoning) > 0
                 detail = f"model={model_used}, {elapsed:.1f}s"
@@ -320,8 +322,10 @@ def test_litellm_direct_chat(cfg: dict) -> tuple[int, int]:
         elapsed = time.time() - start
         if r.status_code == 200:
             data = r.json()
-            content = (data["choices"][0]["message"].get("content") or "").strip()
-            reasoning = (data["choices"][0]["message"].get("reasoning_content") or "").strip()
+            choices = data.get("choices")
+            message = choices[0].get("message", {}) if choices else {}
+            content = (message.get("content") or "").strip()
+            reasoning = (message.get("reasoning_content") or "").strip()
             ok = len(content) > 0 or len(reasoning) > 0
             detail = f"{elapsed:.1f}s"
             if content:
@@ -337,12 +341,13 @@ def test_litellm_direct_chat(cfg: dict) -> tuple[int, int]:
     return passed, total
 
 
-def test_canonical_urls(cfg: dict) -> tuple[int, int]:
-    """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set)."""
-    passed = total = 0
+def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
+    """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set).
+    Returns (passed, total, skipped)."""
+    passed = total = skipped = 0
     public = cfg["public_base_url"]
     if not public:
-        return 0, 0
+        return 0, 0, 0
 
     print(f"\n── Canonical URLs ({public}) ──")
 
@@ -364,7 +369,8 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
             passed += check(f"GET {url}", ok, f"HTTP {r.status_code}")
         except httpx.ConnectError as e:
             # DNS/unreachable — skip gracefully (host may not resolve from test machine)
-            passed += check(f"GET {url}", True, f"SKIP: DNS/unreachable ({e})")
+            skipped += 1
+            check(f"GET {url}", True, f"SKIP: DNS/unreachable ({e})")
         except Exception as e:
             passed += check(f"GET {url}", False, str(e)[:100])
 
@@ -380,8 +386,10 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
         r = httpx.post(url, json=payload, headers={"Authorization": f"Bearer {cfg['router_api_key']}"}, timeout=60, follow_redirects=True)
         if r.status_code == 200:
             data = r.json()
-            content = (data["choices"][0]["message"].get("content") or "").strip()
-            reasoning = (data["choices"][0]["message"].get("reasoning_content") or "").strip()
+            choices = data.get("choices")
+            message = choices[0].get("message", {}) if choices else {}
+            content = (message.get("content") or "").strip()
+            reasoning = (message.get("reasoning_content") or "").strip()
             ok = len(content) > 0 or len(reasoning) > 0
             detail = f"HTTP {r.status_code}"
             if content:
@@ -390,11 +398,12 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int]:
         else:
             passed += check(f"POST {url}", False, f"HTTP {r.status_code}: {r.text[:80]}")
     except httpx.ConnectError as e:
-        passed += check(f"POST {url}", True, f"SKIP: DNS/unreachable ({e})")
+        skipped += 1
+        check(f"POST {url}", True, f"SKIP: DNS/unreachable ({e})")
     except Exception as e:
         passed += check(f"POST {url}", False, str(e)[:100])
 
-    return passed, total
+    return passed, total, skipped
 
 
 def main():
@@ -418,7 +427,7 @@ def main():
     if cfg["public_base_url"]:
         print(f"  Public URL  : {cfg['public_base_url']}")
 
-    total_passed = total_tests = 0
+    total_passed = total_tests = total_skipped = 0
 
     for name, fn in [
         ("Router API", test_router_endpoints),
@@ -429,12 +438,20 @@ def main():
         ("LiteLLM direct chat", test_litellm_direct_chat),
         ("Canonical URLs", test_canonical_urls),
     ]:
-        p, t = fn(cfg)
+        result = fn(cfg)
+        if len(result) == 3:
+            p, t, s = result
+            total_skipped += s
+        else:
+            p, t = result
         total_passed += p
         total_tests += t
 
     print(f"\n{'='*60}")
-    print(f"Results [{env_label}]: {total_passed}/{total_tests} passed")
+    parts = [f"{total_passed}/{total_tests} passed"]
+    if total_skipped:
+        parts.append(f"{total_skipped} skipped")
+    print(f"Results [{env_label}]: {', '.join(parts)}")
     if total_passed < total_tests:
         print(f"FAILED: {total_tests - total_passed} test(s)")
         sys.exit(1)
