@@ -1,4 +1,8 @@
 # Shared verification helpers for cooldown and routing tests
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from scripts.chat_helpers import parse_chat_response
 import os
 import uuid
 import time
@@ -56,7 +60,7 @@ def send_litellm_request(model: str, prompt: str, litellm_url: str = "http://loc
         response.raise_for_status()
         result = response.json()
         model_returned = result.get("model", "unknown")
-        text = (result["choices"][0]["message"].get("content") or "").strip()
+        text = parse_chat_response(result)[0]
         print(f"Success in {time.time() - start_time:.1f}s: model={model_returned}, text='{text[:40]}'")
         return True, model_returned
     except httpx.HTTPStatusError as e:

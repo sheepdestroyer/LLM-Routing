@@ -3,6 +3,10 @@ import json
 import sys
 import os
 import httpx
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from scripts.chat_helpers import parse_chat_response
 
 URL = "http://localhost:5000/v1/chat/completions"
 
@@ -32,7 +36,7 @@ def send_request(model: str, prompt: str, expected_model: str):
         response.raise_for_status()
         result = response.json()
         model_returned = result.get("model", "unknown")
-        text = (result["choices"][0]["message"].get("content") or "").strip()
+        text = parse_chat_response(result)[0]
         print(f"Request: model={model}, prompt='{prompt[:40]}...'")
         print(f"Response: model={model_returned}, text='{text[:60]}...'")
         if model_returned != expected_model:

@@ -27,6 +27,8 @@ def parse_chat_response(data: Any) -> tuple[str, str]:
     message = first_choice.get("message")
     if not isinstance(message, dict):
         return "", ""
-    content = (message.get("content") or "").strip()
-    reasoning = (message.get("reasoning_content") or "").strip()
+    content_val = message.get("content")
+    content = content_val.strip() if isinstance(content_val, str) else ""
+    reasoning_val = message.get("reasoning_content")
+    reasoning = reasoning_val.strip() if isinstance(reasoning_val, str) else ""
     return content, reasoning

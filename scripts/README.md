@@ -53,6 +53,7 @@ A simple HTTP server that returns `429 Rate Limit Exceeded` to simulate rate lim
 These tools are used to benchmark the prompt classifier and extract datasets from Langfuse traces:
 
 - **`benchmark_classifier.py`**: Benchmarks latency and precision metrics of the Ryzen PRO APU-offloaded classifier.
+- **`chat_helpers.py`**: Shared defensive chat completion response parser (`parse_chat_response`) used by classifier scripts, verification scripts, and canonical endpoint checks. Safely extracts content and reasoning_content with full isinstance guards.
 - **`classify_direct.py`**: Takes a string prompt argument and prints the classification decision directly.
 - **`extract_prompts.py` / `extract_complex.py` / `extract_gapfill.py`**: Mines prompt datasets from Langfuse PG/ClickHouse database traces for fine-tuning.
 - **`reclassify_all.py`**: Re-evaluates prompt classifications against updated models.

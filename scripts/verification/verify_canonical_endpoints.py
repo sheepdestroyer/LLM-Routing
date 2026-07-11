@@ -19,8 +19,8 @@ from pathlib import Path
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 
 # Import shared chat response parser (also used by classifier scripts)
-sys.path.insert(0, str(WORKDIR / "scripts"))
-from chat_helpers import parse_chat_response
+sys.path.insert(0, str(WORKDIR))
+from scripts.chat_helpers import parse_chat_response
 
 
 def load_env(dev: bool = False) -> dict:
@@ -48,7 +48,7 @@ def load_env(dev: bool = False) -> dict:
                     continue
                 key, _, val = line.partition("=")
                 key = key.strip()
-                val = val.strip().strip('"').strip("'")
+                val = val.strip().strip('"').strip("'").strip()
                 env[key] = val
 
     _parse(WORKDIR / ".env")
@@ -57,16 +57,16 @@ def load_env(dev: bool = False) -> dict:
 
     print(f"  Loaded env files: {', '.join(loaded_files)}")
 
-    # Resolve with defaults
+    # Resolve with defaults, respecting shell env overrides
     return {
-        "router_port": env.get("ROUTER_PORT", "5000"),
-        "litellm_port": env.get("LITELLM_PORT", "4000"),
-        "langfuse_web_port": env.get("LANGFUSE_WEB_PORT", "3001"),
-        "litellm_master_key": env.get("LITELLM_MASTER_KEY", "gateway-pass"),
-        "router_api_key": env.get("ROUTER_API_KEY", "gateway-pass"),
-        "public_base_url": env.get("PUBLIC_BASE_URL", "").rstrip("/"),
-        "minio_s3_port": env.get("MINIO_S3_PORT", "9002"),
-        "clickhouse_http_port": env.get("CLICKHOUSE_HTTP_PORT", "8123"),
+        "router_port": os.environ.get("ROUTER_PORT") or env.get("ROUTER_PORT", "5000"),
+        "litellm_port": os.environ.get("LITELLM_PORT") or env.get("LITELLM_PORT", "4000"),
+        "langfuse_web_port": os.environ.get("LANGFUSE_WEB_PORT") or env.get("LANGFUSE_WEB_PORT", "3001"),
+        "litellm_master_key": os.environ.get("LITELLM_MASTER_KEY") or env.get("LITELLM_MASTER_KEY", "gateway-pass"),
+        "router_api_key": os.environ.get("ROUTER_API_KEY") or env.get("ROUTER_API_KEY", "gateway-pass"),
+        "public_base_url": (os.environ.get("PUBLIC_BASE_URL") or env.get("PUBLIC_BASE_URL", "")).rstrip("/"),
+        "minio_s3_port": os.environ.get("MINIO_S3_PORT") or env.get("MINIO_S3_PORT", "9002"),
+        "clickhouse_http_port": os.environ.get("CLICKHOUSE_HTTP_PORT") or env.get("CLICKHOUSE_HTTP_PORT", "8123"),
     }
 
 
@@ -361,6 +361,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     passed = total = skipped = 0
     public = cfg["public_base_url"]
     if not public:
+        print("\n── Canonical URLs — SKIPPED (PUBLIC_BASE_URL not set) ──")
         return 0, 0, 0
 
     print(f"\n── Canonical URLs ({public}) ──")
