@@ -76,12 +76,12 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** | `tcpSocket` on port 6379 every 10s | Same, every 5s |
+| **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
 | **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
-| **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
+| **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
-| **valkey-lf** | `tcpSocket` on port 6380 every 10s | Same, every 5s |
+| **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |

@@ -16,6 +16,7 @@ if os.path.exists(env_path):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
+                key = key.strip()
                 val = val.strip().strip('"').strip("'")
                 os.environ.setdefault(key, val)
 
@@ -46,7 +47,7 @@ def check_tcp_port(ip: str, port: int) -> bool:
         return False
 
 max_wait = 60
-postgres_port_str = os.environ.get("POSTGRES_PORT", "5432")
+postgres_port_str = os.environ.get("POSTGRES_PORT") or "5432"
 try:
     postgres_port = int(postgres_port_str)
 except ValueError:

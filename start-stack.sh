@@ -537,8 +537,8 @@ safe_pod_teardown() {
     if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
         podman pod stop -t 30 ${POD_NAME} 2>/dev/null || true
-        # If still running after graceful attempt, force-remove
-        if podman pod exists ${POD_NAME} 2>/dev/null; then
+        # podman pod exists returns 0 for stopped pods too — check running state
+        if podman pod inspect ${POD_NAME} --format '{{.State}}' 2>/dev/null | grep -q 'Running'; then
             echo "⚠️  Graceful stop timed out — force-removing..."
             podman pod rm -f ${POD_NAME} 2>/dev/null || true
         else
