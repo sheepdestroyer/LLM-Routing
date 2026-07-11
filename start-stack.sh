@@ -16,7 +16,8 @@ show_help() {
     echo "Usage:"
     echo "  ./start-stack.sh                   → Restart existing pod (fast, preserves logs)"
     echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
-    echo "  ./start-stack.sh --full-rebuild    → Rebuild router image and recreate/redeploy pod"
+    echo "  ./start-stack.sh --pull            → Pull latest router image from GHCR and recreate/redeploy pod"
+    echo "  ./start-stack.sh --full-rebuild    → Rebuild custom router image locally and recreate/redeploy pod"
     echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
 }
 
@@ -36,12 +37,12 @@ if [ $# -gt 1 ]; then
     exit 1
 fi
 
-# Ensure local volume directories exist on the host for Podman mounts
-mkdir -p valkey-data postgres-data langfuse-data clickhouse-data redis-lf-data minio-data
-
+PULL_MODE=false
 FULL_REBUILD=false
 REPLACE_MODE=false
-if [ "${1:-}" = "--full-rebuild" ]; then
+if [ "${1:-}" = "--pull" ]; then
+    PULL_MODE=true
+elif [ "${1:-}" = "--full-rebuild" ]; then
     FULL_REBUILD=true
 elif [ "${1:-}" = "--replace" ]; then
     REPLACE_MODE=true
@@ -69,6 +70,34 @@ if [ -f "$ENV_FILE" ]; then
     set +a
 fi
 
+# Load optional dev-environment overlay (set DEV_ENV_FILE before calling this script)
+if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
+    set -a
+    source "$DEV_ENV_FILE"
+    set +a
+fi
+
+# Port assignments — read from env (set by .env or .env.dev) with prod defaults
+POD_NAME="${POD_NAME:-agent-router-pod}"
+ROUTER_PORT="${ROUTER_PORT:-5000}"
+LITELLM_PORT="${LITELLM_PORT:-4000}"
+LANGFUSE_WEB_PORT="${LANGFUSE_WEB_PORT:-3001}"
+LANGFUSE_WORKER_PORT="${LANGFUSE_WORKER_PORT:-3030}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+VALKEY_CACHE_PORT="${VALKEY_CACHE_PORT:-6379}"
+VALKEY_LF_PORT="${VALKEY_LF_PORT:-6380}"
+CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
+CLICKHOUSE_TCP_PORT="${CLICKHOUSE_TCP_PORT:-9000}"
+CLICKHOUSE_INTERSERVER_PORT="${CLICKHOUSE_INTERSERVER_PORT:-9009}"
+MINIO_S3_PORT="${MINIO_S3_PORT:-9002}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-9001}"
+ROUTER_IMAGE="${ROUTER_IMAGE:-ghcr.io/sheepdestroyer/llm-routing:latest}"
+DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"
+export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT
+
+# Ensure local volume directories exist on the host for Podman mounts
+mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data"
+
 # Define and export the routing domain
 ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
 export ROUTING_DOMAIN
@@ -82,12 +111,9 @@ if [[ ! "$PUBLIC_BASE_URL" =~ /llm-routing ]]; then
     PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}/llm-routing"
 fi
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
-LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:5000}"
+LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:${ROUTER_PORT}}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL%/}"
-LITELLM_PUBLIC_URL="${LITELLM_PUBLIC_URL:-https://litellm.x570.${ROUTING_DOMAIN}}"
-LANGFUSE_PUBLIC_URL="${LANGFUSE_PUBLIC_URL:-https://langfuse.x570.${ROUTING_DOMAIN}}"
-LITELLM_ROOT_PATH="${LITELLM_ROOT_PATH:-}"
-export PUBLIC_BASE_URL LOCAL_BASE_URL LITELLM_PUBLIC_URL LANGFUSE_PUBLIC_URL LITELLM_ROOT_PATH
+export PUBLIC_BASE_URL LOCAL_BASE_URL
 
 
 # Ensure openssl is installed if we need to generate passwords/keys
@@ -337,7 +363,7 @@ fi
 # Hermes profiles (e.g., llm-routing-openrouter) whose container storage
 # can leave surviving processes holding ports indefinitely.
 cleanup_zombie_ports() {
-    local ALL_PORTS="3000 3030 4000 5000 5005 5432 6379 6380 8080 8123 9000 9001 9002 9004 9005 9009"
+    local ALL_PORTS="$ROUTER_PORT $LITELLM_PORT $LANGFUSE_WEB_PORT $LANGFUSE_WORKER_PORT $POSTGRES_PORT $VALKEY_CACHE_PORT $VALKEY_LF_PORT $CLICKHOUSE_HTTP_PORT $CLICKHOUSE_TCP_PORT $CLICKHOUSE_INTERSERVER_PORT $MINIO_S3_PORT $MINIO_CONSOLE_PORT 8080 9004 9005"
     
     echo "🧹 Cleaning up zombie port bindings..."
     
@@ -411,9 +437,9 @@ setup_minio_buckets() {
     echo ""
     echo "📦 Ensuring MinIO buckets exist..."
 
-    # Wait for MinIO S3 API to be ready (port 9002)
+    # Wait for MinIO S3 API to be ready
     while [ $waited -lt $MAX_WAIT ]; do
-        if curl -sf --max-time 3 http://127.0.0.1:9002/minio/health/live >/dev/null 2>&1; then
+        if curl -sf --max-time 3 http://127.0.0.1:${MINIO_S3_PORT}/minio/health/live >/dev/null 2>&1; then
             echo "   ✓ MinIO S3 API ready after ${waited}s"
             break
         fi
@@ -425,22 +451,22 @@ setup_minio_buckets() {
         return 1
     fi
 
-    # Ensure mc alias points to the correct MinIO S3 API port (9002, not 9000)
+    # Ensure mc alias points to the correct MinIO S3 API port
     # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
     # not MinIO. We must override it.
-    if ! podman exec agent-router-pod-minio-s3 mc alias set local http://127.0.0.1:9002 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
-        echo "❌ Error: Failed to set MinIO alias 'local' on http://127.0.0.1:9002" >&2
+    if ! podman exec ${POD_NAME}-minio-s3 mc alias set local http://127.0.0.1:${MINIO_S3_PORT} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
+        echo "❌ Error: Failed to set MinIO alias 'local' on http://127.0.0.1:${MINIO_S3_PORT}" >&2
         exit 1
     fi
 
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
     for bucket in "${BUCKETS[@]}"; do
-        if podman exec agent-router-pod-minio-s3 mc ls "local/${bucket}" >/dev/null 2>&1; then
+        if podman exec ${POD_NAME}-minio-s3 mc ls "local/${bucket}" >/dev/null 2>&1; then
             echo "   ✓ Bucket '${bucket}' exists"
         else
             echo "   + Creating bucket '${bucket}'..."
-            podman exec agent-router-pod-minio-s3 mc mb "local/${bucket}" 2>/dev/null || {
+            podman exec ${POD_NAME}-minio-s3 mc mb "local/${bucket}" 2>/dev/null || {
                 echo "   ⚠️  Failed to create bucket '${bucket}'"
             }
         fi
@@ -459,7 +485,7 @@ verify_stack_health() {
     
     # Wait for postgres first — everything depends on it
     while [ $waited -lt $MAX_WAIT ]; do
-        if podman exec agent-router-pod-postgres-db pg_isready -U postgres -q 2>/dev/null; then
+        if podman exec ${POD_NAME}-postgres-db pg_isready -U postgres -p ${POSTGRES_PORT} -q 2>/dev/null; then
             echo "   ✓ PostgreSQL ready after ${waited}s"
             break
         fi
@@ -475,7 +501,7 @@ verify_stack_health() {
     local litellm_ready=false
     waited=0
     while [ $waited -lt $MAX_WAIT ]; do
-        if curl -sf --max-time 3 http://127.0.0.1:4000/health/readiness >/dev/null 2>&1; then
+        if curl -sf --max-time 3 http://127.0.0.1:${LITELLM_PORT}/health/readiness >/dev/null 2>&1; then
             echo "   ✓ LiteLLM ready after ${waited}s"
             litellm_ready=true
             break
@@ -490,7 +516,7 @@ verify_stack_health() {
     # Wait for triage router + verify full pipeline
     waited=0
     while [ $waited -lt 120 ]; do
-        local resp=$(curl -s --max-time 10 http://127.0.0.1:5000/v1/chat/completions \
+        local resp=$(curl -s --max-time 10 http://127.0.0.1:${ROUTER_PORT}/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -d '{"model":"agent-simple-core","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}' 2>/dev/null)
         if echo "$resp" | grep -q '"choices"'; then
@@ -508,16 +534,16 @@ verify_stack_health() {
 # Graceful stop (SIGTERM with 30s timeout) lets ClickHouse/Postgres flush,
 # then force-remove if needed. Avoids data corruption from SIGKILL.
 safe_pod_teardown() {
-    if podman pod exists agent-router-pod 2>/dev/null; then
+    if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
-        podman pod stop -t 30 agent-router-pod 2>/dev/null || true
-        # If still running after graceful attempt, force-remove
-        if podman pod exists agent-router-pod 2>/dev/null; then
+        podman pod stop -t 30 ${POD_NAME} 2>/dev/null || true
+        # podman pod exists returns 0 for stopped pods too — check running state
+        if podman pod inspect ${POD_NAME} --format '{{.State}}' 2>/dev/null | grep -q 'Running'; then
             echo "⚠️  Graceful stop timed out — force-removing..."
-            podman pod rm -f agent-router-pod 2>/dev/null || true
+            podman pod rm -f ${POD_NAME} 2>/dev/null || true
         else
             # Already stopped, just remove
-            podman pod rm agent-router-pod 2>/dev/null || true
+            podman pod rm ${POD_NAME} 2>/dev/null || true
         fi
         cleanup_zombie_ports
         echo "✓ Pod torn down, ports cleaned"
@@ -526,13 +552,67 @@ safe_pod_teardown() {
 
 # Pre-deploy database backup (runs before any pod modification)
 # Skip if pod doesn't exist (e.g., after manual cleanup)
-if podman pod exists agent-router-pod 2>/dev/null; then
+if podman pod exists ${POD_NAME} 2>/dev/null; then
     echo "💾 Taking pre-deploy database backup..."
     bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
 fi
 
+# ── ClickHouse port override XML ──
+# Writes a minimal config.d XML override so ClickHouse listens on the
+# configured ports instead of its compiled-in defaults.
+generate_clickhouse_config() {
+    local config_dir="${DATA_ROOT}/clickhouse-config"
+    mkdir -p "$config_dir"
+    cat > "${config_dir}/port-override.xml" << EOF
+<clickhouse>
+    <http_port>${CLICKHOUSE_HTTP_PORT}</http_port>
+    <tcp_port>${CLICKHOUSE_TCP_PORT}</tcp_port>
+    <interserver_http_port>${CLICKHOUSE_INTERSERVER_PORT}</interserver_http_port>
+</clickhouse>
+EOF
+    echo "✓ ClickHouse port config written to ${config_dir}/port-override.xml"
+}
+
+# ── LiteLLM rendered config ──
+# Generates a rendered config.yaml (with port substitutions) into DATA_ROOT/litellm-rendered/
+# so prod and dev each get their own copy with the correct port values.
+render_litellm_config() {
+    local rendered_dir="${DATA_ROOT}/litellm-rendered"
+    mkdir -p "$rendered_dir"
+    sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
+        -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
+        "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
+    # Validate no unresolved placeholders remain
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+        echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
+        exit 1
+    fi
+    chmod 644 "${rendered_dir}/config.yaml"
+    # Copy entrypoint.py unchanged
+    cp "${WORKDIR}/litellm/entrypoint.py" "${rendered_dir}/entrypoint.py"
+    chmod 644 "${rendered_dir}/entrypoint.py"
+    echo "✓ LiteLLM config rendered to ${rendered_dir}/config.yaml"
+}
+
+# ── Router rendered config ──
+# Generates a rendered config.yaml (with port substitutions) into DATA_ROOT/router-rendered/
+# so prod and dev each get their own copy with the correct LiteLLM port.
+render_router_config() {
+    local rendered_dir="${DATA_ROOT}/router-rendered"
+    mkdir -p "$rendered_dir"
+    sed -e "s/LITELLM_PORT_PLACEHOLDER/${LITELLM_PORT}/g" \
+        "${WORKDIR}/router/config.yaml" > "${rendered_dir}/config.yaml"
+    # Validate no unresolved placeholders remain
+    if grep -q 'LITELLM_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+        echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
+        exit 1
+    fi
+    chmod 644 "${rendered_dir}/config.yaml"
+    echo "✓ Router config rendered to ${rendered_dir}/config.yaml"
+}
+
 render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL ROUTING_DOMAIN LITELLM_PUBLIC_URL LANGFUSE_PUBLIC_URL LITELLM_ROOT_PATH
+    export WORKDIR HOME LITELLM_MASTER_KEY POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD OLLAMA_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
 uid = os.getuid()
@@ -563,8 +643,20 @@ placeholders = [
     "PROXY_BASE_URL_PLACEHOLDER",
     "PUBLIC_BASE_URL_PLACEHOLDER",
     "ROUTING_DOMAIN_PLACEHOLDER",
-    "NEXTAUTH_URL_PLACEHOLDER",
-    "SERVER_ROOT_PATH_PLACEHOLDER"
+    "POD_NAME_PLACEHOLDER",
+    "DATA_ROOT_PLACEHOLDER",
+    "ROUTER_PORT_PLACEHOLDER",
+    "LITELLM_PORT_PLACEHOLDER",
+    "LANGFUSE_WEB_PORT_PLACEHOLDER",
+    "LANGFUSE_WORKER_PORT_PLACEHOLDER",
+    "POSTGRES_PORT_PLACEHOLDER",
+    "VALKEY_CACHE_PORT_PLACEHOLDER",
+    "VALKEY_LF_PORT_PLACEHOLDER",
+    "CLICKHOUSE_HTTP_PORT_PLACEHOLDER",
+    "CLICKHOUSE_TCP_PORT_PLACEHOLDER",
+    "MINIO_S3_PORT_PLACEHOLDER",
+    "MINIO_CONSOLE_PORT_PLACEHOLDER",
+    "ROUTER_IMAGE_PLACEHOLDER",
 ]
 for ph in placeholders:
     if ph not in text:
@@ -589,11 +681,31 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
-text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_PUBLIC_URL"]))
-text = text.replace("NEXTAUTH_URL_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_PUBLIC_URL"]))
-text = text.replace("SERVER_ROOT_PATH_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_ROOT_PATH"]))
+# Derive PROXY_BASE_URL from PUBLIC_BASE_URL
+public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
+proxy_base_url = f"{public_base_url}/litellm"
+text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
 text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
 text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
+# Raw replacements (no quoting — used for pod name, data root, and integer port values)
+raw_replacements = {
+    "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
+    "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
+    "ROUTER_PORT_PLACEHOLDER": os.environ["ROUTER_PORT"],
+    "LITELLM_PORT_PLACEHOLDER": os.environ["LITELLM_PORT"],
+    "LANGFUSE_WEB_PORT_PLACEHOLDER": os.environ["LANGFUSE_WEB_PORT"],
+    "LANGFUSE_WORKER_PORT_PLACEHOLDER": os.environ["LANGFUSE_WORKER_PORT"],
+    "POSTGRES_PORT_PLACEHOLDER": os.environ["POSTGRES_PORT"],
+    "VALKEY_CACHE_PORT_PLACEHOLDER": os.environ["VALKEY_CACHE_PORT"],
+    "VALKEY_LF_PORT_PLACEHOLDER": os.environ["VALKEY_LF_PORT"],
+    "CLICKHOUSE_HTTP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_HTTP_PORT"],
+    "CLICKHOUSE_TCP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_TCP_PORT"],
+    "MINIO_S3_PORT_PLACEHOLDER": os.environ["MINIO_S3_PORT"],
+    "MINIO_CONSOLE_PORT_PLACEHOLDER": os.environ["MINIO_CONSOLE_PORT"],
+    "ROUTER_IMAGE_PLACEHOLDER": os.environ["ROUTER_IMAGE"],
+}
+for ph, val in raw_replacements.items():
+    text = text.replace(ph, val)
 import re
 unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
 if unresolved:
@@ -607,24 +719,35 @@ sys.stdout.write(text)
 PY
 }
 
-if podman pod exists agent-router-pod 2>/dev/null; then
+deploy_fresh_pod() {
+    generate_clickhouse_config
+    render_litellm_config
+    render_router_config
+    render_pod_yaml | podman play kube -
+    setup_minio_buckets
+    verify_stack_health
+}
+
+if podman pod exists ${POD_NAME} 2>/dev/null; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
-        podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
+        podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
         safe_pod_teardown
         echo "🚀 Deploying fresh triage pod..."
-        render_pod_yaml | podman play kube -
-        setup_minio_buckets
-        verify_stack_health
+        deploy_fresh_pod
+    elif $PULL_MODE; then
+        echo "🚚 Pulling latest triage router image from GHCR..."
+        podman pull "${ROUTER_IMAGE}"
+        safe_pod_teardown
+        echo "🚀 Deploying fresh triage pod with pulled image..."
+        deploy_fresh_pod
     elif $REPLACE_MODE; then
         safe_pod_teardown
         echo "🚀 Deploying replacement pod from YAML..."
-        render_pod_yaml | podman play kube -
-        setup_minio_buckets
-        verify_stack_health
+        deploy_fresh_pod
     else
-        echo "🔄 Restarting existing agent-router-pod (use --replace or --full-rebuild to recreate)..."
-        podman pod restart agent-router-pod
+        echo "🔄 Restarting existing ${POD_NAME} (use --replace or --pull to recreate)..."
+        podman pod restart ${POD_NAME}
         setup_minio_buckets
         verify_stack_health
 
@@ -643,13 +766,21 @@ if podman pod exists agent-router-pod 2>/dev/null; then
 else
     # First deploy — no pod exists, clean ports just in case
     cleanup_zombie_ports
-    echo "🔨 Building custom local triage router image..."
-    podman build -t localhost/llm-triage-router:latest -f router/Dockerfile router
+    if $FULL_REBUILD; then
+        echo "🔨 Building custom local triage router image..."
+        podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
+    elif [[ "$ROUTER_IMAGE" == localhost/* ]]; then
+        if ! podman image exists "${ROUTER_IMAGE}"; then
+            echo "🔨 Local image not found. Building custom local triage router image..."
+            podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
+        fi
+    else
+        echo "🚚 Pulling latest triage router image from GHCR..."
+        podman pull "${ROUTER_IMAGE}"
+    fi
 
     echo "🚀 No existing pod found. Deploying fresh triage pod..."
-    render_pod_yaml | podman play kube -
-    setup_minio_buckets
-    verify_stack_health
+    deploy_fresh_pod
 fi
 
 

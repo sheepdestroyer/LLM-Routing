@@ -23,9 +23,9 @@ from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
-LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
+LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
 LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
-LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or "http://127.0.0.1:3001").rstrip("/")
+LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
 
@@ -40,6 +40,15 @@ _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
+
+def _valkey_port() -> int:
+    """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
+    port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+    try:
+        return int(port_str)
+    except ValueError:
+        logger.warning(f"Invalid Valkey port '{port_str}', defaulting to 6379")
+        return 6379
 
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
@@ -57,7 +66,7 @@ def get_redis():
                 logger.info("Valkey client initialized from URL")
             else:
                 host = os.getenv("VALKEY_HOST", "127.0.0.1")
-                port = int(os.getenv("VALKEY_PORT", "6379"))
+                port = _valkey_port()
                 _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
                 logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
@@ -1590,7 +1599,7 @@ def get_pie_chart_gradient() -> str:
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
-    litellm_base = "http://127.0.0.1:4000/v1/memory"
+    litellm_base = f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/v1/memory"
 
     # Resolve the destination URL
     url = f"{litellm_base}{path}"
@@ -2666,10 +2675,10 @@ async def get_dashboard_data():
         llamacpp,
     ) = await asyncio.gather(
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
-        check_tcp_port("127.0.0.1", 6379),
-        check_http_endpoint("http://127.0.0.1:4000/"),
-        check_http_endpoint("http://127.0.0.1:8080/health"),
-        check_http_endpoint("http://127.0.0.1:3001"),
+        check_tcp_port("127.0.0.1", _valkey_port()),
+        check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/"),
+        check_http_endpoint(f"{LLAMA_SERVER_URL}/health"),
+        check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}"),
         get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
@@ -3867,7 +3876,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Triage Router</span>
-                            <span class="service-port">:5000</span>
+                            <span class="service-port">:{os.getenv('ROUTER_PORT') or '5000'}</span>
                         </div>
                         <span class="badge badge-online"><span class="pulse-dot"></span>Online</span>
                     </div>
@@ -3875,7 +3884,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">LiteLLM Proxy</span>
-                            <span class="service-port">:4000</span>
+                            <span class="service-port">:{os.getenv('LITELLM_PORT') or '4000'}</span>
                         </div>
                         <span id="litellm-status" class="badge {"badge-online" if litellm_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if litellm_status else "Offline"}
@@ -3885,7 +3894,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Valkey Cache</span>
-                            <span class="service-port">:6379</span>
+                            <span class="service-port">:{_valkey_port()}</span>
                         </div>
                         <span id="valkey-status" class="badge {"badge-online" if valkey_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if valkey_status else "Offline"}
@@ -3905,7 +3914,7 @@ async def get_dashboard(request: Request):
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:3001</span>
+                            <span class="service-port">:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}</span>
                         </div>
                         <span id="langfuse-status" class="badge {"badge-online" if langfuse_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if langfuse_status else "Offline"}

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: agent-router-pod
+  name: POD_NAME_PLACEHOLDER
 spec:
   containers:
   # Valkey Cache — LiteLLM response cache (exact-match & semantic)
@@ -9,19 +9,29 @@ spec:
     - valkey-server
     - --bind
     - 127.0.0.1
+    - --port
+    - 'VALKEY_CACHE_PORT_PLACEHOLDER'
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0
     livenessProbe:
-      tcpSocket:
-        port: 6379
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - 'VALKEY_CACHE_PORT_PLACEHOLDER'
+        - ping
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
     name: valkey-cache
     readinessProbe:
-      tcpSocket:
-        port: 6379
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - 'VALKEY_CACHE_PORT_PLACEHOLDER'
+        - ping
       initialDelaySeconds: 2
       periodSeconds: 5
       timeoutSeconds: 2
@@ -34,28 +44,32 @@ spec:
     - /app/entrypoint.py
     env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/postgres
     - name: STORE_MODEL_IN_DB
       value: 'True'
     - name: LITELLM_LOG
       value: INFO
     - name: LANGFUSE_HOST
-      value: http://127.0.0.1:3001
+      value: http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
     - name: LITELLM_MASTER_KEY
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
     - name: SERVER_ROOT_PATH
-      value: SERVER_ROOT_PATH_PLACEHOLDER
+      value: /llm-routing/litellm
     - name: PROXY_BASE_URL
       value: PROXY_BASE_URL_PLACEHOLDER
+    - name: LITELLM_PORT
+      value: 'LITELLM_PORT_PLACEHOLDER'
+    - name: POSTGRES_PORT
+      value: 'POSTGRES_PORT_PLACEHOLDER'
     image: ghcr.io/berriai/litellm:v1.91.1
     livenessProbe:
       exec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveness')
+        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/ping')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -65,16 +79,16 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:4000/health/readiness')
+        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/readiness')
       initialDelaySeconds: 45
       periodSeconds: 10
       timeoutSeconds: 5
     volumeMounts:
     - mountPath: /app/config.yaml
-      name: litellm-config
+      name: litellm-rendered
       subPath: config.yaml
     - mountPath: /app/entrypoint.py
-      name: litellm-config
+      name: litellm-rendered
       subPath: entrypoint.py
     - mountPath: /config/.env
       name: env-file
@@ -83,7 +97,7 @@ spec:
       name: gemini-secrets
   # LLM Triage Router — classification + routing gateway
   - args:
-    - set -a && . /config/.env && set +a && exec uvicorn main:app --host 0.0.0.0 --port 5000 --log-level ${LOG_LEVEL:-warning}
+    - set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level ${LOG_LEVEL:-warning}
     command:
     - /bin/sh
     - -c
@@ -93,7 +107,7 @@ spec:
     - name: LITELLM_CONFIG_PATH
       value: /config/litellm_dir/config.yaml
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/postgres
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/postgres
     - name: DBUS_SESSION_BUS_ADDRESS
       value: unix:path=RUN_USER_PLACEHOLDER/bus
     - name: LITELLM_MASTER_KEY
@@ -103,22 +117,30 @@ spec:
     - name: LANGFUSE_SECRET_KEY
       value: LANGFUSE_SECRET_KEY_PLACEHOLDER
     - name: LANGFUSE_HOST
-      value: http://127.0.0.1:3001
+      value: http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
     - name: PUBLIC_BASE_URL
       value: PUBLIC_BASE_URL_PLACEHOLDER
     - name: ROUTING_DOMAIN
       value: ROUTING_DOMAIN_PLACEHOLDER
+    - name: LITELLM_PORT
+      value: 'LITELLM_PORT_PLACEHOLDER'
+    - name: VALKEY_CACHE_PORT
+      value: 'VALKEY_CACHE_PORT_PLACEHOLDER'
+    - name: ROUTER_PORT
+      value: 'ROUTER_PORT_PLACEHOLDER'
+    - name: LANGFUSE_WEB_PORT
+      value: 'LANGFUSE_WEB_PORT_PLACEHOLDER'
     - name: LOG_LEVEL
       value: info
-    image: localhost/llm-triage-router:latest
+    image: ROUTER_IMAGE_PLACEHOLDER
     livenessProbe:
       exec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
+        - import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics')
       initialDelaySeconds: 20
       periodSeconds: 15
       timeoutSeconds: 5
@@ -128,7 +150,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:5000/metrics')
+        - import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics')
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
@@ -136,7 +158,7 @@ spec:
     - mountPath: /config/router_dir
       name: router-config
     - mountPath: /config/litellm_dir
-      name: litellm-config
+      name: litellm-rendered
     - mountPath: /app/data
       name: dataset-data
     - mountPath: /config/gemini_auth
@@ -167,6 +189,8 @@ spec:
       value: langfuse
     - name: PGDATA
       value: /var/lib/postgresql/data/pg18
+    - name: PGPORT
+      value: 'POSTGRES_PORT_PLACEHOLDER'
     image: docker.io/pgvector/pgvector:0.8.3-pg18
     livenessProbe:
       exec:
@@ -174,6 +198,8 @@ spec:
         - pg_isready
         - -U
         - postgres
+        - -p
+        - 'POSTGRES_PORT_PLACEHOLDER'
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
@@ -184,6 +210,8 @@ spec:
         - pg_isready
         - -U
         - postgres
+        - -p
+        - 'POSTGRES_PORT_PLACEHOLDER'
       initialDelaySeconds: 5
       periodSeconds: 5
       timeoutSeconds: 5
@@ -203,6 +231,10 @@ spec:
       exec:
         command:
         - clickhouse-client
+        - --host
+        - 127.0.0.1
+        - --port
+        - 'CLICKHOUSE_TCP_PORT_PLACEHOLDER'
         - --user
         - clickhouse
         - --password
@@ -217,6 +249,10 @@ spec:
       exec:
         command:
         - clickhouse-client
+        - --host
+        - 127.0.0.1
+        - --port
+        - 'CLICKHOUSE_TCP_PORT_PLACEHOLDER'
         - --user
         - clickhouse
         - --password
@@ -230,23 +266,32 @@ spec:
     volumeMounts:
     - mountPath: /var/lib/clickhouse
       name: clickhouse-storage
+    - mountPath: /etc/clickhouse-server/config.d/port-override.xml
+      name: clickhouse-port-config
+      subPath: port-override.xml
   # Valkey LF — Langfuse v3 BullMQ job queue
   - command:
     - redis-server
     - --bind
     - 127.0.0.1
     - --port
-    - '6380'
+    - 'VALKEY_LF_PORT_PLACEHOLDER'
     - --requirepass
     - REDIS_AUTH_PLACEHOLDER
     - --maxmemory-policy
     - noeviction
     - --loglevel
     - warning
-    image: docker.io/valkey/valkey:9.1.0-alpine
+    image: docker.io/valkey/valkey:9.1.0
     livenessProbe:
-      tcpSocket:
-        port: 6380
+      exec:
+        command:
+        - valkey-cli
+        - -p
+        - "VALKEY_LF_PORT_PLACEHOLDER"
+        - -a
+        - REDIS_AUTH_PLACEHOLDER
+        - ping
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 2
@@ -256,7 +301,7 @@ spec:
         command:
         - valkey-cli
         - -p
-        - "6380"
+        - "VALKEY_LF_PORT_PLACEHOLDER"
         - -a
         - REDIS_AUTH_PLACEHOLDER
         - ping
@@ -269,11 +314,11 @@ spec:
   # Langfuse Web — observability dashboard
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/langfuse
     - name: NEXTAUTH_SECRET
       value: NEXTAUTH_SECRET_PLACEHOLDER
     - name: NEXTAUTH_URL
-      value: NEXTAUTH_URL_PLACEHOLDER
+      value: http://localhost:LANGFUSE_WEB_PORT_PLACEHOLDER
     - name: SALT
       value: SALT_PLACEHOLDER
     - name: ENCRYPTION_KEY
@@ -281,7 +326,7 @@ spec:
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
-      value: '3001'
+      value: 'LANGFUSE_WEB_PORT_PLACEHOLDER'
     - name: TELEMETRY_ENABLED
       value: 'false'
     - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
@@ -293,13 +338,13 @@ spec:
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
       value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
-      value: http://127.0.0.1:9002
+      value: http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER
     - name: S3_FORCE_PATH_STYLE
       value: 'true'
     - name: CLICKHOUSE_URL
-      value: http://127.0.0.1:8123
+      value: http://127.0.0.1:CLICKHOUSE_HTTP_PORT_PLACEHOLDER
     - name: CLICKHOUSE_MIGRATION_URL
-      value: clickhouse://127.0.0.1:9000
+      value: clickhouse://127.0.0.1:CLICKHOUSE_TCP_PORT_PLACEHOLDER
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
@@ -309,7 +354,7 @@ spec:
     - name: REDIS_HOST
       value: 127.0.0.1
     - name: REDIS_PORT
-      value: '6380'
+      value: 'VALKEY_LF_PORT_PLACEHOLDER'
     - name: REDIS_AUTH
       value: REDIS_AUTH_PLACEHOLDER
     - name: LANGFUSE_INIT_ORG_ID
@@ -334,7 +379,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3001/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -346,16 +391,16 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:3001/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
   # Langfuse Worker — background job processor
   - env:
     - name: DATABASE_URL
-      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:5432/langfuse
+      value: postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/langfuse
     - name: CLICKHOUSE_URL
-      value: http://127.0.0.1:8123
+      value: http://127.0.0.1:CLICKHOUSE_HTTP_PORT_PLACEHOLDER
     - name: CLICKHOUSE_USER
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
@@ -365,13 +410,13 @@ spec:
     - name: REDIS_HOST
       value: 127.0.0.1
     - name: REDIS_PORT
-      value: '6380'
+      value: 'VALKEY_LF_PORT_PLACEHOLDER'
     - name: REDIS_AUTH
       value: REDIS_AUTH_PLACEHOLDER
     - name: HOSTNAME
       value: 0.0.0.0
     - name: PORT
-      value: '3030'
+      value: 'LANGFUSE_WORKER_PORT_PLACEHOLDER'
     - name: TELEMETRY_ENABLED
       value: 'false'
     - name: LANGFUSE_S3_EVENT_UPLOAD_BUCKET
@@ -383,7 +428,7 @@ spec:
     - name: S3_FORCE_PATH_STYLE
       value: 'true'
     - name: LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT
-      value: http://127.0.0.1:9002
+      value: http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER
     - name: LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY
       value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
@@ -404,9 +449,9 @@ spec:
     - --quiet
     - /data
     - --address
-    - ":9002"
+    - ":MINIO_S3_PORT_PLACEHOLDER"
     - --console-address
-    - ":9001"
+    - ":MINIO_CONSOLE_PORT_PLACEHOLDER"
     env:
     - name: MINIO_ROOT_USER
       value: MINIO_USER_PLACEHOLDER
@@ -416,7 +461,7 @@ spec:
     livenessProbe:
       httpGet:
         path: /minio/health/live
-        port: 9002
+        port: MINIO_S3_PORT_PLACEHOLDER
       initialDelaySeconds: 10
       periodSeconds: 15
       timeoutSeconds: 5
@@ -424,7 +469,7 @@ spec:
     readinessProbe:
       httpGet:
         path: /minio/health/ready
-        port: 9002
+        port: MINIO_S3_PORT_PLACEHOLDER
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 5
@@ -435,25 +480,27 @@ spec:
   restartPolicy: Always
   volumes:
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/valkey-data
+      path: DATA_ROOT_PLACEHOLDER/valkey-data
     name: valkey-storage
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/litellm
-    name: litellm-config
+      path: DATA_ROOT_PLACEHOLDER/litellm-rendered
+      type: DirectoryOrCreate
+    name: litellm-rendered
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/router
+      path: DATA_ROOT_PLACEHOLDER/router-rendered
+      type: DirectoryOrCreate
     name: router-config
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/postgres-data
+      path: DATA_ROOT_PLACEHOLDER/postgres-data
     name: postgres-storage
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/clickhouse-data
+      path: DATA_ROOT_PLACEHOLDER/clickhouse-data
     name: clickhouse-storage
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/redis-lf-data
+      path: DATA_ROOT_PLACEHOLDER/redis-lf-data
     name: redis-lf-storage
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/minio-data
+      path: DATA_ROOT_PLACEHOLDER/minio-data
     name: minio-storage
   - hostPath:
       path: HOME_PLACEHOLDER/.gemini
@@ -477,6 +524,10 @@ spec:
       path: WORKDIR_PLACEHOLDER
     name: env-file
   - hostPath:
-      path: WORKDIR_PLACEHOLDER/data
+      path: DATA_ROOT_PLACEHOLDER/datasets
       type: DirectoryOrCreate
     name: dataset-data
+  - hostPath:
+      path: DATA_ROOT_PLACEHOLDER/clickhouse-config
+      type: DirectoryOrCreate
+    name: clickhouse-port-config

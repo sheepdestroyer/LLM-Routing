@@ -63,22 +63,34 @@ def test_get_redis_initialization_success(mock_redis, mock_monotonic):
 @patch("router.main.time.monotonic")
 @patch("router.main.logger.warning")
 @patch.dict(os.environ, {"VALKEY_HOST": "my-host", "VALKEY_PORT": "invalid"})
-def test_get_redis_initialization_failure(mock_logger_warning, mock_monotonic):
-    """If initialization fails, it should catch the exception, log a warning, and return None."""
+def test_valkey_port_invalid_fallback(mock_logger_warning, mock_monotonic):
+    """_valkey_port() should log a warning and fall back to 6379 on invalid port."""
+    port = main._valkey_port()
+    assert port == 6379
+    mock_logger_warning.assert_called_once()
+    assert "Invalid Valkey port" in mock_logger_warning.call_args[0][0]
+
+@patch("router.main.time.monotonic")
+@patch("router.main.aioredis.Redis")
+@patch("router.main.logger.warning")
+@patch.dict(os.environ, {"VALKEY_HOST": "my-host", "VALKEY_PORT": "1234"})
+def test_get_redis_initialization_failure(mock_logger_warning, mock_redis, mock_monotonic):
+    """If aioredis.Redis throws, it should catch the exception, log a warning, and return None."""
     main._redis_client = None
     main._redis_last_init_attempt = 100.0
 
     # Time elapsed is 10.0 seconds
     mock_monotonic.return_value = 110.0
 
-    # The int() conversion of VALKEY_PORT will raise ValueError
+    mock_redis.side_effect = Exception("Connection refused")
+
     client = main.get_redis()
 
     assert client is None
     assert main._redis_client is None
     assert main._redis_last_init_attempt == 110.0
     mock_logger_warning.assert_called_once()
-    assert "Failed to initialize Valkey client" in mock_logger_warning.call_args[0][0]
+    assert "Connection refused" in mock_logger_warning.call_args[0][0]
 
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis")
