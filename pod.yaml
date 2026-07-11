@@ -128,6 +128,10 @@ spec:
       value: 'LITELLM_PORT_PLACEHOLDER'
     - name: VALKEY_CACHE_PORT
       value: 'VALKEY_CACHE_PORT_PLACEHOLDER'
+    - name: ROUTER_PORT
+      value: 'ROUTER_PORT_PLACEHOLDER'
+    - name: LANGFUSE_WEB_PORT
+      value: 'LANGFUSE_WEB_PORT_PLACEHOLDER'
     - name: LOG_LEVEL
       value: info
     image: ROUTER_IMAGE_PLACEHOLDER
