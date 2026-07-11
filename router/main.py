@@ -66,7 +66,7 @@ def get_redis():
                 logger.info("Valkey client initialized from URL")
             else:
                 host = os.getenv("VALKEY_HOST", "127.0.0.1")
-                port = int(_valkey_port())
+                port = _valkey_port()
                 _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
                 logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
