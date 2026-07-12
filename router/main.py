@@ -118,12 +118,16 @@ def get_classifier_client():
     global _classifier_client
     if _classifier_client is None:
         ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
-        if ca_bundle is not None and ca_bundle.strip().lower() in ("false", "0", "off", "no"):
-            verify = False
-        elif ca_bundle is not None and ca_bundle.strip().lower() in ("true", "1", "on", "yes"):
-            verify = True
+        if ca_bundle is not None:
+            ca_bundle_stripped = ca_bundle.strip()
+            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", ""):
+                verify = False
+            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
+                verify = True
+            else:
+                verify = ca_bundle_stripped
         else:
-            verify = ca_bundle or False
+            verify = False
         _classifier_client = httpx.AsyncClient(
             limits=_http_limits(), timeout=3600.0, verify=verify
         )
@@ -376,21 +380,25 @@ host = config.get("server", {}).get("host", "0.0.0.0")
 port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
-router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
-if isinstance(router_api_base, str) and router_api_base.startswith("os.environ/"):
-    env_var = router_api_base.split("/", 1)[1]
-    router_api_base = os.environ.get(env_var, "")
-    if not router_api_base:
-        if "pytest" in sys.modules:
-            router_api_base = "http://127.0.0.1:8080/v1"
-        else:
-            raise RuntimeError(
-                f"Configuration error: Environment variable '{env_var}' is missing or empty."
-            )
+router_api_base = router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
+if isinstance(router_api_base, str):
+    if router_api_base.startswith("os.environ/"):
+        env_var = router_api_base.split("/", 1)[1]
+        router_api_base = os.environ.get(env_var, "")
+        if not router_api_base:
+            if "pytest" in sys.modules:
+                router_api_base = "http://127.0.0.1:8080/v1"
+            else:
+                raise RuntimeError(
+                    f"Configuration error: Environment variable '{env_var}' is missing or empty."
+                )
+    router_api_base = router_api_base.rstrip("/")
 
 router_api_key = router_model_conf.get("api_key")
 if not router_api_key:
     raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
+if not isinstance(router_api_key, str):
+    router_api_key = str(router_api_key)
 if router_api_key.startswith("os.environ/"):
     env_var = router_api_key.split("/", 1)[1]
     router_api_key = os.environ.get(env_var)
