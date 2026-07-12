@@ -4,10 +4,7 @@ import json, urllib.request, time
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
-try:
-    from scripts.chat_helpers import parse_chat_response
-except ImportError:
-    from chat_helpers import parse_chat_response
+from scripts.chat_helpers import parse_chat_response
 
 PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.
 

@@ -8,8 +8,8 @@ router_path = os.path.join(os.getcwd(), "router")
 if router_path not in sys.path:
     sys.path.insert(0, router_path)
 
-import main
-from main import resolve_external_urls
+from router import main
+from router.main import resolve_external_urls
 
 
 class MockRequest:

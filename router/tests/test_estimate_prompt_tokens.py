@@ -1,5 +1,5 @@
 import pytest
-from main import estimate_prompt_tokens
+from router.main import estimate_prompt_tokens
 
 def test_estimate_prompt_tokens_empty():
     assert estimate_prompt_tokens({}) == 50

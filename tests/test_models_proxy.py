@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
+from router.main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
 
 def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
-    import main
+    from router import main
     import httpx
 
     original_init = httpx.Limits.__init__
@@ -43,7 +43,7 @@ async def test_proxy_models_success():
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
 
-    with patch("main.get_http_client", return_value=mock_client):
+    with patch("router.main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, JSONResponse)
         assert response.status_code == 200
@@ -67,7 +67,7 @@ async def test_proxy_models_error_status():
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
 
-    with patch("main.get_http_client", return_value=mock_client):
+    with patch("router.main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, Response)
         assert response.status_code == 500
@@ -85,7 +85,7 @@ async def test_proxy_models_invalid_json():
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_resp
 
-    with patch("main.get_http_client", return_value=mock_client):
+    with patch("router.main.get_http_client", return_value=mock_client):
         response = await proxy_models()
         assert isinstance(response, Response)
         assert response.status_code == 200

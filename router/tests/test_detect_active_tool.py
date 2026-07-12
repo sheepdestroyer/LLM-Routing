@@ -1,5 +1,5 @@
 import pytest
-from main import detect_active_tool
+from router.main import detect_active_tool
 
 def test_detect_active_tool_empty():
     assert detect_active_tool({}) == "none"

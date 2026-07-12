@@ -8,10 +8,7 @@ from pathlib import Path
 from collections import Counter
 
 # Shared chat response parser (used by verification scripts too)
-try:
-    from scripts.chat_helpers import parse_chat_response
-except ImportError:
-    from chat_helpers import parse_chat_response
+from scripts.chat_helpers import parse_chat_response
 
 TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
 

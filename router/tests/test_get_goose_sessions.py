@@ -2,7 +2,7 @@ import pytest
 import sys
 from unittest.mock import patch, MagicMock
 
-from main import get_goose_sessions
+from router.main import get_goose_sessions
 
 def test_get_goose_sessions_no_db():
     with patch('os.path.exists', return_value=False):

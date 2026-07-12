@@ -7,10 +7,7 @@ from collections import defaultdict, Counter
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
-try:
-    from scripts.chat_helpers import parse_chat_response
-except ImportError:
-    from chat_helpers import parse_chat_response
+from scripts.chat_helpers import parse_chat_response
 
 # Load dataset
 dataset_path = Path(__file__).resolve().parent.parent / "data" / "classified_dataset.json"

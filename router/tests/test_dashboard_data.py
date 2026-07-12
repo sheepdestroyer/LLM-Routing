@@ -10,18 +10,18 @@ async def test_get_dashboard_data_structure():
     if router_path not in sys.path:
         sys.path.insert(0, router_path)
 
-    import main
+    from router import main
 
     # Mocking all I/O and external calls
-    with patch("main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync, \
-         patch("main.check_tcp_port", new_callable=AsyncMock) as mock_tcp, \
-         patch("main.check_http_endpoint", new_callable=AsyncMock) as mock_http, \
-         patch("main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth, \
-         patch("main.get_best_free_model", new_callable=AsyncMock) as mock_best_model, \
-         patch("main.get_goose_sessions") as mock_goose, \
-         patch("main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp, \
-         patch("main.get_pie_chart_gradient") as mock_gradient, \
-         patch("main.stats") as mock_stats:
+    with patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync, \
+         patch("router.main.check_tcp_port", new_callable=AsyncMock) as mock_tcp, \
+         patch("router.main.check_http_endpoint", new_callable=AsyncMock) as mock_http, \
+         patch("router.main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth, \
+         patch("router.main.get_best_free_model", new_callable=AsyncMock) as mock_best_model, \
+         patch("router.main.get_goose_sessions") as mock_goose, \
+         patch("router.main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp, \
+         patch("router.main.get_pie_chart_gradient") as mock_gradient, \
+         patch("router.main.stats") as mock_stats:
 
         # Setup mock return values
         mock_sync.return_value = None
