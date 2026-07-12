@@ -1,4 +1,4 @@
-"""Direct classification of Hermes prompts using gemma4-26a4b-routing."""
+"""Direct classification of Hermes prompts using qwen-4b-routing."""
 import os
 import json, urllib.request, time
 from pathlib import Path
@@ -27,7 +27,7 @@ TIERS = {
 def classify(prompt):
     """Query the llama-server to classify the prompt task complexity."""
     payload = {
-        "model": "gemma4-26a4b-routing",
+        "model": "qwen-4b-routing",
         "messages": [{"role": "user", "content": PROMPT_TEMPLATE + prompt}],
         "temperature": 0.0,
         "max_tokens": 15,
@@ -47,7 +47,7 @@ data_dir = Path(__file__).resolve().parent.parent / "data"
 with open(data_dir / "raw_prompts_hermes.json") as f:
     prompts = json.load(f)
 
-print(f"Classifying {len(prompts)} prompts with gemma4-26a4b-routing...")
+print(f"Classifying {len(prompts)} prompts with qwen-4b-routing...")
 
 results = []
 errors = 0

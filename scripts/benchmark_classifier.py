@@ -1,4 +1,4 @@
-"""Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
+"""Benchmark qwen-4b-routing classifier against labeled dataset."""
 import os
 import json, urllib.request, urllib.error, time
 import concurrent.futures
@@ -34,9 +34,9 @@ TIERS = [
 ]
 
 def classify(prompt):
-    """Call gemma4-26a4b-routing via llama-server."""
+    """Call qwen-4b-routing via llama-server."""
     payload = {
-        "model": "gemma4-26a4b-routing",
+        "model": "qwen-4b-routing",
         "messages": [{"role": "user", "content": PROMPT_TEMPLATE + prompt}],
         "temperature": 0.0,
         "max_tokens": 15,
@@ -52,7 +52,7 @@ def classify(prompt):
     return content if content else "ERROR"
 
 total = len(dataset.get("prompts", []))
-print(f"Benchmark: gemma4-26a4b-routing vs {total} labeled prompts\n")
+print(f"Benchmark: qwen-4b-routing vs {total} labeled prompts\n")
 
 # Run classification
 results = []
@@ -168,7 +168,7 @@ for exp_tier in TIERS:
 out_path = Path(__file__).resolve().parent.parent / "data" / "benchmark_results.json"
 with open(out_path, 'w') as f:
     json.dump({
-        "classifier": "gemma4-26a4b-routing",
+        "classifier": "qwen-4b-routing",
         "dataset_total": total,
         "overall_accuracy": round(overall, 1),
         "per_tier": {t: {

@@ -388,7 +388,7 @@ if router_api_key.startswith("os.environ/"):
             router_api_key = "local-token"
         else:
             raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
-router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
+router_model_name = router_model_conf.get("model", "qwen-4b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}

@@ -17,7 +17,7 @@ graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
 
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
-        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-2b-routing)"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-4b-routing)"]
         Router -->|"2. agy Proxy (Gemini/Claude)"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
 
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
@@ -109,7 +109,7 @@ sequenceDiagram
     Router->>Router: Check model name → decide route
 
     alt Model = llm-routing-auto-free / auto-agy / auto-ollama / auto-agy-ollama
-        Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-2b-routing)
+        Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-4b-routing)
         Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
     else Model = direct tier (agent-*-core / llm-routing-agy / llm-routing-ollama)
         Note over Router: Skip classifier, use model as tier
@@ -279,7 +279,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
 - **`drop_params: true`**: Automatically strips unsupported arguments when transitioning to models that don't support them.
 - **Request Timeouts (`300s`)**: Provides ample padding to prevent connection aborts during dynamic RAM swapping operations on the local GPU `llama-server`.
-- **Local Embedding Model (`local-nomic-embed`)**: A zero-cost embedding model (`nomic-embed-text-v1.5-Q4_K_M`, ~137MB GGUF) running on llama-server. Configured in `litellm/config.yaml` with `api_base: http://127.0.0.1:8080/v1`. Used by `vector_store_settings` for semantic cache similarity search, replacing paid OpenRouter embeddings.
+- **Local Embedding Model (`local-nomic-embed`)**: A zero-cost embedding model (`nomic-embed-text-v1.5-Q4_K_M`, ~137MB GGUF) running on llama-server. Configured in `litellm/config.yaml` with `api_base` set via `LLAMA_CLASSIFIER_URL` env var (resolved at deploy time from `.env`). Used by `vector_store_settings` for semantic cache similarity search, replacing paid OpenRouter embeddings.
 - **`vector_store_settings`**: PostgreSQL-backed vector store for semantic caching, configured in `litellm/config.yaml`:
   - `store_type: "postgres"` — pgvector extension on the local PostgreSQL instance
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)

@@ -22,18 +22,18 @@ Task: """
 MAX_CHARS = 600  # proven safe across all prompt types in this dataset
 
 def get_model_port():
-    """Discover the gemma4-26a4b-routing model's direct port (bypass router prompt-cache bug)."""
+    """Discover the qwen-4b-routing model's direct port (bypass router prompt-cache bug)."""
     req = urllib.request.Request('http://127.0.0.1:8080/v1/models')
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read())
     for m in data.get('data', []):
-        if 'gemma4-26a4b' in m.get('id', ''):
+        if 'qwen-4b-routing' in m.get('id', ''):
             status_obj = m.get('status') or {}
             args = status_obj.get('args', []) if isinstance(status_obj, dict) else []
             for i, v in enumerate(args):
                 if v == '--port' and i + 1 < len(args):
                     return args[i + 1]
-    raise RuntimeError("gemma4-26a4b-routing model port not found")
+    raise RuntimeError("qwen-4b-routing model port not found")
 
 MODEL_PORT = get_model_port()
 MODEL_URL = f"http://127.0.0.1:{MODEL_PORT}/v1/chat/completions"
@@ -44,7 +44,7 @@ def classify(prompt):
     if len(prompt) > MAX_CHARS:
         prompt = prompt[:MAX_CHARS]
     payload = {
-        "model": "gemma4-26a4b-routing",
+        "model": "qwen-4b-routing",
         "messages": [{"role": "user", "content": PROMPT_TEMPLATE + prompt}],
         "temperature": 0.0,
         "max_tokens": 15,
