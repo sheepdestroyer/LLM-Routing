@@ -117,7 +117,13 @@ def get_classifier_client():
     """
     global _classifier_client
     if _classifier_client is None:
-        verify = os.getenv("CLASSIFIER_CA_BUNDLE") or False
+        ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
+        if ca_bundle is not None and ca_bundle.strip().lower() in ("false", "0", "off", "no"):
+            verify = False
+        elif ca_bundle is not None and ca_bundle.strip().lower() in ("true", "1", "on", "yes"):
+            verify = True
+        else:
+            verify = ca_bundle or False
         _classifier_client = httpx.AsyncClient(
             limits=_http_limits(), timeout=3600.0, verify=verify
         )
@@ -371,7 +377,7 @@ port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
-if router_api_base.startswith("os.environ/"):
+if isinstance(router_api_base, str) and router_api_base.startswith("os.environ/"):
     env_var = router_api_base.split("/", 1)[1]
     router_api_base = os.environ.get(env_var, "")
     if not router_api_base:
