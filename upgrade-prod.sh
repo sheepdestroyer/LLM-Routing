@@ -24,8 +24,8 @@ fi
 
 # ── centralized cleanup ──
 cleanup() {
-    rm -rf "${TEMP_DIR:-}"
-    rm -f "${UPGRADE_PROD_SELF_PATH:-}"
+    [[ -n "${TEMP_DIR:-}" ]] && rm -rf "$TEMP_DIR"
+    [[ -n "${UPGRADE_PROD_SELF_PATH:-}" ]] && rm -f "$UPGRADE_PROD_SELF_PATH"
 }
 trap cleanup EXIT
 
@@ -64,7 +64,7 @@ echo "🏷  Target release: $TAG"
 TEMP_DIR=$(mktemp -d /tmp/llm-routing-upgrade.XXXXXX)
 
 echo "📥 Cloning $REPO @ $TAG..."
-git clone --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR" 2>&1 | tail -1
+git clone -q --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR"
 
 # ── verify the tag has the files we need ──
 for f in pod.yaml start-stack.sh litellm/ router/ scripts/; do
@@ -131,14 +131,10 @@ if [ ${#missing_vars[@]} -gt 0 ]; then
     exit 1
 fi
 
-# ── stop the pod gracefully before touching files ──
-POD_NAME="${POD_NAME:-agent-router-pod}"
-if podman pod exists "$POD_NAME" 2>/dev/null; then
-    echo "🛑 Stopping $POD_NAME (SIGTERM, 30s)..."
-    podman pod stop -t 30 "$POD_NAME" 2>/dev/null || true
-fi
-
 # ── rsync runtime files ──
+# The pod stays running during rsync — it only uses rendered configs from
+# DATA_ROOT, not the source files being synced. start-stack.sh --pull
+# handles graceful shutdown (including pre-deploy backup) before redeploy.
 echo "📋 Syncing runtime files..."
 # Sync directories with --delete (clean stale files within each dir)
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
