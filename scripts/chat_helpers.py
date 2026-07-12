@@ -22,11 +22,11 @@ def _normalize_chat_content(value: Any) -> str:
         parts: list[str] = []
         for item in value:
             if isinstance(item, str):
-                parts.append(item)
+                parts.append(item.strip())
             elif isinstance(item, dict):
                 text = item.get("text")
                 if isinstance(text, str):
-                    parts.append(text)
+                    parts.append(text.strip())
                 elif "content" in item:
                     nested = _normalize_chat_content(item.get("content"))
                     if nested:
