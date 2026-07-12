@@ -38,8 +38,10 @@ done
 if [ -z "$TAG" ]; then
     echo "🔍 Fetching latest release tag from $REPO..."
     TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) \
-        || { echo "❌ Failed to fetch latest release. Pass an explicit tag."; exit 1; }
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
+        echo "❌ Failed to fetch latest release. Pass an explicit tag."
+        exit 1
+    }
 fi
 echo "🏷  Target release: $TAG"
 
@@ -97,13 +99,13 @@ fi
 
 # ── rsync runtime files ──
 echo "📋 Syncing runtime files..."
-rsync -a --delete \
-    "$TEMP_DIR/pod.yaml" \
-    "$TEMP_DIR/start-stack.sh" \
-    "$TEMP_DIR/litellm" \
-    "$TEMP_DIR/router" \
-    "$TEMP_DIR/scripts" \
-    "$PROD_DIR/"
+# Sync directories with --delete (clean stale files within each dir)
+rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
+rsync -a --delete "$TEMP_DIR/router/" "$PROD_DIR/router/"
+rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
+# Sync files without --delete (no risk to surrounding files)
+rsync -a "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml"
+rsync -a "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh"
 
 echo "✓ Runtime files synced from $TAG"
 

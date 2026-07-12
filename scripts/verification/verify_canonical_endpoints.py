@@ -92,7 +92,8 @@ def test_router_endpoints(cfg: dict) -> tuple[int, int]:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
         ok = r.status_code == 200
         models = r.json() if ok else {}
-        model_ids = [m["id"] for m in models.get("data", [])] if isinstance(models, dict) else []
+        model_ids = [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m] \
+            if isinstance(models, dict) and isinstance(models.get("data"), list) else []
         ok = ok and len(model_ids) > 0
         passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
@@ -170,7 +171,8 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
         ok = r.status_code == 200
         models = r.json() if ok else {}
-        model_ids = [m["id"] for m in models.get("data", [])] if isinstance(models, dict) else []
+        model_ids = [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m] \
+            if isinstance(models, dict) and isinstance(models.get("data"), list) else []
         ok = ok and len(model_ids) > 0
         passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
@@ -199,7 +201,7 @@ def test_langfuse_endpoints(cfg: dict) -> tuple[int, int]:
     try:
         r = httpx.get(f"{base}/api/public/health", timeout=10)
         ok = r.status_code == 200
-        passed += check("/api/public/health", ok, r.json() if ok else r.text[:80])
+        passed += check("/api/public/health", ok, r.text[:80])
     except Exception as e:
         passed += check("/api/public/health", False, str(e))
 
