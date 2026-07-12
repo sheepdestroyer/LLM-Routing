@@ -98,6 +98,24 @@ def get_http_client():
     return _http_client
 
 
+_classifier_client: httpx.AsyncClient | None = None
+
+
+def get_classifier_client():
+    """Return a singleton httpx client for classifier calls (internal self-signed TLS)."""
+    global _classifier_client
+    if _classifier_client is None:
+        limits = httpx.Limits(
+            max_connections=HTTP_MAX_CONNECTIONS,
+            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+        )
+        _classifier_client = httpx.AsyncClient(
+            limits=limits, timeout=3600.0, verify=False
+        )
+    return _classifier_client
+
+
 # Compiled regular expressions for token estimation heuristics
 WORD_RE = re.compile(r'[a-zA-Z0-9]+')
 NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
@@ -345,6 +363,17 @@ port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
 router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
+if router_api_base.startswith("os.environ/"):
+    env_var = router_api_base.split("/", 1)[1]
+    router_api_base = os.environ.get(env_var, "")
+    if not router_api_base:
+        if "pytest" in sys.modules:
+            router_api_base = "http://127.0.0.1:8080/v1"
+        else:
+            raise RuntimeError(
+                f"Configuration error: Environment variable '{env_var}' is missing or empty."
+            )
+
 router_api_key = router_model_conf.get("api_key")
 if not router_api_key:
     raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
@@ -991,7 +1020,7 @@ async def classify_request(
                 return cached_decision, 0.0, True, cached_decision
 
         try:
-            client = get_http_client()
+            client = get_classifier_client()
             try:
                 max_chars = max(0, int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300")))
             except ValueError:
