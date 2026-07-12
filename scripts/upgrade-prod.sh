@@ -16,7 +16,7 @@ set -euo pipefail
 
 # ── self-copy guard: re-exec from /tmp so rsync can safely update this script ──
 if [[ "${UPGRADE_PROD_SELF_COPIED:-}" != "1" ]]; then
-    SELF="/tmp/upgrade-prod-$$.sh"
+    SELF=$(mktemp /tmp/upgrade-prod-XXXXXX.sh)
     cp "$0" "$SELF"
     chmod +x "$SELF"
     UPGRADE_PROD_SELF_COPIED=1 UPGRADE_PROD_SELF_PATH="$SELF" exec bash "$SELF" "$@"
