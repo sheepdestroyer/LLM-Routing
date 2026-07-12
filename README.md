@@ -76,13 +76,13 @@ All core containers are configured with **Kubernetes-style liveness and readines
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
-| **valkey-cache** | `tcpSocket` on port 6379 every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
+| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
-| **postgres-db** | `pg_isready -U postgres` every 10s | Same, every 5s |
+| **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
-| **valkey-lf** | `tcpSocket` on port 6380 every 10s | Same, every 5s |
-| **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
+| **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
+| **langfuse-web** | `wget` GET `/api/public/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
 
@@ -212,7 +212,7 @@ The gateway supports multiple routing modes controlled by the `model` field:
 All configurations, automation scripts, and databases are self-contained within this repository directory:
 
 ```
-/home/gpav/Vrac/LAB/AI/LLM-Routing/
+/path/to/LLM-Routing/
 ├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
@@ -234,6 +234,7 @@ All configurations, automation scripts, and databases are self-contained within 
 │   ├── backup.sh        # Database backup with pg_isready retry logic
 │   ├── benchmark_classifier.py # Classifier accuracy & latency benchmarks
 │   ├── benchmark_tokens.py     # Token-count ground-truth comparisons
+│   ├── upgrade-prod.sh  # Release-driven prod sync & redeploy
 │   └── verification/    # Live-stack E2E verification scripts
 ├── tests/               # Project-wide unit & integration tests
 ├── data/                # Reference datasets for benchmarks & tests
@@ -250,7 +251,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ## 4. Multi-Tier Gateway Configurations
 
 ### A. Custom Triage Router (`router/main.py`)
-Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local `qwen-2b-routing` (Vulkan offloaded Ryzen PRO APU).
+Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt complexity via the fast local routing model.
 - **Thinking Support**: Parses both `content` and `reasoning_content` API response fields to gracefully support local models configured with speculative decoding/thinking blocks.
 - **Reverse Proxy**: Preserves streaming payloads, header validation, and response signatures, passing incoming requests directly to the secondary LiteLLM proxy port.
 
@@ -284,7 +285,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
+  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
   ```mermaid
   graph TD
@@ -349,12 +350,21 @@ Connects directly to the high-performance local `valkey-cache` on port `6379`. L
 The stack also supports **semantic** (vector-similarity) caching via `vector_store_settings` in `litellm/config.yaml`:
 - **Embedding Model**: Zero-cost local `nomic-embed-text-v1.5-Q4_K_M` (~137MB GGUF) running on llama-server, loaded as `local-nomic-embed` in LiteLLM. Produces 768-dimension vectors with CLS pooling.
 - **Vector Store**: PostgreSQL with pgvector extension stores embeddings in the `litellm_semantic_cache` collection.
-- **Cost**: Completely free — no OpenRouter API calls for embedding generation. The model runs fully offloaded to GPU (`n-gpu-layers: 99`) on the Ryzen PRO APU.
-- **Configuration**: The nomic-embed model profile in `models.ini` (`/home/gpav/Vrac/LAB/AI/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
+- **Cost**: Completely free — no OpenRouter API calls for embedding generation.
+- **Configuration**: The nomic-embed model profile in `models.ini` (e.g., `/path/to/models.ini`) includes `embedding = true`, `pooling = cls`, and `embd-normalize = 2` for proper vector similarity search. llama-server runs with `--models-max 3` to keep the classifier (0.8B), MoE (35B), and embedding model loaded simultaneously.
 
 ---
 
 ## 5. Setup & Deployment Instructions
+
+### Production Deployment User
+For secure production deployments, the gateway services are configured to run under a dedicated, non-privileged (no sudo) service account:
+- **User**: `boy`
+- **Home Directory**: `/mnt/DATA/boy`
+- **Security Profile**: Completely without sudo privileges (no administrative or `wheel` group privileges) to minimize container breakout risks.
+- **Service Persistence**: Systemd user lingering is enabled (`loginctl enable-linger boy`) to allow the rootless services to start at boot and run persistently without active user sessions.
+- **Access**: Configured for direct SSH administration via authorized public keys in `/mnt/DATA/boy/.ssh/authorized_keys`. An SSH host configuration has been added to `~/.ssh/config` so you can connect simply via `ssh boy` (and a shell shortcut alias `boy` has been added to `~/.bashrc` to quickly access the host shell).
+- **Rootless Podman**: Fully configured with container subuids/subgids and a user-level Docker-compatible API socket (`podman.socket` listening at `/run/user/1002/podman/podman.sock`).
 
 ### Prerequisites
 1. **Llama-Server Active**: Verify that your local user-level GPU-accelerated server is active:
@@ -447,7 +457,7 @@ Uvicorn's log level follows the same env var via `${LOG_LEVEL:-warning}` in the 
 | `PrivateTmp` | `yes` | Isolates `/tmp` namespace for the daemon |
 | `PrivateDevices` | `yes` | Restricts access to `/dev` (no raw disk/device access) |
 | `ProtectSystem` | `strict` | Makes `/usr` and `/etc` read-only |
-| `ProtectHome` | `read-only` | `/home/gpav` is read-only except specific paths |
+| `ProtectHome` | `read-only` | The user home directory is read-only except specific paths |
 | `ProtectKernelTunables` | `yes` | Makes `/sys` and `/proc/sys` read-only |
 | `ProtectKernelModules` | `yes` | Blocks loading or listing kernel modules |
 | `ProtectControlGroups` | `yes` | Makes cgroup filesystem read-only |
@@ -710,10 +720,7 @@ Additional mounts required in `pod.yaml`:
 
 | Model | Env Var Value | Backend |
 |-------|---------------|---------|
-| Gemini 3.5 Flash | `""` (auto-select) | Cloud Code Assist (default) |
-| Claude Opus 4.6 | `claude-opus-4-6@default` | Anthropic premium tier |
-| Claude Sonnet 4.5 | `claude-sonnet-4-5@20250929` | Anthropic via Vertex AI |
-| Claude Haiku 4.5 | `claude-haiku-4-5@20251001` | Anthropic lightweight |
+| Gemini 3.5 Flash | - | Cloud Code Assist (default) |\n| Claude Opus 4.6 | - | Vendor (Anthropic) premium tier |\n| Claude Sonnet 4.6 | - | Vendor (Anthropic) mid tier |\n| GPT-OSS 120B | - | Vendor (OpenAI) low tier |
 
 ### Verification
 
@@ -744,15 +751,15 @@ To support low-latency streaming for agent clients (such as `goose-cli`), the ho
 * The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
 
 #### 2. Parallel Classification Slots (Lock-Free)
-To maximize throughput under concurrent queries, `llama-server` is configured with 4 parallel processing slots (`--parallel 4` in `models.ini`).
+To maximize throughput under concurrent queries, `llama-server` is configured with parallel processing slots (`--parallel` in `models.ini`, optimal value: To Determine).
 * The sequential `classification_lock` in `router/main.py` has been removed.
-* Triage queries are processed concurrently by the fast local `qwen-2b-routing` model.
+* Triage queries are processed concurrently by the fast local routing model.
 * Fast local memory caching is retained to bypass inference for exact repeat prompts.
 
 #### 3. Custom Memory Endpoint Proxy & MCP Server
 To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
 * **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
-* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](file:///home/gpav/Vrac/LAB/AI/LLM-Routing/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
+* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
 
 ## 9c. Ollama Proxy Integration (via LiteLLM ollama_chat)
@@ -816,22 +823,47 @@ Execute the verification script:
 ./scripts/verification/verify_reasoning_tiers.py
 ```
 
+### Canonical Endpoint Verification
+
+A comprehensive endpoint health check that validates all services across both prod and dev environments:
+
+```bash
+# Prod (default)
+python scripts/verification/verify_canonical_endpoints.py
+
+# Dev
+python scripts/verification/verify_canonical_endpoints.py --dev
+```
+
+Tests cover:
+
+| Section | Endpoints |
+|---------|-----------|
+| Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
+| LiteLLM | `/health/liveness`, `/health/readiness`, `/v1/models`, `/llm-routing/litellm/ui/` |
+| Langfuse | `/api/public/health`, `/` (web UI) |
+| Infrastructure | MinIO `/minio/health/live`, ClickHouse `/ping` |
+| E2E chat | 3 completions through triage router |
+| LiteLLM direct | 1 completion directly to LiteLLM |
+| Canonical URLs | 6 GET + 1 POST through public HTTPS (graceful DNS skip) |
+
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
+
 ## 10. Performance Benchmarks
 
 Through our local benchmarks, the following performance characteristics have been achieved:
 
 | Triage Evaluation Layer | Latency Footprint | Hardware Offload | Efficiency Ratio |
-| :--- | :---: | :---: | :---: |
-| **Cold-Run Triage** (First query) | ~15 - 24s | Dynamic HF Download | Includes GGUF fetch & initialization |
-| **Warm-Run Triage** (Local inference) | **~449 ms** | 100% Vulkan GPU (Ryzen APU) | **12x speedup** compared to 35B model |
+| :--- | :---: | :---: | :---: |\n| **Cold-Run Triage** (First query) | To Determine | Dynamic HF Download | Includes GGUF fetch & initialization |
+| **Warm-Run Triage** (Local inference) | To Determine | To Determine | To Determine |
 | **Triage Cache Hit** (Repeat query) | **0.0 ms** | RAM In-Memory TTL | Infinite speedup, zero backend requests |
-| **Valkey Gateway Cache Hit** | **< 10 ms** | Redis RAM Cache | Zero provider cost, immediate response |
+| **Valkey Gateway Cache Hit** | **< 10 ms** | Valkey RAM Cache | Zero provider cost, immediate response |
 
 ## 11. NotebookLM Companion Knowledge Base
 
 This project is supported by a dedicated NotebookLM companion notebook:
-* **Notebook Name:** `TriageGate-Architect-KB`
+* **Notebook Name:** `LLM-Routing-KB`
 * **Notebook ID:** llm-triage-gateway
-* **URL:** [TriageGate-Architect-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
+* **URL:** [LLM-Routing-KB](https://notebooklm.google.com/notebook/826cbd87-7969-4b0e-a38e-5517b5ab7d28)
 
 This notebook contains a comprehensive semantic index of the system architecture, LiteLLM cascades, Langfuse telemetry pipelines, local model configurations, and integration guides. Agents and developers can query this notebook via the `notebooklm` MCP tools (e.g., using `notebook_ask` with `notebook_id: "llm-triage-gateway"`) to retrieve structured knowledge, check pitfalls, or get implementation examples for this gateway stack.

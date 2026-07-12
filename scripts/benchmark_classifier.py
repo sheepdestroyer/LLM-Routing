@@ -6,6 +6,10 @@ import threading
 from collections import defaultdict, Counter
 from pathlib import Path
 
+# Shared chat response parser (used by verification scripts too)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.chat_helpers import parse_chat_response
+
 # Load dataset
 dataset_path = Path(__file__).resolve().parent.parent / "data" / "classified_dataset.json"
 with open(dataset_path) as f:
@@ -42,10 +46,8 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    choices = data.get("choices", [])
-    if not choices:
-        return "ERROR"
-    return choices[0].get("message", {}).get("content", "").strip()
+    content, _ = parse_chat_response(data)
+    return content if content else "ERROR"
 
 total = len(dataset.get("prompts", []))
 print(f"Benchmark: gemma4-26a4b-routing vs {total} labeled prompts\n")

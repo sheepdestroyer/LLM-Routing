@@ -1,7 +1,11 @@
 """Direct classification of Hermes prompts using gemma4-26a4b-routing."""
 import os
-import json, urllib.request, time
+import json, urllib.request, time, sys
 from pathlib import Path
+
+# Shared chat response parser (used by verification scripts too)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.chat_helpers import parse_chat_response
 
 PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.
 
@@ -33,7 +37,8 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"].get("content", "").strip()
+    content, _ = parse_chat_response(data)
+    return content if content else "ERROR"
 
 # Load prompts
 data_dir = Path(__file__).resolve().parent.parent / "data"

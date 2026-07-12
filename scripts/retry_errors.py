@@ -1,7 +1,11 @@
 """Retry the 94 failed prompts with 800-char truncation (safe for 4096-ctx model)."""
-import json, urllib.request, time, tempfile, os
+import json, urllib.request, time, tempfile, os, sys
 from pathlib import Path
 from collections import Counter
+
+# Shared chat response parser (used by verification scripts too)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.chat_helpers import parse_chat_response
 
 PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.
 
@@ -50,11 +54,10 @@ def classify(prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    choices = data.get("choices", [])
-    content = ""
-    if choices:
-        content = choices[0].get("message", {}).get("content", "").strip()
-    # Normalize: strip "tier:" prefix, extract just the tier name
+    content, _ = parse_chat_response(data)
+    if not content:
+        return "ERROR"
+    # retry_errors specific: normalize tier name
     for tier in TIERS:
         if tier in content:
             return tier
