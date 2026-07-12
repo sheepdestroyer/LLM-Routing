@@ -132,7 +132,6 @@ if serializer is not None:
 sys.stdout.flush()
 
 # Start LiteLLM Proxy
-import litellm
 from litellm.proxy.proxy_cli import run_server
 litellm_port = os.environ.get("LITELLM_PORT") or os.environ.get("PORT") or "4000"
 sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
