@@ -4,13 +4,9 @@
 # Exclude Podman runtime file generated dynamically at startup
 pod-run.yaml
 
-# Exclude persistent database and cache storages
-postgres-data/
-langfuse-data/
-valkey-data/
-clickhouse-data/
-minio-data/
-redis-lf-data/
+# Exclude persistent database and cache storages (all under data/)
+data/
+
 
 # Exclude auto-generated backups
 backups/
@@ -29,6 +25,9 @@ router/router_timeline.json
 router/best_free_model.json
 router/free_models_roster.json
 
+# Dev venv
+.venv/
+
 # agent artifacts
 .hermes/
 .jules/
@@ -36,7 +35,8 @@ router/free_models_roster.json
 workdirs/
 pr_description.txt
 
-# Dataset work in progress
-data/
+# Python virtual environment
+.venv/
+
 .cache/
 test_output*.log
