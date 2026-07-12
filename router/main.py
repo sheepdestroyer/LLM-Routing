@@ -88,16 +88,20 @@ HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
 _http_client = None
 
 
+def _http_limits() -> httpx.Limits:
+    """Shared connection limits for all httpx clients."""
+    return httpx.Limits(
+        max_connections=HTTP_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+    )
+
+
 def get_http_client():
     """Return the shared global httpx.AsyncClient singleton with configured limits."""
     global _http_client
     if _http_client is None:
-        limits = httpx.Limits(
-            max_connections=HTTP_MAX_CONNECTIONS,
-            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
-            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
-        )
-        _http_client = httpx.AsyncClient(limits=limits, timeout=3600.0)
+        _http_client = httpx.AsyncClient(limits=_http_limits(), timeout=3600.0)
     return _http_client
 
 
@@ -105,16 +109,17 @@ _classifier_client: httpx.AsyncClient | None = None
 
 
 def get_classifier_client():
-    """Return a singleton httpx client for classifier calls (internal self-signed TLS)."""
+    """Return a singleton httpx client for classifier calls (internal self-signed TLS).
+
+    By default verify is disabled because the classifier sits behind HAProxy with
+    a self-signed certificate on the internal network. Set CLASSIFIER_CA_BUNDLE
+    to a PEM file path to enable TLS verification (e.g. for CI or staging).
+    """
     global _classifier_client
     if _classifier_client is None:
-        limits = httpx.Limits(
-            max_connections=HTTP_MAX_CONNECTIONS,
-            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
-            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
-        )
+        verify = os.getenv("CLASSIFIER_CA_BUNDLE") or False
         _classifier_client = httpx.AsyncClient(
-            limits=limits, timeout=3600.0, verify=False
+            limits=_http_limits(), timeout=3600.0, verify=verify
         )
     return _classifier_client
 
@@ -941,6 +946,12 @@ async def lifespan(app: FastAPI):
         if _http_client is not None:
             await _http_client.aclose()
             _http_client = None
+
+        # Close classifier client
+        global _classifier_client
+        if _classifier_client is not None:
+            await _classifier_client.aclose()
+            _classifier_client = None
 
         # Close Redis client
         global _redis_client
