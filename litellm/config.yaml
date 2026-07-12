@@ -3,10 +3,10 @@ general_settings:
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → openrouter-auto
+  # Simple → medium → complex → reasoning → advanced → openrouter-auto → local-qwen-3.6
   # When one tier fails, LiteLLM tries the next model in the chain.
-  # All tiers fall back through increasingly capable models, then to openrouter-auto.
-  # local-qwen-3.6 (35B) disabled 2026-06-08 — frees 23GB RAM/GTT.
+  # Static safety-net entries in model_list (local-qwen-3.6 per tier) guarantee
+  # each agent tier has at least one deployment even during OpenRouter outages.
   # -------------------------------------------------------------------------
   cache: true
   cache_params:
@@ -149,6 +149,66 @@ model_list:
     input_cost_per_token: 0.00000014
     output_cost_per_token: 0.00000028
     is_public_model_group: true
+
+# ================================================================================
+# AGENT TIER STATIC SAFETY-NET — one local-qwen-3.6 deployment per tier.
+# The dynamic roster sync (router/main.py) is the PRIMARY source of agent-tier
+# deployments and registers AA-scored OpenRouter free models at startup via
+# LiteLLM's /model/new API. These static entries guarantee each tier has at
+# least one model (the local classifier) even if OpenRouter is unreachable at
+# startup — preventing cold-start "Model NotFoundError" failures.
+# ================================================================================
+
+- model_name: agent-advanced-core
+  litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 300
+  model_info:
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+- model_name: agent-reasoning-core
+  litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 300
+  model_info:
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+- model_name: agent-complex-core
+  litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 300
+  model_info:
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+- model_name: agent-medium-core
+  litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 300
+  model_info:
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+- model_name: agent-simple-core
+  litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 300
+  model_info:
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
 
 redis_settings:
   redis_host: 127.0.0.1
