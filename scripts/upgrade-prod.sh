@@ -115,7 +115,7 @@ set -a; source "$PROD_DIR/.env"; set +a
 
 missing_vars=()
 for var in OPENROUTER_API_KEY OLLAMA_API_KEY LLAMA_CLASSIFIER_URL PUBLIC_BASE_URL; do
-    if [ -z "${!var:-}" ]; then
+    if [[ ! -v "$var" ]] || [[ -z "${!var}" ]]; then
         missing_vars+=("$var")
     fi
 done
@@ -127,7 +127,7 @@ if [ ${#missing_vars[@]} -gt 0 ]; then
     done
     echo ""
     echo "Add them before upgrading. Example:"
-    echo "  echo '$var=your_value' >> $PROD_DIR/.env"
+    echo "  echo '${missing_vars[0]}=your_value' >> $PROD_DIR/.env"
     exit 1
 fi
 
