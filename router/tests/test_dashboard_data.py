@@ -1,15 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-import sys
-import os
 
 @pytest.mark.asyncio
 async def test_get_dashboard_data_structure():
-    # Ensure router directory is in sys.path
-    router_path = os.path.join(os.getcwd(), "router")
-    if router_path not in sys.path:
-        sys.path.insert(0, router_path)
-
     from router import main
 
     # Mocking all I/O and external calls
