@@ -5,7 +5,10 @@ import httpx
 from pathlib import Path
 
 WORKDIR = Path(__file__).resolve().parent.parent.parent
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    from ..chat_helpers import parse_chat_response
 
 URL = "http://localhost:5000/v1/chat/completions"
 

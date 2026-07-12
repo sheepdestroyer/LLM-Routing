@@ -1,5 +1,8 @@
 # Shared verification helpers for cooldown and routing tests
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    from ..chat_helpers import parse_chat_response
 import os
 import uuid
 import time
