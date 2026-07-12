@@ -24,8 +24,8 @@ fi
 
 # ── centralized cleanup ──
 cleanup() {
-    rm -rf "${TEMP_DIR:-}"
-    rm -f "${UPGRADE_PROD_SELF_PATH:-}"
+    [[ -n "${TEMP_DIR:-}" ]] && rm -rf "$TEMP_DIR"
+    [[ -n "${UPGRADE_PROD_SELF_PATH:-}" ]] && rm -f "$UPGRADE_PROD_SELF_PATH"
 }
 trap cleanup EXIT
 
@@ -64,7 +64,7 @@ echo "🏷  Target release: $TAG"
 TEMP_DIR=$(mktemp -d /tmp/llm-routing-upgrade.XXXXXX)
 
 echo "📥 Cloning $REPO @ $TAG..."
-git clone --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR" 2>&1 | tail -1
+git clone -q --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR"
 
 # ── verify the tag has the files we need ──
 for f in pod.yaml start-stack.sh litellm/ router/ scripts/; do
@@ -104,20 +104,41 @@ else
     echo "Non-interactive shell detected, proceeding with upgrade..."
 fi
 
-# ── pre-flight: validate PROD_DIR ──
+# ── pre-flight: validate PROD_DIR and required env vars ──
 if [ ! -f "$PROD_DIR/.env" ]; then
     echo "❌ $PROD_DIR/.env not found. Is PROD_DIR correct?"
     exit 1
 fi
 
-# ── stop the pod gracefully before touching files ──
-POD_NAME="${POD_NAME:-agent-router-pod}"
-if podman pod exists "$POD_NAME" 2>/dev/null; then
-    echo "🛑 Stopping $POD_NAME (SIGTERM, 30s)..."
-    podman pod stop -t 30 "$POD_NAME" 2>/dev/null || true
+# Source .env to validate required vars are present
+# Temporarily disable set -u: .env files may contain unbound variable references
+# (e.g., FOO=$BAR where BAR is unset) that would crash with set -u active.
+set +u
+set -a; source "$PROD_DIR/.env"; set +a
+set -u
+
+missing_vars=()
+for var in OPENROUTER_API_KEY OLLAMA_API_KEY LLAMA_CLASSIFIER_URL; do
+    if [[ ! -v "$var" ]] || [[ -z "${!var}" ]]; then
+        missing_vars+=("$var")
+    fi
+done
+
+if [ ${#missing_vars[@]} -gt 0 ]; then
+    echo "❌ Missing required env vars in $PROD_DIR/.env:"
+    for var in "${missing_vars[@]}"; do
+        echo "   - $var"
+    done
+    echo ""
+    echo "Add them before upgrading. Example:"
+    echo "  echo '${missing_vars[0]}=your_value' >> $PROD_DIR/.env"
+    exit 1
 fi
 
 # ── rsync runtime files ──
+# The pod stays running during rsync — it only uses rendered configs from
+# DATA_ROOT, not the source files being synced. start-stack.sh --pull
+# handles graceful shutdown (including pre-deploy backup) before redeploy.
 echo "📋 Syncing runtime files..."
 # Sync directories with --delete (clean stale files within each dir)
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
