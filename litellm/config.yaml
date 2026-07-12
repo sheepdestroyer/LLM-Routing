@@ -90,15 +90,15 @@ model_list:
     max_input_tokens: 524288
     is_public_model_group: true
 
-# Re-enabled 2026-07-08 — llama.cpp on port 8081, alias local-qwen-3.6
+# Re-enabled 2026-07-08 — llama.cpp, canonical endpoint set via .env
 - litellm_params:
-    api_base: http://127.0.0.1:8081/v1
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-3.6
     request_timeout: 300
   model_name: local-qwen-3.6
 - litellm_params:
-    api_base: http://127.0.0.1:8080/v1
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/nomic-embed-text-v1.5-Q4_K_M
     request_timeout: 30
