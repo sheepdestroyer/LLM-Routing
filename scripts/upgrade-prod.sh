@@ -118,7 +118,7 @@ set -a; source "$PROD_DIR/.env"; set +a
 set -u
 
 missing_vars=()
-for var in OPENROUTER_API_KEY OLLAMA_API_KEY LLAMA_CLASSIFIER_URL PUBLIC_BASE_URL; do
+for var in OPENROUTER_API_KEY OLLAMA_API_KEY LLAMA_CLASSIFIER_URL; do
     if [[ ! -v "$var" ]] || [[ -z "${!var}" ]]; then
         missing_vars+=("$var")
     fi
