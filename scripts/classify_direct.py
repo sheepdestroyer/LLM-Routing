@@ -1,10 +1,9 @@
 """Direct classification of Hermes prompts using gemma4-26a4b-routing."""
 import os
-import json, urllib.request, time, sys
+import json, urllib.request, time
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.chat_helpers import parse_chat_response
 
 PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.

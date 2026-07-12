@@ -1,13 +1,12 @@
 """Benchmark gemma4-26a4b-routing classifier against labeled dataset."""
 import os
-import json, urllib.request, urllib.error, time, sys
+import json, urllib.request, urllib.error, time
 import concurrent.futures
 import threading
 from collections import defaultdict, Counter
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.chat_helpers import parse_chat_response
 
 # Load dataset
