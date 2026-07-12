@@ -3,7 +3,7 @@ general_settings:
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → openrouter-auto → local-qwen-3.6
+  # Simple → medium → complex → reasoning → advanced → local-qwen-3.6 → ollama → openrouter-auto
   # When one tier fails, LiteLLM tries the next model in the chain.
   # Static safety-net entries in model_list (local-qwen-3.6 per tier) guarantee
   # each agent tier has at least one deployment even during OpenRouter outages.
@@ -36,31 +36,31 @@ litellm_settings:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-reasoning-core:
     - agent-advanced-core
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-advanced-core:
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
 
 model_list:
 - litellm_params:
@@ -169,6 +169,10 @@ model_list:
     mode: chat
     max_tokens: 524288
     max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
+    is_public_model_group: true
 - model_name: agent-reasoning-core
   litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -179,6 +183,10 @@ model_list:
     mode: chat
     max_tokens: 524288
     max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
+    is_public_model_group: true
 - model_name: agent-complex-core
   litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -189,6 +197,10 @@ model_list:
     mode: chat
     max_tokens: 524288
     max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
+    is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -199,6 +211,10 @@ model_list:
     mode: chat
     max_tokens: 524288
     max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
+    is_public_model_group: true
 - model_name: agent-simple-core
   litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -209,6 +225,10 @@ model_list:
     mode: chat
     max_tokens: 524288
     max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
+    is_public_model_group: true
 
 redis_settings:
   redis_host: 127.0.0.1
