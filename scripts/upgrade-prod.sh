@@ -111,7 +111,11 @@ if [ ! -f "$PROD_DIR/.env" ]; then
 fi
 
 # Source .env to validate required vars are present
+# Temporarily disable set -u: .env files may contain unbound variable references
+# (e.g., FOO=$BAR where BAR is unset) that would crash with set -u active.
+set +u
 set -a; source "$PROD_DIR/.env"; set +a
+set -u
 
 missing_vars=()
 for var in OPENROUTER_API_KEY OLLAMA_API_KEY LLAMA_CLASSIFIER_URL PUBLIC_BASE_URL; do
