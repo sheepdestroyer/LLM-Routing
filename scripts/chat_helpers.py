@@ -31,11 +31,11 @@ def _normalize_chat_content(value: Any) -> str:
                     nested = _normalize_chat_content(item.get("content"))
                     if nested:
                         parts.append(nested)
-        return "".join(parts)
+        return "".join(parts).strip()
     if isinstance(value, dict):
         text = value.get("text")
         if isinstance(text, str):
-            return text
+            return text.strip()
         if "content" in value:
             return _normalize_chat_content(value.get("content"))
     return ""

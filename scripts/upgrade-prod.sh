@@ -14,6 +14,21 @@
 #   ./upgrade-prod.sh --dry-run    → show what would change, don't apply
 set -euo pipefail
 
+# ── self-copy guard: re-exec from /tmp so rsync can safely update this script ──
+if [[ "${UPGRADE_PROD_SELF_COPIED:-}" != "1" ]]; then
+    SELF="/tmp/upgrade-prod-$$.sh"
+    cp "$0" "$SELF"
+    chmod +x "$SELF"
+    UPGRADE_PROD_SELF_COPIED=1 UPGRADE_PROD_SELF_PATH="$SELF" exec bash "$SELF" "$@"
+fi
+
+# ── centralized cleanup ──
+cleanup() {
+    rm -rf "${TEMP_DIR:-}"
+    rm -f "${UPGRADE_PROD_SELF_PATH:-}"
+}
+trap cleanup EXIT
+
 REPO="sheepdestroyer/LLM-Routing"
 PROD_DIR="${PROD_DIR:-$HOME/prod/LLM-Routing}"
 TEMP_DIR=""
@@ -47,7 +62,6 @@ echo "🏷  Target release: $TAG"
 
 # ── clone to temp ──
 TEMP_DIR=$(mktemp -d /tmp/llm-routing-upgrade.XXXXXX)
-trap 'rm -rf "$TEMP_DIR"' EXIT
 
 echo "📥 Cloning $REPO @ $TAG..."
 git clone --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR" 2>&1 | tail -1
@@ -108,7 +122,7 @@ echo "📋 Syncing runtime files..."
 # Sync directories with --delete (clean stale files within each dir)
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
 rsync -a --delete "$TEMP_DIR/router/" "$PROD_DIR/router/"
-rsync -a --delete --exclude="upgrade-prod.sh" "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
+rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
 # Sync files without --delete (no risk to surrounding files)
 rsync -a "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml"
 rsync -a "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh"
