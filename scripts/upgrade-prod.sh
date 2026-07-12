@@ -90,6 +90,12 @@ else
     echo "Non-interactive shell detected, proceeding with upgrade..."
 fi
 
+# ── pre-flight: validate PROD_DIR ──
+if [ ! -f "$PROD_DIR/.env" ]; then
+    echo "❌ $PROD_DIR/.env not found. Is PROD_DIR correct?"
+    exit 1
+fi
+
 # ── stop the pod gracefully before touching files ──
 POD_NAME="${POD_NAME:-agent-router-pod}"
 if podman pod exists "$POD_NAME" 2>/dev/null; then
@@ -102,7 +108,7 @@ echo "📋 Syncing runtime files..."
 # Sync directories with --delete (clean stale files within each dir)
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
 rsync -a --delete "$TEMP_DIR/router/" "$PROD_DIR/router/"
-rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
+rsync -a --delete --exclude="upgrade-prod.sh" "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
 # Sync files without --delete (no risk to surrounding files)
 rsync -a "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml"
 rsync -a "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh"

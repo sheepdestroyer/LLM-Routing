@@ -7,6 +7,40 @@ to safely extract content and reasoning_content from OpenAI-compatible API respo
 from typing import Any
 
 
+def _normalize_chat_content(value: Any) -> str:
+    """Normalize structured content payloads into a plain string.
+
+    Handles plain strings, lists of strings, lists of dicts with
+    ``text`` / ``content`` keys, and dicts with ``text`` / ``content`` keys.
+    Returns an empty string for None or unrecognised shapes.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+                elif "content" in item:
+                    nested = _normalize_chat_content(item.get("content"))
+                    if nested:
+                        parts.append(nested)
+        return "".join(parts)
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return text
+        if "content" in value:
+            return _normalize_chat_content(value.get("content"))
+    return ""
+
+
 def parse_chat_response(data: Any) -> tuple[str, str]:
     """Safely extract content and reasoning_content from a chat completion response.
 
@@ -27,8 +61,6 @@ def parse_chat_response(data: Any) -> tuple[str, str]:
     message = first_choice.get("message")
     if not isinstance(message, dict):
         return "", ""
-    content_val = message.get("content")
-    content = content_val.strip() if isinstance(content_val, str) else ""
-    reasoning_val = message.get("reasoning_content")
-    reasoning = reasoning_val.strip() if isinstance(reasoning_val, str) else ""
+    content = _normalize_chat_content(message.get("content"))
+    reasoning = _normalize_chat_content(message.get("reasoning_content"))
     return content, reasoning

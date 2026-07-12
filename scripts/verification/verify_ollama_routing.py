@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 import json
 import sys
-import os
 import httpx
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+WORKDIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(WORKDIR))
 from scripts.chat_helpers import parse_chat_response
 
 URL = "http://localhost:5000/v1/chat/completions"
 
 # Resolve the absolute path to .env file in the workspace
-workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+workspace_dir = str(WORKDIR)
 try:
     from .verification_helpers import load_litellm_key
 except ImportError:
@@ -52,7 +52,7 @@ def send_request(model: str, prompt: str, expected_model: str):
     except httpx.HTTPError as e:
         print(f"❌ HTTP ERROR: Request to model={model} failed: {e}", file=sys.stderr)
         sys.exit(1)
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
+    except ValueError as e:
         print(f"❌ PARSE ERROR: Failed to parse response for model={model}: {e}", file=sys.stderr)
         sys.exit(1)
 

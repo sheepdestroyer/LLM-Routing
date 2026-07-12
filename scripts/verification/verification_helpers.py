@@ -71,7 +71,7 @@ def send_litellm_request(model: str, prompt: str, litellm_url: str = "http://loc
         err_msg = str(e)
         print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
         return False, err_msg
-    except (KeyError, IndexError, ValueError) as e:
+    except ValueError as e:
         err_msg = f"Parse error: {e}"
         print(f"Failed in {time.time() - start_time:.1f}s: {err_msg}")
         return False, err_msg

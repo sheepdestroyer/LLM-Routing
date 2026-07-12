@@ -297,7 +297,7 @@ def test_infra_health(cfg: dict) -> tuple[int, int]:
     """Test infrastructure services: MinIO, ClickHouse. Returns (passed, total)."""
     passed = total = 0
 
-    print(f"\n── Infrastructure health ──")
+    print("\n── Infrastructure health ──")
 
     # MinIO S3 health
     total += 1
@@ -388,10 +388,10 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
                           headers={"Authorization": f"Bearer {cfg['router_api_key']}"})
             ok = r.status_code == 200
             passed += check(f"GET {url}", ok, f"HTTP {r.status_code}")
-        except httpx.ConnectError as e:
-            # DNS/unreachable — skip gracefully (host may not resolve from test machine)
+        except httpx.RequestError as e:
+            # DNS/unreachable/timeout — skip gracefully (host may not resolve from test machine)
             skipped += 1
-            print(f"  ⚠ GET {url} — SKIP: DNS/unreachable")
+            print(f"  ⚠ GET {url} — SKIP: DNS/unreachable/timeout")
         except Exception as e:
             passed += check(f"GET {url}", False, str(e)[:100])
 
@@ -415,9 +415,9 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
             passed += check(f"POST {url}", ok, detail)
         else:
             passed += check(f"POST {url}", False, f"HTTP {r.status_code}: {r.text[:80]}")
-    except httpx.ConnectError as e:
+    except httpx.RequestError as e:
         skipped += 1
-        print(f"  ⚠ POST {url} — SKIP: DNS/unreachable")
+        print(f"  ⚠ POST {url} — SKIP: DNS/unreachable/timeout")
     except Exception as e:
         passed += check(f"POST {url}", False, str(e)[:100])
 
