@@ -4,7 +4,10 @@ from pathlib import Path
 from collections import Counter
 
 # Shared chat response parser (used by verification scripts too)
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    from chat_helpers import parse_chat_response
 
 PROMPT_TEMPLATE = """Classify the coding task complexity. Output ONLY the tier name.
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Verification test for the agy circuit breaker."""
 
-from router.circuit_breaker import get_breaker
+try:
+    from router.circuit_breaker import get_breaker
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from router.circuit_breaker import get_breaker
 
 b = get_breaker()
 assert b.is_allowed(), 'Tier 0 should be open'

@@ -6,7 +6,11 @@ from pathlib import Path
 os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "router" / "config.yaml")
 os.environ["ROUTER_API_KEY"] = "local-token"
 
-from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
+try:
+    from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
 
 def verify_accuracy():
     """Benchmarking utility to verify token estimation accuracy across content types."""
