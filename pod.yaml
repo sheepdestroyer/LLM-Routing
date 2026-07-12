@@ -38,6 +38,44 @@ spec:
     volumeMounts:
     - mountPath: /data
       name: valkey-storage
+  # Llama-Server — fast local complexity classifier
+  - command:
+    - llama-server
+    - -m
+    - /models/gemma4-26a4b-routing.gguf
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8080'
+    - --parallel
+    - '4'
+    - --ctx-size
+    - '4096'
+    - --n-gpu-layers
+    - '0'
+    - --alias
+    - gemma4-26a4b-routing
+    - --api-key
+    - ROUTER_API_KEY_PLACEHOLDER
+    image: LLAMA_IMAGE_PLACEHOLDER
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+    name: llama-classifier
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+    volumeMounts:
+    - mountPath: /models
+      name: models-storage
   # LiteLLM Gateway — upstream proxy with adaptive routing
   - command:
     - python3
@@ -486,6 +524,10 @@ spec:
   - hostPath:
       path: DATA_ROOT_PLACEHOLDER/valkey-data
     name: valkey-storage
+  - hostPath:
+      path: DATA_ROOT_PLACEHOLDER/models
+      type: DirectoryOrCreate
+    name: models-storage
   - hostPath:
       path: DATA_ROOT_PLACEHOLDER/litellm-rendered
       type: DirectoryOrCreate

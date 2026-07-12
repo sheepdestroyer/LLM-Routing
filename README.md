@@ -17,7 +17,7 @@ graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
 
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
-        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-4b-routing)"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - gemma4-26a4b-routing)"]
         Router -->|"2. agy Proxy (Gemini/Claude)"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
 
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
@@ -99,7 +99,7 @@ sequenceDiagram
     autonumber
     actor Client as "goose-cli Client"
     participant Router as "Triage Router (Port 5000)"
-    participant Llama as "Llama-Server (Port 8080)"
+    participant Llama as "Llama-Server (Port 8080 - gemma4-26a4b-routing)"
     participant Agy as "agy CLI (keyring auth)"
     participant Proxy as "LiteLLM (Port 4000)"
     participant Cache as "Valkey (Port 6379)"
@@ -109,7 +109,7 @@ sequenceDiagram
     Router->>Router: Check model name → decide route
 
     alt Model = llm-routing-auto-free / auto-agy / auto-ollama / auto-agy-ollama
-        Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-4b-routing)
+        Router->>Llama: POST /v1/chat/completions (Complexity triage via gemma4-26a4b-routing)
         Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
     else Model = direct tier (agent-*-core / llm-routing-agy / llm-routing-ollama)
         Note over Router: Skip classifier, use model as tier
