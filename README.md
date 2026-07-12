@@ -77,12 +77,12 @@ All core containers are configured with **Kubernetes-style liveness and readines
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
 | **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/ping` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
 | **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
-| **langfuse-web** | `wget` GET `/api/health` (port 3001) every 15s | Same, every 10s |
+| **langfuse-web** | `wget` GET `/api/public/health` (port 3001) every 15s | Same, every 10s |
 | **langfuse-worker** | `pgrep node` every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
 
@@ -234,6 +234,7 @@ All configurations, automation scripts, and databases are self-contained within 
 │   ├── backup.sh        # Database backup with pg_isready retry logic
 │   ├── benchmark_classifier.py # Classifier accuracy & latency benchmarks
 │   ├── benchmark_tokens.py     # Token-count ground-truth comparisons
+│   ├── upgrade-prod.sh  # Release-driven prod sync & redeploy
 │   └── verification/    # Live-stack E2E verification scripts
 ├── tests/               # Project-wide unit & integration tests
 ├── data/                # Reference datasets for benchmarks & tests
@@ -284,7 +285,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`). `local-qwen-3.6` (35B) was disabled 2026-06-08 to free 23GB RAM/GTT.
+  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
   ```mermaid
   graph TD
@@ -821,6 +822,32 @@ Execute the verification script:
 ```bash
 ./scripts/verification/verify_reasoning_tiers.py
 ```
+
+### Canonical Endpoint Verification
+
+A comprehensive endpoint health check that validates all services across both prod and dev environments:
+
+```bash
+# Prod (default)
+python scripts/verification/verify_canonical_endpoints.py
+
+# Dev
+python scripts/verification/verify_canonical_endpoints.py --dev
+```
+
+Tests cover:
+
+| Section | Endpoints |
+|---------|-----------|
+| Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
+| LiteLLM | `/health/liveness`, `/health/readiness`, `/v1/models`, `/llm-routing/litellm/ui/` |
+| Langfuse | `/api/public/health`, `/` (web UI) |
+| Infrastructure | MinIO `/minio/health/live`, ClickHouse `/ping` |
+| E2E chat | 3 completions through triage router |
+| LiteLLM direct | 1 completion directly to LiteLLM |
+| Canonical URLs | 6 GET + 1 POST through public HTTPS (graceful DNS skip) |
+
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
 
 ## 10. Performance Benchmarks
 

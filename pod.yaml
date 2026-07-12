@@ -53,6 +53,10 @@ spec:
       value: http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
     - name: LITELLM_MASTER_KEY
       value: LITELLM_MASTER_KEY_PLACEHOLDER
+    - name: LITELLM_UI_USERNAME
+      value: LITELLM_UI_USERNAME_PLACEHOLDER
+    - name: LITELLM_UI_PASSWORD
+      value: LITELLM_UI_PASSWORD_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
     - name: SERVER_ROOT_PATH
@@ -69,7 +73,7 @@ spec:
         command:
         - python3
         - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/ping')
+        - import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -318,7 +322,7 @@ spec:
     - name: NEXTAUTH_SECRET
       value: NEXTAUTH_SECRET_PLACEHOLDER
     - name: NEXTAUTH_URL
-      value: http://localhost:LANGFUSE_WEB_PORT_PLACEHOLDER
+      value: NEXTAUTH_URL_PLACEHOLDER
     - name: SALT
       value: SALT_PLACEHOLDER
     - name: ENCRYPTION_KEY
@@ -379,7 +383,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
       initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
@@ -391,7 +395,7 @@ spec:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/health
+        - http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
       initialDelaySeconds: 15
       periodSeconds: 10
       timeoutSeconds: 5
