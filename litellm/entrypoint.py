@@ -69,6 +69,7 @@ class RobustDatetime(original_datetime):
     """A datetime subclass that handles flexible date format parsing in strptime."""
     @classmethod
     def strptime(cls, date_str: str, fmt: str) -> original_datetime:
+        """Flexible strptime implementation that handles various ISO-like formats."""
         if not isinstance(date_str, str):
             return original_datetime.strptime(date_str, fmt)
 

@@ -61,6 +61,7 @@ per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
 
 def process_item(item):
+    """Process a single dataset item and return expected/predicted labels."""
     try:
         if not isinstance(item, dict):
             raise TypeError("Item is not a dictionary")
@@ -82,6 +83,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
     next_start_time = [time.monotonic()]
     
     def process_item_with_rate_limit(index_and_item):
+        """Helper to process an item with a simplified rate limit delay."""
         i, item = index_and_item
         sleep_delay = 0.0
         with rate_lock:

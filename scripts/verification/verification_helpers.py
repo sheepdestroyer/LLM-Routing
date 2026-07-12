@@ -1,3 +1,4 @@
+"""Shared verification helpers for cooldown and routing integration tests."""
 # Shared verification helpers for cooldown and routing tests
 try:
     from scripts.chat_helpers import parse_chat_response
@@ -25,6 +26,7 @@ def load_litellm_key(workspace_dir: str) -> str:
     return litellm_key
 
 def get_triage_request_count(metrics_url: str = "http://localhost:5000/metrics") -> int:
+    """Parse Prometheus metrics to retrieve the total triage request count."""
     try:
         response = httpx.get(metrics_url, timeout=5.0)
         response.raise_for_status()

@@ -242,6 +242,7 @@ async def handle_remove_memory_category(args: dict) -> str:
     deleted_count = 0
     
     async def delete_item(client, entry, sem):
+        """Delete a single memory item from the backend."""
         nonlocal deleted_count
         async with sem:
             key = entry["key"]
@@ -316,11 +317,13 @@ async def handle_remove_specific_memory(args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def log(msg: str):
+    """Log a message to stderr for MCP diagnostics."""
     sys.stderr.write(f"[memory-mcp] {msg}\n")
     sys.stderr.flush()
 
 
 async def handle_request(req: dict) -> dict | None:
+    """Handle an incoming JSON-RPC request from the MCP client."""
     method = req.get("method")
     params = req.get("params", {})
 
@@ -478,6 +481,7 @@ async def handle_request(req: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 async def main_loop():
+    """Main execution loop for the MCP server, reading from stdin."""
     log("LiteLLM Memory MCP Bridge v2 started (PostgreSQL-backed).")
     for line in sys.stdin:
         line = line.strip()
