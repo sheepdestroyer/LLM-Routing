@@ -120,7 +120,7 @@ def get_classifier_client():
         ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
         if ca_bundle is not None:
             ca_bundle_stripped = ca_bundle.strip()
-            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", ""):
+            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
                 verify = False
             elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
                 verify = True
