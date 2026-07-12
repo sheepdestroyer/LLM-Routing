@@ -18,14 +18,14 @@ from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from urllib.parse import urlparse
 from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
-LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or "http://127.0.0.1:4000").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip(
-    "/"
-)
+LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
+LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
+LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
 
@@ -40,6 +40,15 @@ _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 _redis_client = None
 _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
+
+def _valkey_port() -> int:
+    """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
+    port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+    try:
+        return int(port_str)
+    except ValueError:
+        logger.warning(f"Invalid Valkey port '{port_str}', defaulting to 6379")
+        return 6379
 
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
@@ -57,7 +66,7 @@ def get_redis():
                 logger.info("Valkey client initialized from URL")
             else:
                 host = os.getenv("VALKEY_HOST", "127.0.0.1")
-                port = int(os.getenv("VALKEY_PORT", "6379"))
+                port = _valkey_port()
                 _redis_client = aioredis.Redis(host=host, port=port, decode_responses=True, socket_timeout=1.0)
                 logger.info(f"Valkey client initialized at {host}:{port}")
         except Exception as e:
@@ -233,7 +242,7 @@ def get_langfuse():
             _langfuse_client = langfuse.Langfuse(
                 public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
                 secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-                host=os.getenv("LANGFUSE_HOST", "http://127.0.0.1:3001"),
+                host=LANGFUSE_HOST,
                 release="llm-triage-router-v1",
             )
             logger.info("Langfuse client initialized")
@@ -1590,7 +1599,7 @@ def get_pie_chart_gradient() -> str:
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
-    litellm_base = "http://127.0.0.1:4000/v1/memory"
+    litellm_base = f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/v1/memory"
 
     # Resolve the destination URL
     url = f"{litellm_base}{path}"
@@ -2666,10 +2675,10 @@ async def get_dashboard_data():
         llamacpp,
     ) = await asyncio.gather(
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
-        check_tcp_port("127.0.0.1", 6379),
-        check_http_endpoint("http://127.0.0.1:4000/"),
-        check_http_endpoint("http://127.0.0.1:8080/health"),
-        check_http_endpoint("http://127.0.0.1:3001"),
+        check_tcp_port("127.0.0.1", _valkey_port()),
+        check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/"),
+        check_http_endpoint(f"{LLAMA_SERVER_URL}/health"),
+        check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}"),
         get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
@@ -3069,9 +3078,109 @@ async def get_dashboard_stats():
     return await get_dashboard_data()
 
 
+def resolve_external_urls(request: Request) -> tuple[str, str, str]:
+    """Resolve and validate the base URLs for Langfuse, LiteLLM, and Llama.cpp."""
+    # 1. Try to load centralized base URL from config/env
+    base_url_env = os.getenv("PUBLIC_BASE_URL") or os.getenv("BASEURL") or os.getenv("BASE_URL")
+    if base_url_env:
+        if "://" not in base_url_env:
+            parsed = urlparse(f"https://{base_url_env}")
+        else:
+            parsed = urlparse(base_url_env)
+        external_host = parsed.hostname or "localhost"
+        external_netloc = parsed.netloc or "localhost"
+        external_scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
+    else:
+        external_host = request.base_url.hostname or "localhost"
+        external_netloc = request.base_url.netloc or "localhost"
+        external_scheme = request.url.scheme if request.url.scheme in ("http", "https") else "https"
+
+    domain = os.getenv("ROUTING_DOMAIN") or "vendeuvre.lan"
+
+    # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
+    # fall back to the request base URL rather than silently forcing localhost.
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-:]+$", external_host):
+        logger.warning(
+            "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
+            external_host,
+            request.base_url.hostname,
+        )
+        external_host = request.base_url.hostname or "localhost"
+
+    # Relax external_netloc validation: use urlparse so IPv6 literals, IDN/punycode,
+    # and reverse-proxy-modified netlocs are supported. Log and fall back instead of
+    # silently forcing localhost when invalid.
+    if isinstance(external_netloc, str):
+        parsed_netloc = urlparse(f"{external_scheme}://{external_netloc}")
+        if not parsed_netloc.hostname:
+            logger.warning(
+                "Invalid external_netloc %r, falling back to request.base_url.netloc (%r)",
+                external_netloc,
+                request.base_url.netloc,
+            )
+            external_netloc = request.base_url.netloc or "localhost"
+    else:
+        logger.warning(
+            "Non-string external_netloc %r, falling back to request.base_url.netloc (%r)",
+            external_netloc,
+            request.base_url.netloc,
+        )
+        external_netloc = request.base_url.netloc or "localhost"
+
+    # Enforce strict domain validation to prevent loose substring match bypasses (e.g., attacker-vendeuvre.lan)
+    is_valid_external = external_host == domain or external_host.endswith("." + domain)
+    is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
+
+    if is_valid_external:
+        # Centralized base URL path under subdomain/reverse proxy
+        return (
+            f"{external_scheme}://{external_netloc}/llm-routing/langfuse",
+            f"{external_scheme}://{external_netloc}/llm-routing/litellm/ui",
+            f"{external_scheme}://{external_netloc}/llm-routing/llama/"
+        )
+    elif is_valid_base:
+        parsed_netloc = urlparse(f"{external_scheme}://{request.url.netloc}")
+        netloc = request.url.netloc if parsed_netloc.hostname else "localhost"
+        base = f"{external_scheme}://{netloc}"
+        return (
+            f"{base}/llm-routing/langfuse",
+            f"{base}/llm-routing/litellm/ui",
+            f"{base}/llm-routing/llama/"
+        )
+    else:
+        # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants
+        parsed_lf = urlparse(LANGFUSE_HOST)
+        parsed_ll = urlparse(LITELLM_URL)
+        parsed_lm = urlparse(LLAMA_SERVER_URL)
+
+        lf_scheme = parsed_lf.scheme or "http"
+        ll_scheme = parsed_ll.scheme or "http"
+        lm_scheme = parsed_lm.scheme or "http"
+
+        lf_port = f":{parsed_lf.port}" if parsed_lf.port else ""
+        ll_port = f":{parsed_ll.port}" if parsed_ll.port else ""
+        lm_port = f":{parsed_lm.port}" if parsed_lm.port else ""
+
+        lf_path = parsed_lf.path or ""
+        ll_path = parsed_ll.path or "/ui"
+        if not ll_path.endswith("/ui") and not ll_path.endswith("/ui/"):
+            ll_path = ll_path.rstrip("/") + "/ui"
+        lm_path = parsed_lm.path or ""
+
+        host_formatted = f"[{external_host}]" if ":" in external_host else external_host
+
+        return (
+            f"{lf_scheme}://{host_formatted}{lf_port}{lf_path}",
+            f"{ll_scheme}://{host_formatted}{ll_port}{ll_path}",
+            f"{lm_scheme}://{host_formatted}{lm_port}{lm_path}"
+        )
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard():
+async def get_dashboard(request: Request):
     """Render the router main dashboard HTML showing system metrics, health checks, and recent token usage."""
+    langfuse_url, litellm_url, llama_url = resolve_external_urls(request)
+
     data = await get_dashboard_data()
 
     # Unpack data for the f-string template
@@ -3501,7 +3610,8 @@ async def get_dashboard():
         <script>
             async function refreshDashboard() {{
                 try {{
-                    const res = await fetch("/api/dashboard-stats");
+                    const basePath = window.location.pathname.endsWith('/') ? '../' : './';
+                    const res = await fetch(basePath + "api/dashboard-stats");
                     if (!res.ok) throw new Error(`HTTP error! status: ${{res.status}}`);
                     const data = await res.json();
 
@@ -3584,7 +3694,14 @@ async def get_dashboard():
             }}
 
             // Initialize on load and set periodic polling
-            window.addEventListener("DOMContentLoaded", refreshDashboard);
+            window.addEventListener("DOMContentLoaded", () => {{
+                const basePath = window.location.pathname.endsWith('/') ? '../' : './';
+                const visLink = document.getElementById("visualizer-link");
+                if (visLink) {{
+                    visLink.href = basePath + "visualizer";
+                }}
+                refreshDashboard();
+            }});
             setInterval(refreshDashboard, 3000);
         </script>
     </head>
@@ -3596,7 +3713,7 @@ async def get_dashboard():
             </div>
             <div class="dashboard-title">System Control Center</div>
             <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-                <a href="/visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
+                <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
             </div>
         </header>
 
@@ -3702,7 +3819,7 @@ async def get_dashboard():
                     </div>
                     <div style="text-align: center; padding: 25px 20px;">
                         <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
-                        <a href="http://localhost:3001" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
+                        <a href="{langfuse_url}" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
                     </div>
                 </div>
 
@@ -3759,7 +3876,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Triage Router</span>
-                            <span class="service-port">:5000</span>
+                            <span class="service-port">:{os.getenv('ROUTER_PORT') or '5000'}</span>
                         </div>
                         <span class="badge badge-online"><span class="pulse-dot"></span>Online</span>
                     </div>
@@ -3767,7 +3884,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">LiteLLM Proxy</span>
-                            <span class="service-port">:4000</span>
+                            <span class="service-port">:{os.getenv('LITELLM_PORT') or '4000'}</span>
                         </div>
                         <span id="litellm-status" class="badge {"badge-online" if litellm_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if litellm_status else "Offline"}
@@ -3777,7 +3894,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Valkey Cache</span>
-                            <span class="service-port">:6379</span>
+                            <span class="service-port">:{_valkey_port()}</span>
                         </div>
                         <span id="valkey-status" class="badge {"badge-online" if valkey_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if valkey_status else "Offline"}
@@ -3797,7 +3914,7 @@ async def get_dashboard():
                     <div class="service-row">
                         <div class="service-info">
                             <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:3001</span>
+                            <span class="service-port">:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}</span>
                         </div>
                         <span id="langfuse-status" class="badge {"badge-online" if langfuse_status else "badge-offline"}">
                             <span class="pulse-dot"></span>{"Online" if langfuse_status else "Offline"}
@@ -3838,15 +3955,15 @@ async def get_dashboard():
                         </a>
                     </div>
                     <div class="btn-group">
-                        <a href="http://localhost:3001" target="_blank" class="btn">
+                        <a href="{langfuse_url}" target="_blank" class="btn">
                             <span>{src_badge("LANGFUSE", "#e879f9")} Observability UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:4000/ui" target="_blank" class="btn">
+                        <a href="{litellm_url}" target="_blank" class="btn">
                             <span>{src_badge("LITELLM", "#34d399")} Admin UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
-                        <a href="http://localhost:8080" target="_blank" class="btn">
+                        <a href="{llama_url}" target="_blank" class="btn">
                             <span>{src_badge("LLAMA.CPP", "#fb923c")} Server Router UI</span>
                             <span class="btn-arrow">→</span>
                         </a>
