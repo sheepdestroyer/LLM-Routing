@@ -1,8 +1,11 @@
 # Shared verification helpers for cooldown and routing tests
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from scripts.chat_helpers import parse_chat_response
 import os
 import uuid
 import time

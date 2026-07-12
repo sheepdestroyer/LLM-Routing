@@ -38,7 +38,7 @@ class CooldownPersistence(Protocol):
         """Push updated cooldown state to Valkey."""
         ...
 
-from circuit_breaker import get_google_breaker, get_vendor_breaker
+from router.circuit_breaker import get_google_breaker, get_vendor_breaker
 
 logger = logging.getLogger("agy-proxy")
 

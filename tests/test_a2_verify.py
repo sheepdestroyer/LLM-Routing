@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Verify circuit breaker integration into agy_proxy.py"""
-from circuit_breaker import get_breaker
-from agy_proxy import try_agy_proxy
+try:
+    from router.circuit_breaker import get_breaker
+    from router.agy_proxy import try_agy_proxy
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from router.circuit_breaker import get_breaker
+    from router.agy_proxy import try_agy_proxy
 import asyncio, time
 
 b = get_breaker()

@@ -145,7 +145,7 @@ spec:
         - python3
         - -c
         - import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics')
-      initialDelaySeconds: 20
+      initialDelaySeconds: 240
       periodSeconds: 15
       timeoutSeconds: 5
     name: llm-triage-router
@@ -155,7 +155,7 @@ spec:
         - python3
         - -c
         - import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics')
-      initialDelaySeconds: 10
+      initialDelaySeconds: 30
       periodSeconds: 10
       timeoutSeconds: 5
     volumeMounts:

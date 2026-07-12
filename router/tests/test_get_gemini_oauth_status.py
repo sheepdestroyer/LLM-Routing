@@ -2,7 +2,7 @@ import pytest
 import json
 from unittest.mock import patch, mock_open
 
-import main
+from router import main
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_missing_file():

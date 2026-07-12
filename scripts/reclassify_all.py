@@ -8,8 +8,10 @@ from pathlib import Path
 from collections import Counter
 
 # Shared chat response parser (used by verification scripts too)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    from chat_helpers import parse_chat_response
 
 TIERS = ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core']
 
@@ -28,7 +30,7 @@ Request: """
 def classify(prompt):
     """Query the llama-server to classify the prompt complexity with grammar enforcement."""
     payload = {
-        'model': 'gemma4-26a4b-routing',
+        'model': 'qwen-4b-routing',
         'messages': [{'role': 'user', 'content': PROMPT_TEMPLATE + prompt}],
         'max_tokens': 15, 'temperature': 0,
         'grammar': 'root ::= "agent-simple-core" | "agent-medium-core" | "agent-complex-core" | "agent-reasoning-core" | "agent-advanced-core"'
@@ -45,7 +47,7 @@ with open(data_dir / 'classified_dataset.json') as f:
     dataset = json.load(f)
 
 
-print(f"Classifying {len(dataset['prompts'])} prompts with gemma4-26a4b (grammar-enforced)...")
+print(f"Classifying {len(dataset['prompts'])} prompts with qwen-4b-routing (grammar-enforced)...")
 
 results = []
 for i, item in enumerate(dataset['prompts']):

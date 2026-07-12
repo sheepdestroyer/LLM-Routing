@@ -64,7 +64,7 @@ LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
 
 def query_model(prompt: str) -> tuple[str, float]:
     payload = {
-        "model": "qwen-0.8b-routing",
+        "model": "qwen-4b-routing",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}

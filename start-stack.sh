@@ -581,9 +581,10 @@ render_litellm_config() {
     mkdir -p "$rendered_dir"
     sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
+        -e "s|LLAMA_CLASSIFIER_URL_PLACEHOLDER|${LLAMA_CLASSIFIER_URL:?LLAMA_CLASSIFIER_URL must be set in .env}|g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
     # Validate no unresolved placeholders remain
-    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
         echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
         exit 1
     fi

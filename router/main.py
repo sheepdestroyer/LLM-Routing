@@ -19,7 +19,10 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from urllib.parse import urlparse
-from circuit_breaker import get_breaker
+try:
+    from router.circuit_breaker import get_breaker
+except ImportError:
+    from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
@@ -85,17 +88,50 @@ HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
 _http_client = None
 
 
+def _http_limits() -> httpx.Limits:
+    """Shared connection limits for all httpx clients."""
+    return httpx.Limits(
+        max_connections=HTTP_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+    )
+
+
 def get_http_client():
     """Return the shared global httpx.AsyncClient singleton with configured limits."""
     global _http_client
     if _http_client is None:
-        limits = httpx.Limits(
-            max_connections=HTTP_MAX_CONNECTIONS,
-            max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
-            keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
-        )
-        _http_client = httpx.AsyncClient(limits=limits, timeout=3600.0)
+        _http_client = httpx.AsyncClient(limits=_http_limits(), timeout=3600.0)
     return _http_client
+
+
+_classifier_client: httpx.AsyncClient | None = None
+
+
+def get_classifier_client():
+    """Return a singleton httpx client for classifier calls (internal self-signed TLS).
+
+    By default verify is disabled because the classifier sits behind HAProxy with
+    a self-signed certificate on the internal network. Set CLASSIFIER_CA_BUNDLE
+    to a PEM file path to enable TLS verification (e.g. for CI or staging).
+    """
+    global _classifier_client
+    if _classifier_client is None:
+        ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
+        if ca_bundle is not None:
+            ca_bundle_stripped = ca_bundle.strip()
+            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
+                verify = False
+            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
+                verify = True
+            else:
+                verify = ca_bundle_stripped
+        else:
+            verify = False
+        _classifier_client = httpx.AsyncClient(
+            limits=_http_limits(), timeout=3600.0, verify=verify
+        )
+    return _classifier_client
 
 
 # Compiled regular expressions for token estimation heuristics
@@ -344,10 +380,25 @@ host = config.get("server", {}).get("host", "0.0.0.0")
 port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
-router_api_base = router_model_conf.get("api_base", "http://127.0.0.1:8080/v1")
+router_api_base = router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
+if isinstance(router_api_base, str):
+    if router_api_base.startswith("os.environ/"):
+        env_var = router_api_base.split("/", 1)[1]
+        router_api_base = os.environ.get(env_var, "")
+        if not router_api_base:
+            if "pytest" in sys.modules:
+                router_api_base = "http://127.0.0.1:8080/v1"
+            else:
+                raise RuntimeError(
+                    f"Configuration error: Environment variable '{env_var}' is missing or empty."
+                )
+    router_api_base = router_api_base.rstrip("/")
+
 router_api_key = router_model_conf.get("api_key")
 if not router_api_key:
     raise RuntimeError("Configuration error: 'api_key' is missing from router_model configuration.")
+if not isinstance(router_api_key, str):
+    router_api_key = str(router_api_key)
 if router_api_key.startswith("os.environ/"):
     env_var = router_api_key.split("/", 1)[1]
     router_api_key = os.environ.get(env_var)
@@ -356,7 +407,7 @@ if router_api_key.startswith("os.environ/"):
             router_api_key = "local-token"
         else:
             raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
-router_model_name = router_model_conf.get("model", "qwen-0.8b-routing")
+router_model_name = router_model_conf.get("model", "qwen-4b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
@@ -910,6 +961,12 @@ async def lifespan(app: FastAPI):
             await _http_client.aclose()
             _http_client = None
 
+        # Close classifier client
+        global _classifier_client
+        if _classifier_client is not None:
+            await _classifier_client.aclose()
+            _classifier_client = None
+
         # Close Redis client
         global _redis_client
         if _redis_client is not None and _redis_client is not False:
@@ -991,7 +1048,7 @@ async def classify_request(
                 return cached_decision, 0.0, True, cached_decision
 
         try:
-            client = get_http_client()
+            client = get_classifier_client()
             try:
                 max_chars = max(0, int(os.getenv("CLASSIFIER_INPUT_MAX_CHARS", "300")))
             except ValueError:

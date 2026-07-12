@@ -26,7 +26,7 @@ async def test_classify_request_truncation_default():
     mock_client.post.return_value = mock_response
 
     # Force bypass_cache=True to ensure classify_request always hits llama-server
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch.dict(os.environ, {}, clear=False):
         # We verify behavior with default (no env var set -> defaults to 300)
         long_prompt = "a" * 500
@@ -57,7 +57,7 @@ async def test_classify_request_truncation_custom_env():
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch.dict(os.environ, {"CLASSIFIER_INPUT_MAX_CHARS": "10"}):
         long_prompt = "a" * 500
         decision, _, _, _ = await classify_request(long_prompt, bypass_cache=True)

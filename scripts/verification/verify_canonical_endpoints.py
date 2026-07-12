@@ -19,8 +19,11 @@ from pathlib import Path
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 
 # Import shared chat response parser (also used by classifier scripts)
-sys.path.insert(0, str(WORKDIR))
-from scripts.chat_helpers import parse_chat_response
+try:
+    from scripts.chat_helpers import parse_chat_response
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from scripts.chat_helpers import parse_chat_response
 
 
 def load_env(dev: bool = False) -> dict:
