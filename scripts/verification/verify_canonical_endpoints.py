@@ -32,6 +32,7 @@ def load_env(dev: bool = False) -> dict:
     loaded_files = []
 
     def _parse(path: Path):
+        """Helper to read and parse an .env file."""
         if not path.exists():
             print(f"  ⚠ env file not found: {path}")
             return
@@ -74,6 +75,7 @@ def load_env(dev: bool = False) -> dict:
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
+    """Helper to log a verification check result."""
     mark = "✓" if ok else "✗"
     extra = f" — {detail}" if detail else ""
     print(f"  {mark} {label}{extra}")
@@ -428,6 +430,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
 
 
 def main():
+    """Main entrypoint for canonical endpoint verification."""
     parser = argparse.ArgumentParser(description="Verify canonical endpoints")
     parser.add_argument(
         "--dev", action="store_true", help="Test dev environment (dev-router-pod)"

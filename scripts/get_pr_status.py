@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Utility to query GitHub PR status and check for required approvals."""
 import subprocess
 import json
 import sys
@@ -54,6 +55,7 @@ def get_pr_status(pr_id: str = "") -> None:
 
 
 def main():
+    """CLI entrypoint for PR status checking."""
     pr_id = sys.argv[1] if len(sys.argv) > 1 else ""
     get_pr_status(pr_id)
 

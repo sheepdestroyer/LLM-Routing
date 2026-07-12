@@ -1,3 +1,4 @@
+"""Main FastAPI application for the LLM Triage & Fallback Gateway."""
 import os
 import aiofiles
 import re
@@ -250,9 +251,11 @@ class ValkeyCooldownPersistence:
     """Persistence provider mapping Valkey/Redis client synchronization to the global handlers."""
 
     async def sync(self) -> None:
+        """Synchronize cooldowns from Valkey to local memory."""
         await sync_cooldowns_from_valkey()
 
     async def save(self) -> None:
+        """Persist local memory cooldowns to Valkey."""
         await save_cooldowns_to_valkey()
 
 
@@ -790,6 +793,7 @@ async def _register_ollama_models_in_db(master_key: str):
     ]
 
     def _load_yaml(p):
+        """Helper to load a YAML file safely."""
         with open(p, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
@@ -1015,6 +1019,14 @@ async def classify_request(
 
     When langfuse_trace_id is provided, the classifier HTTP call is wrapped in a child
     observation (span) so latency and output appear as a nested span in Langfuse traces.
+
+    Args:
+        prompt: The user prompt to classify.
+        bypass_cache: If True, skip the in-memory TTL cache.
+        langfuse_trace_id: Optional trace ID to associate with the classification span.
+
+    Returns:
+        A tuple containing (decision, latency_ms, cache_hit, raw_output).
     """
     global triage_cache, stats
 
@@ -1312,6 +1324,7 @@ def detect_active_tool(body: dict) -> str:
 
 @dataclass
 class ToolUsageRecord:
+    """Data class representing a single tool usage record for metrics tracking."""
     tool_name: str
     prompt_tokens: int
     completion_tokens: int
@@ -1802,7 +1815,17 @@ async def proxy_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    """Handle incoming OpenAI-compatible chat completions requests and route them dynamically based on triage logic."""
+    """Handle incoming OpenAI-compatible chat completions requests.
+
+    Routes requests dynamically based on triage logic, handling cascading fallbacks,
+    caching, and premium proxying (agy/ollama).
+
+    Args:
+        request: The incoming FastAPI Request object.
+
+    Returns:
+        A StreamingResponse or JSONResponse containing the model completion.
+    """
     global stats
     start_time = time.time()
 
@@ -2278,6 +2301,7 @@ async def chat_completions(request: Request):
         logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
     async def execute_proxy(model_name: str):
+        """Executes a proxy request to a backend model."""
         # Resolve backend connection parameters
         backend_conf = backends.get(model_name)
         if not backend_conf:
@@ -4071,6 +4095,7 @@ class AnnotationItem(BaseModel):
     @field_validator("tier")
     @classmethod
     def validate_tier(cls, v):
+        """Validate the tier field of an AnnotationItem."""
         if v is None:
             return v
         if isinstance(v, int):
@@ -4084,10 +4109,12 @@ class AnnotationItem(BaseModel):
         return v
 
 class AnnotationPayload(RootModel):
+    """Pydantic model representing a payload of multiple annotations."""
     root: Dict[str, AnnotationItem]
 
     @model_validator(mode="after")
     def validate_payload(self) -> "AnnotationPayload":
+        """Validate the entire annotation payload for size and key constraints."""
         data = self.root
         if len(data) > 1000:
             raise ValueError("Payload size limit exceeded: maximum of 1000 annotations allowed per request.")
@@ -4113,6 +4140,7 @@ _annotations_cache = {}
 
 
 async def _read_annotations_async(path) -> dict:
+    """Read annotations from disk asynchronously with caching."""
     import copy
 
     # Do not swallow OSError if file doesn't exist to preserve original behavior.

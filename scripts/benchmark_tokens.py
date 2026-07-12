@@ -1,3 +1,4 @@
+"""Benchmark token estimation logic against ground truth examples."""
 import sys
 import os
 from pathlib import Path

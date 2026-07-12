@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""HTTP daemon to bridge router requests to the host-side agy CLI."""
 import asyncio
 import json
 import os
@@ -11,6 +12,7 @@ AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversations.json")
 
 def get_last_conversation_id():
+    """Retrieve the last active conversation ID from the agy cache."""
     try:
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "r") as f:
@@ -22,7 +24,9 @@ def get_last_conversation_id():
     return None
 
 class AgyDaemonHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for agy execution requests."""
     def do_POST(self):
+        """Handle POST requests to execute agy commands."""
         if self.path != "/run":
             self.send_response(404)
             self.end_headers()
@@ -51,6 +55,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             asyncio.set_event_loop(loop)
             
             async def run_stream():
+                """Asynchronously execute agy and stream output via PTY."""
                 import pty
                 
                 env = os.environ.copy()
@@ -84,6 +89,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 loop_ref = asyncio.get_running_loop()
 
                 def read_bytes():
+                    """Read raw bytes from the PTY master file descriptor."""
                     try:
                         return os.read(master_fd, 1024)
                     except OSError:
@@ -136,6 +142,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         asyncio.set_event_loop(loop)
         
         async def run():
+            """Asynchronously execute agy and capture full output."""
             env = os.environ.copy()
             if model_override:
                 env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
@@ -216,10 +223,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.wfile.write(response_bytes)
 
     def log_message(self, format, *args):
+        """Override to silence standard HTTP logging."""
         # Silence HTTP log outputs in standard output to keep service clean
         pass
 
 def run_server():
+    """Start the ThreadingHTTPServer on the configured port."""
     server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
     print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
     try:
