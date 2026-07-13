@@ -439,7 +439,7 @@ spec:
       value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse-worker:3.202.1
+    image: langfuse/langfuse-worker:3.212.0
     livenessProbe:
       exec:
         command:
