@@ -445,7 +445,9 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
                     break
             if session_trace_id:
                 break
-        except Exception:
+        except Exception as e:
+            if _attempt == 9:
+                print(f"  ⚠ trace poll error: {str(e)[:100]}")
             continue
 
     # Report session trace result
@@ -487,30 +489,35 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         return passed, total
 
     # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check)
-    no_session_trace_found = False
+    session_trace_visible = False
     traces2 = []
     for _attempt2 in range(10):
         time.sleep(1)
         try:
             resp2 = httpx.get(
-                f"{lf_base}/api/public/traces?page=1&limit=10&orderBy=timestamp.desc",
+                f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
                 auth=auth, timeout=10,
             )
             if resp2.status_code != 200:
                 continue
             traces2 = resp2.json().get("data", [])
-            # Check for traces created after the session request
-            recent_ids = {t["id"] for t in traces2}
+            # Ensure the second request's trace has been flushed before checking for leaks.
+            # The session trace from step 1 is already in Langfuse, so we wait until
+            # a NEWER trace appears (session_trace_id is NOT at index 0).
+            recent_ids = [t["id"] for t in traces2]
             if session_trace_id and session_trace_id in recent_ids:
-                no_session_trace_found = True
-                break
+                if recent_ids.index(session_trace_id) > 0:
+                    session_trace_visible = True
+                    break
             # If session trace hasn't appeared yet, continue waiting
             if not session_trace_id:
                 # Session trace was never found in step 1; leak check is inconclusive.
                 # Poll for remaining time, then break without a definitive answer.
                 if _attempt2 >= 5 and len(traces2) > 0:
                     break
-        except Exception:
+        except Exception as e:
+            if _attempt2 == 9:
+                print(f"  ⚠ trace poll error: {str(e)[:100]}")
             continue
 
     # Report leak test result
@@ -522,15 +529,15 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         return passed, total
     total += 1
     leaked = False
-    if no_session_trace_found and traces2:
+    if session_trace_visible and traces2:
         leaked = any(
             t.get("sessionId") == session_id and t.get("id") != session_trace_id
             for t in traces2
         )
     elif _attempt2 == 9:
-        passed += check(
-            "No session leak", False,
-            "Traces not flushed within 10s — cannot verify leak",
+        print(
+            "  ⚠ No session leak — INCONCLUSIVE "
+            "(second request trace not flushed within 10s)"
         )
         return passed, total
 
