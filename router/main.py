@@ -2225,7 +2225,6 @@ async def chat_completions(request: Request):
                             # Real native stream generator
                             async def native_agy_stream_generator(stream_gen, model_name):
                                 """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
-                                import time
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 token_count = 0
