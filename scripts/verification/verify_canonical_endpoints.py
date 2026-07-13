@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import time
+import datetime
 import argparse
 import httpx
 from pathlib import Path
@@ -426,14 +427,18 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         passed += check("Session request (200)", False, str(e)[:100])
         return passed, total
 
-    # Wait for Langfuse SDK auto-flush (poll up to 10s)
+    # Wait for Langfuse SDK auto-flush (poll up to 10s).
+    # Collect ALL trace IDs created by step 1 (a single request produces
+    # multiple traces: litellm-proxy, agent-completion, triage-* parent).
+    # We need the full set to exclude them from the leak check below.
     session_trace_id = None
+    step1_trace_ids = set()
     _attempt = 0
     for _attempt in range(10):
         time.sleep(1)
         try:
             resp = httpx.get(
-                f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
+                f"{lf_base}/api/public/traces?page=1&limit=50&orderBy=timestamp.desc",
                 auth=auth, timeout=10,
             )
             if resp.status_code != 200:
@@ -441,13 +446,14 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             traces = resp.json().get("data", [])
             for t in traces:
                 if t.get("sessionId") == session_id and t.get("userId") == user_id:
-                    session_trace_id = t["id"]
-                    break
+                    step1_trace_ids.add(t["id"])
+                    if session_trace_id is None:
+                        session_trace_id = t["id"]
             if session_trace_id:
                 break
         except Exception as e:
             if _attempt == 9:
-                print(f"  ⚠ trace poll error: {str(e)[:100]}")
+                print(f"  warning trace poll error: {str(e)[:100]}")
             continue
 
     # Report session trace result
@@ -455,7 +461,8 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     if session_trace_id:
         passed += check(
             "Trace has session+user", True,
-            f"session={session_id[:12]} user={user_id} (found after {_attempt+1}s)",
+            f"session={session_id[:12]} user={user_id} "
+            f"(found after {_attempt+1}s, {len(step1_trace_ids)} matching traces)",
         )
     else:
         passed += check(
@@ -470,6 +477,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         "messages": [{"role": "user", "content": "Say 'leaktest' and nothing else."}],
         "max_tokens": 5,
     }
+    step2_request_time = time.time()
     try:
         r2 = httpx.post(
             f"{router_base}/v1/chat/completions",
@@ -488,36 +496,52 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         passed += check("No-session request (200)", False, str(e)[:100])
         return passed, total
 
-    # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check)
+    # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check).
+    # We poll until step 2 traces appear (session_trace_id is no longer at
+    # index 0, meaning newer traces from step 2 have been flushed), then
+    # check only traces with timestamps AFTER step 2 for session leaks.
     session_trace_visible = False
-    traces2 = []
+    step2_cutoff_iso = None
+    step2_traces = []
     for _attempt2 in range(10):
         time.sleep(1)
         try:
             resp2 = httpx.get(
-                f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
+                f"{lf_base}/api/public/traces?page=1&limit=50&orderBy=timestamp.desc",
                 auth=auth, timeout=10,
             )
             if resp2.status_code != 200:
                 continue
-            traces2 = resp2.json().get("data", [])
-            # Ensure the second request's trace has been flushed before checking for leaks.
-            # The session trace from step 1 is already in Langfuse, so we wait until
-            # a NEWER trace appears (session_trace_id is NOT at index 0).
-            recent_ids = [t["id"] for t in traces2]
+            all_traces = resp2.json().get("data", [])
+            recent_ids = [t["id"] for t in all_traces]
             if session_trace_id and session_trace_id in recent_ids:
                 if recent_ids.index(session_trace_id) > 0:
                     session_trace_visible = True
+                    # Filter to only traces after step 2, excluding step 1 IDs.
+                    # The step 2 request timestamp is a few ms before the router
+                    # creates traces, so use a small safety window.
+                    step2_cutoff_iso = (
+                        datetime.datetime.fromtimestamp(
+                            step2_request_time - 2, tz=datetime.timezone.utc
+                        ).isoformat()
+                    )
+                    step2_traces = [
+                        t for t in all_traces
+                        if (
+                            t["id"] not in step1_trace_ids
+                            and t.get("timestamp", "") > step2_cutoff_iso
+                        )
+                    ]
                     break
             # If session trace hasn't appeared yet, continue waiting
             if not session_trace_id:
                 # Session trace was never found in step 1; leak check is inconclusive.
                 # Poll for remaining time, then break without a definitive answer.
-                if _attempt2 >= 5 and len(traces2) > 0:
+                if _attempt2 >= 5 and len(all_traces) > 0:
                     break
         except Exception as e:
             if _attempt2 == 9:
-                print(f"  ⚠ trace poll error: {str(e)[:100]}")
+                print(f"  warning trace poll error: {str(e)[:100]}")
             continue
 
     # Report leak test result
@@ -525,35 +549,38 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     # We cannot distinguish between "no leak" and "session trace still unflushed."
     # Don't count this as a failure — just warn and move on.
     if session_trace_id is None:
-        print("  ⚠ No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
+        print("  warning No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
         return passed, total
-    leaked = False
-    if session_trace_visible and traces2:
-        leaked = any(
-            t.get("sessionId") == session_id and t.get("id") != session_trace_id
-            for t in traces2
-        )
-    elif _attempt2 == 9:
+
+    total += 1
+    if not session_trace_visible:
         print(
-            "  ⚠ No session leak — INCONCLUSIVE "
+            "  warning No session leak — INCONCLUSIVE "
             "(second request trace not flushed within 10s)"
         )
         return passed, total
-    total += 1
+
+    # Only check step 2 traces (filtered by timestamp and step1 exclusion)
+    leaked = any(
+        t.get("sessionId") == session_id
+        for t in step2_traces
+    )
 
     if leaked:
         passed += check(
             "No session leak", False,
-            "Previous session leaked into no-session request!"
+            f"Previous session leaked into no-session request! "
+            f"({len(step2_traces)} step-2 traces checked, "
+            f"{len(step1_trace_ids)} step-1 IDs excluded)"
         )
     else:
         passed += check(
             "No session leak", True,
-            f"{len(traces2)} recent traces clean (excluded known session trace)"
+            f"{len(step2_traces)} step-2 traces clean "
+            f"({len(step1_trace_ids)} step-1 IDs excluded)"
         )
 
     return passed, total
-
 
 def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set).
