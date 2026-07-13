@@ -2,26 +2,33 @@
 # https://github.com/actions/labeler
 
 router:
-  - router/**
+  - changed-files:
+    - any-glob-to-any-file: router/**
 
 tests:
-  - tests/**
+  - changed-files:
+    - any-glob-to-any-file: tests/**
 
 scripts:
-  - scripts/**
+  - changed-files:
+    - any-glob-to-any-file: scripts/**
 
 litellm:
-  - litellm/**
+  - changed-files:
+    - any-glob-to-any-file: litellm/**
 
 github-actions:
-  - .github/workflows/**
-  - .github/**/*.yml
-  - .github/**/*.yaml
+  - changed-files:
+    - any-glob-to-any-file: .github/workflows/**
+    - any-glob-to-any-file: .github/**/*.yml
+    - any-glob-to-any-file: .github/**/*.yaml
 
 documentation:
-  - '**/*.md'
-  - docs/**
+  - changed-files:
+    - any-glob-to-any-file: '**/*.md'
+    - any-glob-to-any-file: docs/**
 
 dependencies:
-  - requirements*.txt
-  - pyproject.toml
+  - changed-files:
+    - any-glob-to-any-file: requirements*.txt
+    - any-glob-to-any-file: pyproject.toml
