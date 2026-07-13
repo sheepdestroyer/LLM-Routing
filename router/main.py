@@ -113,6 +113,25 @@ def get_http_client():
 _classifier_client: httpx.AsyncClient | None = None
 
 
+def _resolve_verify(env_var: str) -> bool | str:
+    """Resolve TLS verify setting from an environment variable.
+
+    Returns:
+        False if unset, empty, or boolean-like false.
+        True if boolean-like true.
+        A string path for a CA bundle file.
+    """
+    ca_bundle = os.getenv(env_var)
+    if ca_bundle is None:
+        return False
+    v = ca_bundle.strip()
+    if v.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
+        return False
+    if v.lower() in ("true", "1", "on", "yes"):
+        return True
+    return v
+
+
 def get_classifier_client():
     """Return a singleton httpx client for classifier calls (internal self-signed TLS).
 
@@ -122,19 +141,10 @@ def get_classifier_client():
     """
     global _classifier_client
     if _classifier_client is None:
-        ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
-        if ca_bundle is not None:
-            ca_bundle_stripped = ca_bundle.strip()
-            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
-                verify = False
-            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
-                verify = True
-            else:
-                verify = ca_bundle_stripped
-        else:
-            verify = False
         _classifier_client = httpx.AsyncClient(
-            limits=_http_limits(), timeout=3600.0, verify=verify
+            limits=_http_limits(),
+            timeout=3600.0,
+            verify=_resolve_verify("CLASSIFIER_CA_BUNDLE"),
         )
     return _classifier_client
 
@@ -151,19 +161,10 @@ def get_llama_client():
     """
     global _llama_client
     if _llama_client is None:
-        ca_bundle = os.getenv("LLAMA_CA_BUNDLE")
-        if ca_bundle is not None:
-            ca_bundle_stripped = ca_bundle.strip()
-            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
-                verify = False
-            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
-                verify = True
-            else:
-                verify = ca_bundle_stripped
-        else:
-            verify = False
         _llama_client = httpx.AsyncClient(
-            limits=_http_limits(), timeout=3600.0, verify=verify
+            limits=_http_limits(),
+            timeout=3600.0,
+            verify=_resolve_verify("LLAMA_CA_BUNDLE"),
         )
     return _llama_client
 
@@ -515,7 +516,7 @@ if isinstance(_raw_llama_url, str) and _raw_llama_url.startswith("os.environ/"):
             _raw_llama_url = "http://127.0.0.1:8080"
         else:
             logger.warning(
-                f"LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
+                "LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
             )
             _raw_llama_url = "http://127.0.0.1:8080"
 LLAMA_SERVER_URL = str(_raw_llama_url).rstrip("/")
