@@ -4,6 +4,7 @@ litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
   # Simple → medium → complex → reasoning → advanced → local-qwen-3.6 → ollama → openrouter-auto
+  # Static entries chain-route upward — only advanced-core hits local-qwen-3.6 directly.
   # When one tier fails, LiteLLM tries the next model in the chain.
   # Static safety-net entries in model_list (local-qwen-3.6 per tier) guarantee
   # each agent tier has at least one deployment even during OpenRouter outages.
@@ -36,25 +37,21 @@ litellm_settings:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
-    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
-    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
-    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
   - agent-reasoning-core:
     - agent-advanced-core
-    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
   - agent-advanced-core:
@@ -95,7 +92,7 @@ model_list:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-3.6
-    request_timeout: 300
+    request_timeout: 120
   model_name: local-qwen-3.6
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -151,12 +148,13 @@ model_list:
     is_public_model_group: true
 
 # ================================================================================
-# AGENT TIER STATIC SAFETY-NET — one local-qwen-3.6 deployment per tier.
-# The dynamic roster sync (router/main.py) is the PRIMARY source of agent-tier
-# deployments and registers AA-scored OpenRouter free models at startup via
-# LiteLLM's /model/new API. These static entries guarantee each tier has at
-# least one model (the local classifier) even if OpenRouter is unreachable at
-# startup — preventing cold-start "Model NotFoundError" failures.
+# AGENT TIER STATIC SAFETY-NET — chain-routed, one deployment per tier.
+# Each tier has exactly ONE static deployment routing to the next tier up:
+#   simple → medium → complex → reasoning → advanced → local-qwen-3.6
+# This guarantees no tier is ever empty (prevents ModelNotFoundError on
+# cold start) while avoiding redundant fallback loops — only advanced-core
+# points directly to the local classifier. The dynamic roster sync
+# (router/main.py) adds OpenRouter deployments on top at startup.
 # ================================================================================
 
 - model_name: agent-advanced-core
@@ -164,7 +162,7 @@ model_list:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-3.6
-    request_timeout: 300
+    request_timeout: 120
   model_info:
     mode: chat
     max_tokens: 524288
@@ -175,10 +173,8 @@ model_list:
     is_public_model_group: true
 - model_name: agent-reasoning-core
   litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen-3.6
-    request_timeout: 300
+    model: agent-advanced-core
+    request_timeout: 120
   model_info:
     mode: chat
     max_tokens: 524288
@@ -189,10 +185,8 @@ model_list:
     is_public_model_group: true
 - model_name: agent-complex-core
   litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen-3.6
-    request_timeout: 300
+    model: agent-reasoning-core
+    request_timeout: 120
   model_info:
     mode: chat
     max_tokens: 524288
@@ -203,10 +197,8 @@ model_list:
     is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen-3.6
-    request_timeout: 300
+    model: agent-complex-core
+    request_timeout: 120
   model_info:
     mode: chat
     max_tokens: 524288
@@ -217,10 +209,8 @@ model_list:
     is_public_model_group: true
 - model_name: agent-simple-core
   litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen-3.6
-    request_timeout: 300
+    model: agent-medium-core
+    request_timeout: 120
   model_info:
     mode: chat
     max_tokens: 524288
