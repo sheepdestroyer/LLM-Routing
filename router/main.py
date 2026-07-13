@@ -12,7 +12,7 @@ import tempfile
 import yaml
 import httpx
 import redis.asyncio as aioredis
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 
 from fastapi import FastAPI, Request, HTTPException, Response
@@ -362,17 +362,6 @@ def _end_child_span(span, output=None, metadata=None) -> None:
         if update_kwargs:
             span.update(**update_kwargs)
         span.end()
-    except Exception:
-        pass
-
-
-async def _flush_langfuse_async() -> None:
-    """Flush pending Langfuse events via thread pool (non-blocking, non-fatal)."""
-    try:
-        lf = get_langfuse()
-        if lf:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lf.flush)
     except Exception:
         pass
 
@@ -1083,6 +1072,12 @@ async def lifespan(app: FastAPI):
         if _classifier_client is not None:
             await _classifier_client.aclose()
             _classifier_client = None
+
+        # Close llama client
+        global _llama_client
+        if _llama_client is not None:
+            await _llama_client.aclose()
+            _llama_client = None
 
         # Close Redis client
         global _redis_client
@@ -2012,20 +2007,25 @@ async def chat_completions(request: Request):
     langfuse_trace_id = None
     parent_obs = None
     _prop_ctx = None
+    _is_streaming = body.get("stream", False)
     lf = get_langfuse()
     if lf:
         try:
             langfuse_trace_id = lf.create_trace_id(
                 seed=f"triage_{stats['total_requests']}"
             )
-            # Propagate session_id/user_id via Langfuse's native session mechanism
+            # Propagate session_id/user_id via Langfuse's native session mechanism.
+            # For non-streaming: enter here (same asyncio task, contextvars work).
+            # For streaming: each generator creates its own context in its own task
+            # because OpenTelemetry contextvars are task-isolated.
             if propagate_attributes and (_trace_session_id or _trace_user_id):
-                _prop_ctx = propagate_attributes(
-                    session_id=_trace_session_id or None,
-                    user_id=_trace_user_id or None,
-                    tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
-                )
-                _prop_ctx.__enter__()
+                if not _is_streaming:
+                    _prop_ctx = propagate_attributes(
+                        session_id=_trace_session_id or None,
+                        user_id=_trace_user_id or None,
+                        tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                    )
+                    _prop_ctx.__enter__()
             parent_obs = lf.start_observation(
                 trace_context={"trace_id": langfuse_trace_id},
                 name=f"triage-{client_model}",
@@ -2071,7 +2071,6 @@ async def chat_completions(request: Request):
         _end_parent_obs(parent_obs,
             output={"error": f"Unknown model: {client_model}"})
         _close_prop_ctx(_prop_ctx)
-        await _flush_langfuse_async()
         raise HTTPException(
             status_code=400,
             detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
@@ -2216,6 +2215,16 @@ async def chat_completions(request: Request):
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                             token_count = 0
                             finalized = False
+                            _native_agy_prop = (
+                                propagate_attributes(
+                                    session_id=_trace_session_id or None,
+                                    user_id=_trace_user_id or None,
+                                    tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                                )
+                                if propagate_attributes and (_trace_session_id or _trace_user_id)
+                                else nullcontext()
+                            )
+                            _native_agy_prop.__enter__()
                             try:
                                 async for token in stream_gen:
                                     if not token:
@@ -2292,10 +2301,7 @@ async def chat_completions(request: Request):
                                             "tier": target_model, "route": "google_oauth_direct"},
                                     metadata={"latency_ms": latency_ms,
                                               "completion_tokens": token_count})
-                                _close_prop_ctx(_prop_ctx)
-                                _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                _background_tasks.add(_flush_task)
-                                _flush_task.add_done_callback(_background_tasks.discard)
+                                _close_prop_ctx(_native_agy_prop)
                                 finalized = True
                             except Exception as stream_err:
                                 logger.error(
@@ -2309,10 +2315,7 @@ async def chat_completions(request: Request):
                                 _end_parent_obs(parent_obs,
                                     output={"error": type(stream_err).__name__,
                                             "route": "google_oauth_direct", "stream": True})
-                                _close_prop_ctx(_prop_ctx)
-                                _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                _background_tasks.add(_flush_task)
-                                _flush_task.add_done_callback(_background_tasks.discard)
+                                _close_prop_ctx(_native_agy_prop)
                                 finalized = True
                                 raise
                             finally:
@@ -2324,10 +2327,7 @@ async def chat_completions(request: Request):
                                     _end_parent_obs(parent_obs,
                                         output={"error": "cancelled",
                                                 "route": "google_oauth_direct", "stream": True})
-                                    _close_prop_ctx(_prop_ctx)
-                                    _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                    _background_tasks.add(_flush_task)
-                                    _flush_task.add_done_callback(_background_tasks.discard)
+                                    _close_prop_ctx(_native_agy_prop)
 
                         return StreamingResponse(
                             native_agy_stream_generator(
@@ -2382,6 +2382,16 @@ async def chat_completions(request: Request):
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 chunk_size = 40
                                 finalized = False
+                                _agy_gen_prop = (
+                                    propagate_attributes(
+                                        session_id=_trace_session_id or None,
+                                        user_id=_trace_user_id or None,
+                                        tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                                    )
+                                    if propagate_attributes and (_trace_session_id or _trace_user_id)
+                                    else nullcontext()
+                                )
+                                _agy_gen_prop.__enter__()
                                 try:
                                     for i in range(0, len(content), chunk_size):
                                         chunk_text = content[i : i + chunk_size]
@@ -2426,20 +2436,14 @@ async def chat_completions(request: Request):
                                                 "tier": target_model, "route": "google_oauth_direct"},
                                         metadata={"latency_ms": latency_ms,
                                                   "completion_tokens": len(content) // 4})
-                                    _close_prop_ctx(_prop_ctx)
-                                    _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                    _background_tasks.add(_flush_task)
-                                    _flush_task.add_done_callback(_background_tasks.discard)
+                                    _close_prop_ctx(_agy_gen_prop)
                                     finalized = True
                                 finally:
                                     if not finalized:
                                         _end_parent_obs(parent_obs,
                                             output={"error": "cancelled",
                                                     "route": "google_oauth_direct", "stream": True})
-                                        _close_prop_ctx(_prop_ctx)
-                                        _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                        _background_tasks.add(_flush_task)
-                                        _flush_task.add_done_callback(_background_tasks.discard)
+                                        _close_prop_ctx(_agy_gen_prop)
 
                             return StreamingResponse(
                                 agy_stream_generator(), media_type="text/event-stream"
@@ -2452,7 +2456,6 @@ async def chat_completions(request: Request):
                                 metadata={"latency_ms": latency_ms,
                                           "completion_tokens": completion_tokens})
                             _close_prop_ctx(_prop_ctx)
-                            await _flush_langfuse_async()
                             return agy_response
         except ImportError:
             _end_child_span(agy_span_obj, 
@@ -2597,6 +2600,16 @@ async def chat_completions(request: Request):
                         sse_buffer = ""
                         decoder = codecs.getincrementaldecoder("utf-8")()
                         finalized = False
+                        _litellm_gen_prop = (
+                            propagate_attributes(
+                                session_id=_trace_session_id or None,
+                                user_id=_trace_user_id or None,
+                                tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                            )
+                            if propagate_attributes and (_trace_session_id or _trace_user_id)
+                            else nullcontext()
+                        )
+                        _litellm_gen_prop.__enter__()
                         try:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
@@ -2652,10 +2665,7 @@ async def chat_completions(request: Request):
                                         "tier": target_model, "route": "litellm_fallback"},
                                 metadata={"latency_ms": proxy_latency,
                                           "completion_tokens": completion_chars // 4})
-                            _close_prop_ctx(_prop_ctx)
-                            _flush_task = asyncio.create_task(_flush_langfuse_async())
-                            _background_tasks.add(_flush_task)
-                            _flush_task.add_done_callback(_background_tasks.discard)
+                            _close_prop_ctx(_litellm_gen_prop)
                             finalized = True
                         except Exception as ex:
                             logger.error(f"Stream error: {ex}")
@@ -2668,10 +2678,7 @@ async def chat_completions(request: Request):
                             _end_parent_obs(parent_obs,
                                 output={"error": type(ex).__name__, "route": "litellm_fallback",
                                         "stream": True})
-                            _close_prop_ctx(_prop_ctx)
-                            _flush_task = asyncio.create_task(_flush_langfuse_async())
-                            _background_tasks.add(_flush_task)
-                            _flush_task.add_done_callback(_background_tasks.discard)
+                            _close_prop_ctx(_litellm_gen_prop)
                             finalized = True
                             if model_name.startswith("ollama-"):
                                 global _ollama_cooldown_until
@@ -2696,10 +2703,7 @@ async def chat_completions(request: Request):
                                 _end_parent_obs(parent_obs,
                                     output={"error": "cancelled", "route": "litellm_fallback",
                                             "stream": True})
-                                _close_prop_ctx(_prop_ctx)
-                                _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                _background_tasks.add(_flush_task)
-                                _flush_task.add_done_callback(_background_tasks.discard)
+                                _close_prop_ctx(_litellm_gen_prop)
                             await r.aclose()
 
                     return StreamingResponse(
@@ -2720,7 +2724,6 @@ async def chat_completions(request: Request):
                         output={"error": f"HTTP {r.status_code}", "route": "litellm_fallback",
                                 "stream": True})
                     _close_prop_ctx(_prop_ctx)
-                    await _flush_langfuse_async()
                     raise HTTPException(
                         status_code=r.status_code,
                         detail="LiteLLM upstream request failed",
@@ -2776,7 +2779,6 @@ async def chat_completions(request: Request):
                                   "prompt_tokens": prompt_tokens,
                                   "completion_tokens": completion_tokens})
                     _close_prop_ctx(_prop_ctx)
-                    await _flush_langfuse_async()
                     return resp_json
                 else:
                     logger.warning(
@@ -2791,7 +2793,6 @@ async def chat_completions(request: Request):
                         output={"error": f"HTTP {response.status_code}",
                                 "route": "litellm_fallback"})
                     _close_prop_ctx(_prop_ctx)
-                    await _flush_langfuse_async()
                     raise HTTPException(
                         status_code=response.status_code,
                         detail="LiteLLM upstream request failed",
@@ -2808,7 +2809,6 @@ async def chat_completions(request: Request):
             _end_parent_obs(parent_obs,
                 output={"error": type(exc).__name__, "route": "litellm_fallback"})
             _close_prop_ctx(_prop_ctx)
-            await _flush_langfuse_async()
             raise HTTPException(
                 status_code=502, detail="Proxy call failed"
             ) from exc
