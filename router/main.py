@@ -2480,6 +2480,12 @@ async def chat_completions(request: Request):
                                 _close_prop_ctx(_prop_ctx)
                                 _non_streaming_finalized = True
                                 return agy_response
+                # agy_response was falsy (None) — finalize agy span before falling back
+                _end_child_span(agy_span_obj, 
+                    output={"error": "no_response"},
+                    metadata={"status": "failed"},
+                )
+                logger.warning("agy proxy returned no response, falling back to LiteLLM")
             except ImportError:
                 _end_child_span(agy_span_obj, 
                     output={"error": "module_not_available"},

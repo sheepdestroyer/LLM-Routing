@@ -527,7 +527,6 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     if session_trace_id is None:
         print("  ⚠ No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
         return passed, total
-    total += 1
     leaked = False
     if session_trace_visible and traces2:
         leaked = any(
@@ -540,6 +539,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             "(second request trace not flushed within 10s)"
         )
         return passed, total
+    total += 1
 
     if leaked:
         passed += check(
