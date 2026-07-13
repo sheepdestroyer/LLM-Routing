@@ -2522,6 +2522,7 @@ async def chat_completions(request: Request):
 
         async def execute_proxy(model_name: str):
             """Executes a proxy request to a backend model."""
+            nonlocal _non_streaming_finalized
             # Resolve backend connection parameters
             backend_conf = backends.get(model_name)
             if not backend_conf:
