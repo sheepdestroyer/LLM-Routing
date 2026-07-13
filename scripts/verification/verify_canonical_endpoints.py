@@ -449,8 +449,8 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
                     step1_trace_ids.add(t["id"])
                     if session_trace_id is None:
                         session_trace_id = t["id"]
-            if session_trace_id:
-                break
+            # Continue polling for remaining seconds to collect
+            # all sibling traces (they may flush asynchronously)
         except Exception as e:
             if _attempt == 9:
                 print(f"  warning trace poll error: {str(e)[:100]}")
@@ -501,8 +501,14 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     # index 0, meaning newer traces from step 2 have been flushed), then
     # check only traces with timestamps AFTER step 2 for session leaks.
     session_trace_visible = False
-    step2_cutoff_iso = None
+    # Compute cutoff as timezone-aware datetime for robust comparison.
+    # Parsing timestamps avoids lexicographic pitfalls between Z/+00:00
+    # suffixes and differing sub-second precision.
+    step2_cutoff = datetime.datetime.fromtimestamp(
+        step2_request_time - 2, tz=datetime.timezone.utc
+    )
     step2_traces = []
+    seen_step2_ids = set()
     for _attempt2 in range(10):
         time.sleep(1)
         try:
@@ -517,22 +523,27 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             if session_trace_id and session_trace_id in recent_ids:
                 if recent_ids.index(session_trace_id) > 0:
                     session_trace_visible = True
-                    # Filter to only traces after step 2, excluding step 1 IDs.
-                    # The step 2 request timestamp is a few ms before the router
-                    # creates traces, so use a small safety window.
-                    step2_cutoff_iso = (
-                        datetime.datetime.fromtimestamp(
-                            step2_request_time - 2, tz=datetime.timezone.utc
-                        ).isoformat()
+            # Accumulate step-2 traces across all polls — do NOT break early.
+            # Sibling traces may flush at different times; collecting across
+            # the full 10s window ensures we don't miss a late-flushing leak.
+            for t in all_traces:
+                tid = t["id"]
+                if tid in seen_step2_ids or tid in step1_trace_ids:
+                    continue
+                t_ts = t.get("timestamp", "")
+                if not t_ts:
+                    continue
+                try:
+                    # Normalize 'Z' suffix for fromisoformat (Python 3.11+ handles
+                    # Z natively, but we support older Pythons).
+                    t_dt = datetime.datetime.fromisoformat(
+                        t_ts.replace("Z", "+00:00")
                     )
-                    step2_traces = [
-                        t for t in all_traces
-                        if (
-                            t["id"] not in step1_trace_ids
-                            and t.get("timestamp", "") > step2_cutoff_iso
-                        )
-                    ]
-                    break
+                    if t_dt > step2_cutoff:
+                        step2_traces.append(t)
+                        seen_step2_ids.add(tid)
+                except ValueError:
+                    pass
             # If session trace hasn't appeared yet, continue waiting
             if not session_trace_id:
                 # Session trace was never found in step 1; leak check is inconclusive.
