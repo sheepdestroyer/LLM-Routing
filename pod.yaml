@@ -59,6 +59,8 @@ spec:
       value: LITELLM_UI_PASSWORD_PLACEHOLDER
     - name: OLLAMA_API_KEY
       value: OLLAMA_API_KEY_PLACEHOLDER
+    - name: OPENROUTER_API_KEY
+      value: OPENROUTER_API_KEY_PLACEHOLDER
     - name: SERVER_ROOT_PATH
       value: /llm-routing/litellm
     - name: PROXY_BASE_URL

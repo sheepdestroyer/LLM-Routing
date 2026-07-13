@@ -3,10 +3,11 @@ general_settings:
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → openrouter-auto
+  # Simple → medium → complex → reasoning → advanced → local-qwen-3.6 → ollama → openrouter-auto
+  # Static entries chain-route upward — only advanced-core hits local-qwen-3.6 directly.
   # When one tier fails, LiteLLM tries the next model in the chain.
-  # All tiers fall back through increasingly capable models, then to openrouter-auto.
-  # local-qwen-3.6 (35B) disabled 2026-06-08 — frees 23GB RAM/GTT.
+  # Static safety-net entries in model_list (local-qwen-3.6 per tier) guarantee
+  # each agent tier has at least one deployment even during OpenRouter outages.
   # -------------------------------------------------------------------------
   cache: true
   cache_params:
@@ -38,29 +39,25 @@ litellm_settings:
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-reasoning-core:
     - agent-advanced-core
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
   - agent-advanced-core:
+    - local-qwen-3.6
     - llm-routing-ollama
     - openrouter-auto
-    - local-qwen-3.6
 
 model_list:
 - litellm_params:
@@ -95,7 +92,7 @@ model_list:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-3.6
-    request_timeout: 300
+    request_timeout: 120
   model_name: local-qwen-3.6
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -151,88 +148,76 @@ model_list:
     is_public_model_group: true
 
 # ================================================================================
-# AGENT TIER DEPLOYMENTS — safety-net entries (one per tier)
-# The DB roster sync (router/main.py) is the DYNAMIC source of truth and
-# registers the full AA-scored deployment pool at startup via LiteLLM's
-# /model/new admin API. These static entries guarantee each tier name exists
-# even before the first roster sync runs (prevents "model not found" on cold
-# start). Each tier gets exactly ONE reliable free model that is always
-# available. The roster sync adds the remaining AA-scored models on startup.
-#
-# TIER THRESHOLDS (normalized AA score):
-#   n >= 80 → agent-advanced-core
-#   n >= 75 → agent-reasoning-core
-#   n >= 68 → agent-complex-core
-#   n >= 60 → agent-medium-core
-#   else    → agent-simple-core
-#
-# CURRENT AA SCORES (2026-06-08, max=55.0):
-#   minimax/minimax-m2.5:free          → 55.0 (norm=100.0) — advanced safety net
-#   moonshotai/kimi-k2.6:free           → 54.0 (norm=98.2)  — reasoning safety net
-#   nvidia/nemotron-3-ultra-550b-a55b   → 48.0 (norm=87.3)  — complex safety net
-#   google/gemma-4-26b-a4b-it:free      → 40.0 (norm=72.7)  — medium safety net
-#   nvidia/nemotron-3-nano-30b-a3b:free → 28.0 (norm=50.9)  — simple safety net
+# AGENT TIER STATIC SAFETY-NET — chain-routed, one deployment per tier.
+# Each tier has exactly ONE static deployment routing to the next tier up:
+#   simple → medium → complex → reasoning → advanced → local-qwen-3.6
+# This guarantees no tier is ever empty (prevents ModelNotFoundError on
+# cold start) while avoiding redundant fallback loops — only advanced-core
+# points directly to the local classifier. The dynamic roster sync
+# (router/main.py) adds OpenRouter deployments on top at startup.
 # ================================================================================
 
 - model_name: agent-advanced-core
   litellm_params:
-    model: openrouter/google/gemma-4-31b-it:free
-    request_timeout: 20
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6
+    request_timeout: 120
   model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
     mode: chat
-    max_tokens: 262144
-    max_input_tokens: 262144
+    max_tokens: 524288
+    max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
     is_public_model_group: true
 - model_name: agent-reasoning-core
   litellm_params:
-    model: openrouter/google/gemma-4-26b-a4b-it:free
-    request_timeout: 20
+    model: agent-advanced-core
+    request_timeout: 120
   model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
     mode: chat
-    max_tokens: 262144
-    max_input_tokens: 262144
+    max_tokens: 524288
+    max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
     is_public_model_group: true
 - model_name: agent-complex-core
   litellm_params:
-    model: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
-    request_timeout: 20
+    model: agent-reasoning-core
+    request_timeout: 120
   model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
     mode: chat
-    max_tokens: 262144
-    max_input_tokens: 262144
+    max_tokens: 524288
+    max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
     is_public_model_group: true
 - model_name: agent-medium-core
   litellm_params:
-    model: openrouter/google/gemma-4-26b-a4b-it:free
-    request_timeout: 20
+    model: agent-complex-core
+    request_timeout: 120
   model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
     mode: chat
-    max_tokens: 262144
-    max_input_tokens: 262144
+    max_tokens: 524288
+    max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
     is_public_model_group: true
 - model_name: agent-simple-core
   litellm_params:
-    model: openrouter/nvidia/nemotron-3-nano-30b-a3b:free
-    request_timeout: 20
+    model: agent-medium-core
+    request_timeout: 120
   model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
     mode: chat
-    max_tokens: 256000
-    max_input_tokens: 256000
+    max_tokens: 524288
+    max_input_tokens: 524288
+    supports_function_calling: true
+    supports_reasoning: true
+    supports_vision: true
     is_public_model_group: true
 
 redis_settings:
