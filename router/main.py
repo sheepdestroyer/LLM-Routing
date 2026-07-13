@@ -377,6 +377,20 @@ async def _flush_langfuse_async() -> None:
         pass
 
 
+def _close_prop_ctx(prop_ctx):
+    """Safely exit a propagate_attributes context manager if active.
+
+    Non-fatal — swallows all exceptions.
+    Returns None after exit for idempotent cleanup.
+    """
+    if prop_ctx is not None:
+        try:
+            prop_ctx.__exit__(None, None, None)
+        except Exception:
+            pass
+    return None
+
+
 async def push_aggregate_scores():
     """Push aggregate KPIs as Langfuse scores every 5 minutes."""
     while True:
@@ -2027,11 +2041,7 @@ async def chat_completions(request: Request):
             langfuse_trace_id = None
             parent_obs = None
             if _prop_ctx:
-                try:
-                    _prop_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
-                _prop_ctx = None
+                _prop_ctx = _close_prop_ctx(_prop_ctx)
 
     if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
@@ -2060,6 +2070,7 @@ async def chat_completions(request: Request):
         # guard: end parent obs before raising
         _end_parent_obs(parent_obs,
             output={"error": f"Unknown model: {client_model}"})
+        _close_prop_ctx(_prop_ctx)
         await _flush_langfuse_async()
         raise HTTPException(
             status_code=400,
@@ -2281,6 +2292,7 @@ async def chat_completions(request: Request):
                                             "tier": target_model, "route": "google_oauth_direct"},
                                     metadata={"latency_ms": latency_ms,
                                               "completion_tokens": token_count})
+                                _close_prop_ctx(_prop_ctx)
                                 _flush_task = asyncio.create_task(_flush_langfuse_async())
                                 _background_tasks.add(_flush_task)
                                 _flush_task.add_done_callback(_background_tasks.discard)
@@ -2297,6 +2309,7 @@ async def chat_completions(request: Request):
                                 _end_parent_obs(parent_obs,
                                     output={"error": type(stream_err).__name__,
                                             "route": "google_oauth_direct", "stream": True})
+                                _close_prop_ctx(_prop_ctx)
                                 _flush_task = asyncio.create_task(_flush_langfuse_async())
                                 _background_tasks.add(_flush_task)
                                 _flush_task.add_done_callback(_background_tasks.discard)
@@ -2311,6 +2324,7 @@ async def chat_completions(request: Request):
                                     _end_parent_obs(parent_obs,
                                         output={"error": "cancelled",
                                                 "route": "google_oauth_direct", "stream": True})
+                                    _close_prop_ctx(_prop_ctx)
                                     _flush_task = asyncio.create_task(_flush_langfuse_async())
                                     _background_tasks.add(_flush_task)
                                     _flush_task.add_done_callback(_background_tasks.discard)
@@ -2412,6 +2426,7 @@ async def chat_completions(request: Request):
                                                 "tier": target_model, "route": "google_oauth_direct"},
                                         metadata={"latency_ms": latency_ms,
                                                   "completion_tokens": len(content) // 4})
+                                    _close_prop_ctx(_prop_ctx)
                                     _flush_task = asyncio.create_task(_flush_langfuse_async())
                                     _background_tasks.add(_flush_task)
                                     _flush_task.add_done_callback(_background_tasks.discard)
@@ -2421,6 +2436,7 @@ async def chat_completions(request: Request):
                                         _end_parent_obs(parent_obs,
                                             output={"error": "cancelled",
                                                     "route": "google_oauth_direct", "stream": True})
+                                        _close_prop_ctx(_prop_ctx)
                                         _flush_task = asyncio.create_task(_flush_langfuse_async())
                                         _background_tasks.add(_flush_task)
                                         _flush_task.add_done_callback(_background_tasks.discard)
@@ -2435,6 +2451,7 @@ async def chat_completions(request: Request):
                                         "route": "google_oauth_direct"},
                                 metadata={"latency_ms": latency_ms,
                                           "completion_tokens": completion_tokens})
+                            _close_prop_ctx(_prop_ctx)
                             await _flush_langfuse_async()
                             return agy_response
         except ImportError:
@@ -2635,6 +2652,7 @@ async def chat_completions(request: Request):
                                         "tier": target_model, "route": "litellm_fallback"},
                                 metadata={"latency_ms": proxy_latency,
                                           "completion_tokens": completion_chars // 4})
+                            _close_prop_ctx(_prop_ctx)
                             _flush_task = asyncio.create_task(_flush_langfuse_async())
                             _background_tasks.add(_flush_task)
                             _flush_task.add_done_callback(_background_tasks.discard)
@@ -2650,6 +2668,7 @@ async def chat_completions(request: Request):
                             _end_parent_obs(parent_obs,
                                 output={"error": type(ex).__name__, "route": "litellm_fallback",
                                         "stream": True})
+                            _close_prop_ctx(_prop_ctx)
                             _flush_task = asyncio.create_task(_flush_langfuse_async())
                             _background_tasks.add(_flush_task)
                             _flush_task.add_done_callback(_background_tasks.discard)
@@ -2677,6 +2696,7 @@ async def chat_completions(request: Request):
                                 _end_parent_obs(parent_obs,
                                     output={"error": "cancelled", "route": "litellm_fallback",
                                             "stream": True})
+                                _close_prop_ctx(_prop_ctx)
                                 _flush_task = asyncio.create_task(_flush_langfuse_async())
                                 _background_tasks.add(_flush_task)
                                 _flush_task.add_done_callback(_background_tasks.discard)
@@ -2699,6 +2719,7 @@ async def chat_completions(request: Request):
                     _end_parent_obs(parent_obs,
                         output={"error": f"HTTP {r.status_code}", "route": "litellm_fallback",
                                 "stream": True})
+                    _close_prop_ctx(_prop_ctx)
                     await _flush_langfuse_async()
                     raise HTTPException(
                         status_code=r.status_code,
@@ -2754,6 +2775,7 @@ async def chat_completions(request: Request):
                         metadata={"latency_ms": proxy_latency,
                                   "prompt_tokens": prompt_tokens,
                                   "completion_tokens": completion_tokens})
+                    _close_prop_ctx(_prop_ctx)
                     await _flush_langfuse_async()
                     return resp_json
                 else:
@@ -2768,6 +2790,7 @@ async def chat_completions(request: Request):
                     _end_parent_obs(parent_obs,
                         output={"error": f"HTTP {response.status_code}",
                                 "route": "litellm_fallback"})
+                    _close_prop_ctx(_prop_ctx)
                     await _flush_langfuse_async()
                     raise HTTPException(
                         status_code=response.status_code,
@@ -2784,6 +2807,7 @@ async def chat_completions(request: Request):
             )
             _end_parent_obs(parent_obs,
                 output={"error": type(exc).__name__, "route": "litellm_fallback"})
+            _close_prop_ctx(_prop_ctx)
             await _flush_langfuse_async()
             raise HTTPException(
                 status_code=502, detail="Proxy call failed"
