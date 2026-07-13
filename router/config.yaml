@@ -9,8 +9,6 @@ router:
     api_key: "os.environ/ROUTER_API_KEY"
     model: "qwen-4b-routing"
 
-llama_server_url: "os.environ/LLAMA_SERVER_URL"
-
 classification_rules:
   system_prompt: |
     Classify the coding task complexity. Output ONLY the tier name.

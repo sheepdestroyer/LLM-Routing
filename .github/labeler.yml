@@ -1,0 +1,43 @@
+# GitHub Labeler configuration
+# https://github.com/actions/labeler
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+        - ".github/dependabot.yml"
+        - "**/package.json"
+        - "**/package-lock.json"
+        - "**/requirements.txt"
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+        - "**/Dockerfile"
+        - "pod.yaml"
+        - "start-stack.sh"
+
+router:
+  - changed-files:
+      - any-glob-to-any-file:
+        - "router/**/*"
+
+litellm:
+  - changed-files:
+      - any-glob-to-any-file:
+        - "litellm/**/*"
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file:
+        - "scripts/**/*"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+        - "tests/**/*"
+        - "**/tests/**/*"
+
+github-actions:
+  - changed-files:
+      - any-glob-to-any-file:
+        - ".github/workflows/**/*"
