@@ -2063,6 +2063,7 @@ async def chat_completions(request: Request):
                 _prop_ctx = _close_prop_ctx(_prop_ctx)
 
     try:
+        _non_streaming_finalized = False
         if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
             # Full pipeline: classify → route to best tier
             bypass_cache = request.headers.get("x-bypass-cache") == "true"
@@ -2091,6 +2092,7 @@ async def chat_completions(request: Request):
             _end_parent_obs(parent_obs,
                 output={"error": f"Unknown model: {client_model}"})
             _close_prop_ctx(_prop_ctx)
+            _non_streaming_finalized = True
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
@@ -2466,6 +2468,7 @@ async def chat_completions(request: Request):
                                     metadata={"latency_ms": latency_ms,
                                               "completion_tokens": completion_tokens})
                                 _close_prop_ctx(_prop_ctx)
+                                _non_streaming_finalized = True
                                 return agy_response
             except ImportError:
                 _end_child_span(agy_span_obj, 
@@ -2785,6 +2788,7 @@ async def chat_completions(request: Request):
                                       "prompt_tokens": prompt_tokens,
                                       "completion_tokens": completion_tokens})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         return resp_json
                     else:
                         logger.warning(
@@ -2846,6 +2850,7 @@ async def chat_completions(request: Request):
                     _end_parent_obs(parent_obs,
                         output={"error": "ollama_cooldown", "route": "ollama"})
                     _close_prop_ctx(_prop_ctx)
+                    _non_streaming_finalized = True
                     raise HTTPException(
                         status_code=429,
                         detail=f"Ollama backend cooled down ({remaining}s remaining)",
@@ -2882,6 +2887,7 @@ async def chat_completions(request: Request):
                         _end_parent_obs(parent_obs,
                             output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         raise e
                 else:
                     # Direct/fallback llm-routing-ollama request
@@ -2892,6 +2898,7 @@ async def chat_completions(request: Request):
                         _end_parent_obs(parent_obs,
                             output={"error": "ollama_rate_limited", "route": "ollama"})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         raise HTTPException(
                             status_code=429,
                             detail="Ollama backend rate limited/unavailable",
@@ -2900,6 +2907,7 @@ async def chat_completions(request: Request):
                         _end_parent_obs(parent_obs,
                             output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         raise e
             except Exception as e:
                 # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
@@ -2926,6 +2934,7 @@ async def chat_completions(request: Request):
                     _end_parent_obs(parent_obs,
                         output={"error": type(e).__name__, "route": "ollama"})
                     _close_prop_ctx(_prop_ctx)
+                    _non_streaming_finalized = True
                     raise HTTPException(
                         status_code=429, detail="Ollama backend rate limited/unavailable"
                     ) from e
@@ -2938,7 +2947,7 @@ async def chat_completions(request: Request):
                 _close_prop_ctx(_prop_ctx)
                 raise
     finally:
-        if not _is_streaming:
+        if not _is_streaming and not _non_streaming_finalized:
             _end_parent_obs(parent_obs,
                 output={"error": "cancelled", "route": "non_streaming"})
             _prop_ctx = _close_prop_ctx(_prop_ctx)
