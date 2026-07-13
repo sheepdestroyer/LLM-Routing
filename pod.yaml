@@ -197,7 +197,7 @@ spec:
       value: /var/lib/postgresql/data/pg18
     - name: PGPORT
       value: 'POSTGRES_PORT_PLACEHOLDER'
-    image: pgvector/pgvector:0.8.3-pg18
+    image: pgvector/pgvector:0.8.5-pg18
     livenessProbe:
       exec:
         command:
