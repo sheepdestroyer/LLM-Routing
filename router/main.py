@@ -2843,6 +2843,7 @@ async def chat_completions(request: Request):
                         _end_parent_obs(parent_obs,
                             output={"error": "all_backends_failed", "route": "ollama_cooldown_fallback"})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         raise
                 else:
                     # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
@@ -2882,6 +2883,7 @@ async def chat_completions(request: Request):
                             _end_parent_obs(parent_obs,
                                 output={"error": "all_backends_failed", "route": "ollama_fallback"})
                             _close_prop_ctx(_prop_ctx)
+                            _non_streaming_finalized = True
                             raise
                     else:
                         _end_parent_obs(parent_obs,
@@ -2929,6 +2931,7 @@ async def chat_completions(request: Request):
                         _end_parent_obs(parent_obs,
                             output={"error": "all_backends_failed", "route": "ollama_unexpected_fallback"})
                         _close_prop_ctx(_prop_ctx)
+                        _non_streaming_finalized = True
                         raise
                 else:
                     _end_parent_obs(parent_obs,
@@ -2945,6 +2948,7 @@ async def chat_completions(request: Request):
                 _end_parent_obs(parent_obs,
                     output={"error": "all_backends_failed", "route": "default_proxy"})
                 _close_prop_ctx(_prop_ctx)
+                _non_streaming_finalized = True
                 raise
     finally:
         if not _is_streaming and not _non_streaming_finalized:
