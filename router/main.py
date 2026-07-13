@@ -515,7 +515,7 @@ if isinstance(_raw_llama_url, str) and _raw_llama_url.startswith("os.environ/"):
                 f"LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
             )
             _raw_llama_url = "http://127.0.0.1:8080"
-LLAMA_SERVER_URL = _raw_llama_url.rstrip("/")
+LLAMA_SERVER_URL = str(_raw_llama_url).rstrip("/")
 
 # Default colors for tool visualization badges and charts
 TOOL_COLORS = {
@@ -2503,6 +2503,9 @@ async def chat_completions(request: Request):
         backend_conf = backends.get(model_name)
         if not backend_conf:
             logger.error(f"Backend '{model_name}' not found in configuration backends.")
+            _end_parent_obs(parent_obs,
+                output={"error": f"Backend {model_name} misconfigured"})
+            _close_prop_ctx(_prop_ctx)
             raise HTTPException(
                 status_code=500, detail=f"Backend {model_name} misconfigured"
             )
@@ -2569,6 +2572,9 @@ async def chat_completions(request: Request):
                     )
                     body_to_send["max_tokens"] = _safe_max
             except HTTPException:
+                _end_parent_obs(parent_obs,
+                    output={"error": "Context window exceeded"})
+                _close_prop_ctx(_prop_ctx)
                 raise
             except Exception as e:
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
@@ -2838,6 +2844,9 @@ async def chat_completions(request: Request):
             else:
                 # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
                 # skips this model group and moves to openrouter-auto
+                _end_parent_obs(parent_obs,
+                    output={"error": "ollama_cooldown", "route": "ollama"})
+                _close_prop_ctx(_prop_ctx)
                 raise HTTPException(
                     status_code=429,
                     detail=f"Ollama backend cooled down ({remaining}s remaining)",
@@ -2872,6 +2881,9 @@ async def chat_completions(request: Request):
                     logger.error(
                         f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429"
                     )
+                    _end_parent_obs(parent_obs,
+                        output={"error": "ollama_rate_limited", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise HTTPException(
                         status_code=429,
                         detail="Ollama backend rate limited/unavailable",
@@ -2894,6 +2906,9 @@ async def chat_completions(request: Request):
                 )
                 return await execute_proxy(original_target_model)
             else:
+                _end_parent_obs(parent_obs,
+                    output={"error": type(e).__name__, "route": "ollama"})
+                _close_prop_ctx(_prop_ctx)
                 raise HTTPException(
                     status_code=429, detail="Ollama backend rate limited/unavailable"
                 ) from e
