@@ -2450,6 +2450,16 @@ async def chat_completions(request: Request):
                                                       "completion_tokens": len(content) // 4})
                                         _close_prop_ctx(_agy_gen_prop)
                                         finalized = True
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error during agy stream generation: {type(e).__name__}"
+                                        )
+                                        _end_parent_obs(parent_obs,
+                                            output={"error": type(e).__name__,
+                                                    "route": "google_oauth_direct", "stream": True})
+                                        _close_prop_ctx(_agy_gen_prop)
+                                        finalized = True
+                                        raise
                                     finally:
                                         if not finalized:
                                             _end_parent_obs(parent_obs,
