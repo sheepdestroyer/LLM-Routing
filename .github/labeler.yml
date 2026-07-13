@@ -1,0 +1,27 @@
+# Labeler configuration for LLM-Routing
+# https://github.com/actions/labeler
+
+router:
+  - router/**
+
+tests:
+  - tests/**
+
+scripts:
+  - scripts/**
+
+litellm:
+  - litellm/**
+
+github-actions:
+  - .github/workflows/**
+  - .github/**/*.yml
+  - .github/**/*.yaml
+
+documentation:
+  - '**/*.md'
+  - docs/**
+
+dependencies:
+  - requirements*.txt
+  - pyproject.toml
