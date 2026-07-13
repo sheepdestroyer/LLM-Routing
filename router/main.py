@@ -2565,10 +2565,6 @@ async def chat_completions(request: Request):
                 headers = {"Authorization": f"Bearer {backend_api_key}"}
                 if langfuse_trace_id:
                     headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
-                if _trace_session_id:
-                    headers["langfuse_session_id"] = _trace_session_id
-                if _trace_user_id:
-                    headers["langfuse_trace_user_id"] = _trace_user_id
 
                 # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
                 proxy_start = time.time()
@@ -2616,6 +2612,10 @@ async def chat_completions(request: Request):
                     body_to_send["metadata"], dict
                 ):
                     body_to_send["metadata"] = {}
+                else:
+                    # Deep-copy to avoid mutating original body's metadata
+                    # during fallback retries (shallow copy shares the dict)
+                    body_to_send["metadata"] = dict(body_to_send["metadata"])
                 body_to_send["metadata"]["trace_name"] = "agent-completion"
                 if _trace_session_id:
                     body_to_send["metadata"]["session_id"] = _trace_session_id
