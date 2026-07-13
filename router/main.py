@@ -28,7 +28,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from typing import Dict, Optional, Union
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
@@ -133,6 +132,35 @@ def get_classifier_client():
             limits=_http_limits(), timeout=3600.0, verify=verify
         )
     return _classifier_client
+
+
+_llama_client: httpx.AsyncClient | None = None
+
+
+def get_llama_client():
+    """Return a singleton httpx client for llama.cpp server calls (internal self-signed TLS).
+
+    By default verify is disabled because the llama-server sits behind HAProxy with
+    a self-signed certificate on the internal network. Set LLAMA_CA_BUNDLE
+    to a PEM file path to enable TLS verification (e.g. for CI or staging).
+    """
+    global _llama_client
+    if _llama_client is None:
+        ca_bundle = os.getenv("LLAMA_CA_BUNDLE")
+        if ca_bundle is not None:
+            ca_bundle_stripped = ca_bundle.strip()
+            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
+                verify = False
+            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
+                verify = True
+            else:
+                verify = ca_bundle_stripped
+        else:
+            verify = False
+        _llama_client = httpx.AsyncClient(
+            limits=_http_limits(), timeout=3600.0, verify=verify
+        )
+    return _llama_client
 
 
 # Compiled regular expressions for token estimation heuristics
@@ -465,6 +493,21 @@ router_model_name = router_model_conf.get("model", "qwen-4b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
+
+# --- Resolve llama_server_url from config (os.environ/ pattern) ---
+_raw_llama_url = config.get("llama_server_url") or "http://127.0.0.1:8080"
+if isinstance(_raw_llama_url, str) and _raw_llama_url.startswith("os.environ/"):
+    env_var = _raw_llama_url.split("/", 1)[1]
+    _raw_llama_url = os.environ.get(env_var, "")
+    if not _raw_llama_url:
+        if "pytest" in sys.modules:
+            _raw_llama_url = "http://127.0.0.1:8080"
+        else:
+            logger.warning(
+                f"LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
+            )
+            _raw_llama_url = "http://127.0.0.1:8080"
+LLAMA_SERVER_URL = _raw_llama_url.rstrip("/")
 
 # Default colors for tool visualization badges and charts
 TOOL_COLORS = {
@@ -1063,6 +1106,16 @@ async def check_http_endpoint(url: str) -> bool:
         return False
 
 
+async def _check_llama_health() -> bool:
+    """Check llama-server health using the llama client (verify=False for self-signed TLS)."""
+    try:
+        client = get_llama_client()
+        r = await client.get(f"{LLAMA_SERVER_URL}/health", timeout=3.0)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
 async def classify_request(
     prompt: str, bypass_cache: bool = False, langfuse_trace_id: str | None = None
 ) -> tuple[str, float, bool, str]:
@@ -1491,7 +1544,7 @@ async def get_llamacpp_metrics() -> dict:
     """Fetches live model inventory and slot statistics from the local llama-server."""
     result = {"models": [], "slots": [], "build": "unknown"}
     try:
-        client = get_http_client()
+        client = get_llama_client()
         # Fetch model list
         r = await client.get(f"{LLAMA_SERVER_URL}/v1/models", timeout=3.0)
         if r.status_code == 200:
@@ -2886,7 +2939,7 @@ async def get_dashboard_data():
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", _valkey_port()),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/"),
-        check_http_endpoint(f"{LLAMA_SERVER_URL}/health"),
+        asyncio.wait_for(_check_llama_health(), timeout=3.0),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}"),
         get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
