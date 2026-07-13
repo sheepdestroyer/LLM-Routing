@@ -1,0 +1,56 @@
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [99896]
+2026-07-13 16:26:21,206 [WARNING] LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080
+INFO:     Started server process [113560]
+INFO:     Waiting for application startup.
+2026-07-13 16:26:25,580 [WARNING] Failed to sync cooldowns from Valkey: Error 111 connecting to 127.0.0.1:6379. Connect call failed ('127.0.0.1', 6379).
+2026-07-13 16:26:25,710 [WARNING] DATABASE_URL is not set; skipping purge of stale agent-* deployments
+2026-07-13 16:26:25,714 [WARNING] model/new nvidia/nemotron-3-nano-30b-a3b:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,717 [WARNING] model/new tencent/hy3:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,720 [WARNING] model/new poolside/laguna-xs-2.1:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,723 [WARNING] model/new cohere/north-mini-code:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,725 [WARNING] model/new nvidia/nemotron-3.5-content-safety:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,727 [WARNING] model/new google/lyria-3-pro-preview → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,730 [WARNING] model/new google/lyria-3-clip-preview → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,732 [WARNING] model/new openrouter/free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,734 [WARNING] model/new nvidia/nemotron-nano-12b-v2-vl:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,736 [WARNING] model/new qwen/qwen3-next-80b-a3b-instruct:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,739 [WARNING] model/new nvidia/nemotron-nano-9b-v2:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,742 [WARNING] model/new openai/gpt-oss-120b:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,744 [WARNING] model/new openai/gpt-oss-20b:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,746 [WARNING] model/new qwen/qwen3-coder:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,749 [WARNING] model/new cognitivecomputations/dolphin-mistral-24b-venice-edition:free → agent-simple-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,751 [WARNING] model/new nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,753 [WARNING] model/new nvidia/nemotron-3-ultra-550b-a55b:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,757 [WARNING] model/new nvidia/nemotron-3-super-120b-a12b:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,760 [WARNING] model/new google/gemma-4-31b-it:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,762 [WARNING] model/new google/gemma-4-26b-a4b-it:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,765 [WARNING] model/new poolside/laguna-m.1:free → agent-medium-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,767 [WARNING] model/new poolside/laguna-m.1:free → agent-complex-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,770 [WARNING] model/new nvidia/nemotron-3-ultra-550b-a55b:free → agent-complex-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,772 [WARNING] model/new nvidia/nemotron-3-super-120b-a12b:free → agent-complex-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,775 [WARNING] model/new google/gemma-4-31b-it:free → agent-complex-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,777 [WARNING] model/new google/gemma-4-26b-a4b-it:free → agent-complex-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,780 [WARNING] model/new nvidia/nemotron-3-ultra-550b-a55b:free → agent-reasoning-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,782 [WARNING] model/new nvidia/nemotron-3-super-120b-a12b:free → agent-reasoning-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,786 [WARNING] model/new google/gemma-4-31b-it:free → agent-reasoning-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,788 [WARNING] model/new google/gemma-4-26b-a4b-it:free → agent-reasoning-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,790 [WARNING] model/new nvidia/nemotron-3-ultra-550b-a55b:free → agent-advanced-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,794 [WARNING] model/new nvidia/nemotron-3-super-120b-a12b:free → agent-advanced-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,797 [WARNING] model/new google/gemma-4-31b-it:free → agent-advanced-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,800 [WARNING] model/new google/gemma-4-26b-a4b-it:free → agent-advanced-core: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,803 [WARNING] Failed to load/parse LiteLLM config at /config/litellm_dir/config.yaml: [Errno 2] No such file or directory: '/config/litellm_dir/config.yaml'
+2026-07-13 16:26:25,827 [WARNING] DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries
+2026-07-13 16:26:25,830 [WARNING] model/new ollama-deepseek-v4-pro: HTTP 404 — {"detail":"Not Found"}
+2026-07-13 16:26:25,832 [WARNING] model/new ollama-deepseek-v4-flash: HTTP 404 — {"detail":"Not Found"}
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+2026-07-13 16:27:12,614 [WARNING] Failed to fetch llama.cpp metrics: All connection attempts failed
+INFO:     127.0.0.1:37084 - "GET /dashboard HTTP/1.1" 200 OK
+2026-07-13 16:27:14,855 [WARNING] Failed to fetch llama.cpp metrics: All connection attempts failed
+INFO:     127.0.0.1:37084 - "GET /api/dashboard-stats HTTP/1.1" 200 OK
+2026-07-13 16:27:17,815 [WARNING] Failed to fetch llama.cpp metrics: All connection attempts failed
+INFO:     127.0.0.1:37084 - "GET /api/dashboard-stats HTTP/1.1" 200 OK
+2026-07-13 16:27:20,814 [WARNING] Failed to fetch llama.cpp metrics: All connection attempts failed
