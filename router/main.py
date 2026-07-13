@@ -12,7 +12,7 @@ import tempfile
 import yaml
 import httpx
 import redis.asyncio as aioredis
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 
 from fastapi import FastAPI, Request, HTTPException, Response
@@ -27,8 +27,12 @@ except ImportError:
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
+try:
+    from langfuse import propagate_attributes  # noqa: F401
+except ImportError:
+    propagate_attributes = None
+
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
-LLAMA_SERVER_URL = (os.getenv("LLAMA_SERVER_URL") or "http://127.0.0.1:8080").rstrip("/")
 LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
 GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
@@ -109,6 +113,25 @@ def get_http_client():
 _classifier_client: httpx.AsyncClient | None = None
 
 
+def _resolve_verify(env_var: str) -> bool | str:
+    """Resolve TLS verify setting from an environment variable.
+
+    Returns:
+        False if unset, empty, or boolean-like false.
+        True if boolean-like true.
+        A string path for a CA bundle file.
+    """
+    ca_bundle = os.getenv(env_var)
+    if ca_bundle is None:
+        return False
+    v = ca_bundle.strip()
+    if v.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
+        return False
+    if v.lower() in ("true", "1", "on", "yes"):
+        return True
+    return v
+
+
 def get_classifier_client():
     """Return a singleton httpx client for classifier calls (internal self-signed TLS).
 
@@ -118,21 +141,32 @@ def get_classifier_client():
     """
     global _classifier_client
     if _classifier_client is None:
-        ca_bundle = os.getenv("CLASSIFIER_CA_BUNDLE")
-        if ca_bundle is not None:
-            ca_bundle_stripped = ca_bundle.strip()
-            if ca_bundle_stripped.lower() in ("false", "0", "off", "no", "none", "null", "disabled", ""):
-                verify = False
-            elif ca_bundle_stripped.lower() in ("true", "1", "on", "yes"):
-                verify = True
-            else:
-                verify = ca_bundle_stripped
-        else:
-            verify = False
         _classifier_client = httpx.AsyncClient(
-            limits=_http_limits(), timeout=3600.0, verify=verify
+            limits=_http_limits(),
+            timeout=3600.0,
+            verify=_resolve_verify("CLASSIFIER_CA_BUNDLE"),
         )
     return _classifier_client
+
+
+_llama_client: httpx.AsyncClient | None = None
+
+
+def get_llama_client():
+    """Return a singleton httpx client for llama.cpp server calls (internal self-signed TLS).
+
+    By default verify is disabled because the llama-server sits behind HAProxy with
+    a self-signed certificate on the internal network. Set LLAMA_CA_BUNDLE
+    to a PEM file path to enable TLS verification (e.g. for CI or staging).
+    """
+    global _llama_client
+    if _llama_client is None:
+        _llama_client = httpx.AsyncClient(
+            limits=_http_limits(),
+            timeout=3600.0,
+            verify=_resolve_verify("LLAMA_CA_BUNDLE"),
+        )
+    return _llama_client
 
 
 # Compiled regular expressions for token estimation heuristics
@@ -293,6 +327,63 @@ def get_langfuse():
     return _langfuse_client if _langfuse_client is not False else None
 
 
+def _end_parent_obs(parent_obs, output=None, metadata=None) -> None:
+    """Safely finalize a Langfuse parent observation (SDK v4: update + end).
+
+    Non-fatal — swallows all exceptions.
+    """
+    if parent_obs is None:
+        return
+    try:
+        update_kwargs = {}
+        if output is not None:
+            update_kwargs["output"] = output
+        if metadata is not None:
+            update_kwargs["metadata"] = metadata
+        if update_kwargs:
+            parent_obs.update(**update_kwargs)
+        parent_obs.end()
+    except Exception:
+        logger.debug("_end_parent_obs failed (non-fatal)", exc_info=True)
+        pass
+
+
+def _end_child_span(span, output=None, metadata=None) -> None:
+    """Safely finalize a Langfuse child span (SDK v4: update + end).
+
+    Non-fatal — errors are never propagated.
+    """
+    if span is None:
+        return
+    try:
+        update_kwargs = {}
+        if output is not None:
+            update_kwargs["output"] = output
+        if metadata is not None:
+            update_kwargs["metadata"] = metadata
+        if update_kwargs:
+            span.update(**update_kwargs)
+        span.end()
+    except Exception:
+        logger.debug("_end_child_span failed (non-fatal)", exc_info=True)
+        pass
+
+
+def _close_prop_ctx(prop_ctx):
+    """Safely exit a propagate_attributes context manager if active.
+
+    Non-fatal — swallows all exceptions.
+    Returns None after exit for idempotent cleanup.
+    """
+    if prop_ctx is not None:
+        try:
+            prop_ctx.__exit__(None, None, None)
+        except Exception:
+            logger.debug("_close_prop_ctx failed (non-fatal)", exc_info=True)
+            pass
+    return None
+
+
 async def push_aggregate_scores():
     """Push aggregate KPIs as Langfuse scores every 5 minutes."""
     while True:
@@ -414,6 +505,21 @@ router_model_name = router_model_conf.get("model", "qwen-4b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
+
+# --- Resolve llama_server_url from config (os.environ/ pattern) ---
+_raw_llama_url = config.get("llama_server_url") or "http://127.0.0.1:8080"
+if isinstance(_raw_llama_url, str) and _raw_llama_url.startswith("os.environ/"):
+    env_var = _raw_llama_url.split("/", 1)[1]
+    _raw_llama_url = os.environ.get(env_var, "")
+    if not _raw_llama_url:
+        if "pytest" in sys.modules:
+            _raw_llama_url = "http://127.0.0.1:8080"
+        else:
+            logger.warning(
+                "LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
+            )
+            _raw_llama_url = "http://127.0.0.1:8080"
+LLAMA_SERVER_URL = str(_raw_llama_url).rstrip("/")
 
 # Default colors for tool visualization badges and charts
 TOOL_COLORS = {
@@ -971,6 +1077,12 @@ async def lifespan(app: FastAPI):
             await _classifier_client.aclose()
             _classifier_client = None
 
+        # Close llama client
+        global _llama_client
+        if _llama_client is not None:
+            await _llama_client.aclose()
+            _llama_client = None
+
         # Close Redis client
         global _redis_client
         if _redis_client is not None and _redis_client is not False:
@@ -1007,6 +1119,16 @@ async def check_http_endpoint(url: str) -> bool:
     try:
         client = get_http_client()
         r = await client.get(url, timeout=3.0)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+async def _check_llama_health() -> bool:
+    """Check llama-server health using the llama client (verify=False for self-signed TLS)."""
+    try:
+        client = get_llama_client()
+        r = await client.get(f"{LLAMA_SERVER_URL}/health", timeout=3.0)
         return r.status_code < 500
     except Exception:
         return False
@@ -1104,17 +1226,13 @@ async def classify_request(
             latency = (time.time() - start_time) * 1000.0
 
             if response.status_code != 200:
-                if class_span_obj:
-                    try:
-                        class_span_obj.end(
-                            output={
-                                "status": response.status_code,
-                                "error": "classification_failed",
-                            },
-                            metadata={"latency_ms": latency},
-                        )
-                    except Exception:
-                        pass
+                _end_child_span(class_span_obj, 
+                    output={
+                        "status": response.status_code,
+                        "error": "classification_failed",
+                    },
+                    metadata={"latency_ms": latency},
+                )
                 logger.error(
                     f"Classification failed with status {response.status_code}: {response.text}"
                 )
@@ -1141,14 +1259,10 @@ async def classify_request(
                 decision = "agent-advanced-core"
 
             # Finalize classifier child span
-            if class_span_obj:
-                try:
-                    class_span_obj.end(
-                        output={"tier": decision, "raw": raw_result},
-                        metadata={"latency_ms": latency},
-                    )
-                except Exception:
-                    pass
+            _end_child_span(class_span_obj, 
+                output={"tier": decision, "raw": raw_result},
+                metadata={"latency_ms": latency},
+            )
 
             # Store in cache
             triage_cache[normalized_prompt] = (decision, time.time())
@@ -1448,7 +1562,7 @@ async def get_llamacpp_metrics() -> dict:
     """Fetches live model inventory and slot statistics from the local llama-server."""
     result = {"models": [], "slots": [], "build": "unknown"}
     try:
-        client = get_http_client()
+        client = get_llama_client()
         # Fetch model list
         r = await client.get(f"{LLAMA_SERVER_URL}/v1/models", timeout=3.0)
         if r.status_code == 200:
@@ -1878,25 +1992,60 @@ async def chat_completions(request: Request):
 
     client_model = body.get("model", "llm-routing-auto-free")
 
+    # Extract session_id and user_id for Langfuse tracing
+    _trace_session_id = (
+        body.get("session_id")
+        or body.get("session")
+        or request.headers.get("x-session-id")
+    )
+    if _trace_session_id:
+        _trace_session_id = str(_trace_session_id)
+    _trace_user_id = (
+        body.get("user")
+        or request.headers.get("x-user-id")
+    )
+    if _trace_user_id:
+        _trace_user_id = str(_trace_user_id)
+
     # --- Langfuse parent trace: create early so child spans can reference it ---
     langfuse_trace_id = None
     parent_obs = None
+    _prop_ctx = None
+    _is_streaming = body.get("stream", False)
     lf = get_langfuse()
     if lf:
         try:
             langfuse_trace_id = lf.create_trace_id(
                 seed=f"triage_{stats['total_requests']}"
             )
+            # Propagate session_id/user_id via Langfuse's native session mechanism.
+            # For non-streaming: enter here (same asyncio task, contextvars work).
+            # For streaming: each generator creates its own context in its own task
+            # because OpenTelemetry contextvars are task-isolated.
+            if propagate_attributes and (_trace_session_id or _trace_user_id):
+                if not _is_streaming:
+                    _prop_ctx = propagate_attributes(
+                        session_id=_trace_session_id or None,
+                        user_id=_trace_user_id or None,
+                        tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                    )
+                    _prop_ctx.__enter__()
             parent_obs = lf.start_observation(
                 trace_context={"trace_id": langfuse_trace_id},
                 name=f"triage-{client_model}",
                 input=last_user_message[:200],
                 level="DEFAULT",
+                metadata={
+                    "client_model": client_model,
+                    "environment": os.getenv("ENVIRONMENT", "production"),
+                },
             )
         except Exception as e:
             logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
             langfuse_trace_id = None
             parent_obs = None
+            if _prop_ctx:
+                _prop_ctx = _close_prop_ctx(_prop_ctx)
 
     if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
@@ -1922,6 +2071,10 @@ async def chat_completions(request: Request):
             f"Direct routing: Client requested '{client_model}', skipping classifier"
         )
     else:
+        # guard: end parent obs before raising
+        _end_parent_obs(parent_obs,
+            output={"error": f"Unknown model: {client_model}"})
+        _close_prop_ctx(_prop_ctx)
         raise HTTPException(
             status_code=400,
             detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
@@ -2065,6 +2218,17 @@ async def chat_completions(request: Request):
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                             token_count = 0
+                            finalized = False
+                            _native_agy_prop = (
+                                propagate_attributes(
+                                    session_id=_trace_session_id or None,
+                                    user_id=_trace_user_id or None,
+                                    tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                                )
+                                if propagate_attributes and (_trace_session_id or _trace_user_id)
+                                else nullcontext()
+                            )
+                            _native_agy_prop.__enter__()
                             try:
                                 async for token in stream_gen:
                                     if not token:
@@ -2125,33 +2289,49 @@ async def chat_completions(request: Request):
                                 logger.info(
                                     f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms"
                                 )
-                                if agy_span_obj:
-                                    try:
-                                        agy_span_obj.end(
-                                            output={
-                                                "model": model_name,
-                                                "tokens": token_count,
-                                            },
-                                            metadata={
-                                                "latency_ms": latency_ms,
-                                                "tier": target_model,
-                                            },
-                                        )
-                                    except Exception:
-                                        pass
+                                _end_child_span(agy_span_obj, 
+                                    output={
+                                        "model": model_name,
+                                        "tokens": token_count,
+                                    },
+                                    metadata={
+                                        "latency_ms": latency_ms,
+                                        "tier": target_model,
+                                    },
+                                )
+                                # Finalize parent trace for native agy stream
+                                _end_parent_obs(parent_obs,
+                                    output={"model": model_name, "stream": True,
+                                            "tier": target_model, "route": "google_oauth_direct"},
+                                    metadata={"latency_ms": latency_ms,
+                                              "completion_tokens": token_count})
+                                _close_prop_ctx(_native_agy_prop)
+                                finalized = True
                             except Exception as stream_err:
                                 logger.error(
                                     f"Error during native agy stream generation: {type(stream_err).__name__}"
                                 )
-                                if agy_span_obj:
-                                    try:
-                                        agy_span_obj.end(
-                                            output={"error": type(stream_err).__name__},
-                                            metadata={"status": "failed"},
-                                        )
-                                    except Exception:
-                                        pass
+                                _end_child_span(agy_span_obj, 
+                                    output={"error": type(stream_err).__name__},
+                                    metadata={"status": "failed"},
+                                )
+                                # End parent trace on stream error
+                                _end_parent_obs(parent_obs,
+                                    output={"error": type(stream_err).__name__,
+                                            "route": "google_oauth_direct", "stream": True})
+                                _close_prop_ctx(_native_agy_prop)
+                                finalized = True
                                 raise
+                            finally:
+                                if not finalized:
+                                    _end_child_span(agy_span_obj,
+                                        output={"error": "cancelled"},
+                                        metadata={"status": "cancelled"},
+                                    )
+                                    _end_parent_obs(parent_obs,
+                                        output={"error": "cancelled",
+                                                "route": "google_oauth_direct", "stream": True})
+                                    _close_prop_ctx(_native_agy_prop)
 
                         return StreamingResponse(
                             native_agy_stream_generator(
@@ -2181,20 +2361,16 @@ async def chat_completions(request: Request):
                         )
 
                         # Finalize agy span
-                        if agy_span_obj:
-                            try:
-                                agy_span_obj.end(
-                                    output={
-                                        "model": model_name,
-                                        "tokens": completion_tokens,
-                                    },
-                                    metadata={
-                                        "latency_ms": latency_ms,
-                                        "tier": target_model,
-                                    },
-                                )
-                            except Exception:
-                                pass
+                        _end_child_span(agy_span_obj, 
+                            output={
+                                "model": model_name,
+                                "tokens": completion_tokens,
+                            },
+                            metadata={
+                                "latency_ms": latency_ms,
+                                "tier": target_model,
+                            },
+                        )
 
                         if is_stream_requested:
                             # Robust fallback: simulate stream if we requested stream but got buffered response
@@ -2209,9 +2385,39 @@ async def chat_completions(request: Request):
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 chunk_size = 40
-                                for i in range(0, len(content), chunk_size):
-                                    chunk_text = content[i : i + chunk_size]
-                                    chunk_data = {
+                                finalized = False
+                                _agy_gen_prop = (
+                                    propagate_attributes(
+                                        session_id=_trace_session_id or None,
+                                        user_id=_trace_user_id or None,
+                                        tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                                    )
+                                    if propagate_attributes and (_trace_session_id or _trace_user_id)
+                                    else nullcontext()
+                                )
+                                _agy_gen_prop.__enter__()
+                                try:
+                                    for i in range(0, len(content), chunk_size):
+                                        chunk_text = content[i : i + chunk_size]
+                                        chunk_data = {
+                                            "id": chunk_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created_time,
+                                            "model": model_name,
+                                            "choices": [
+                                                {
+                                                    "index": 0,
+                                                    "delta": {"content": chunk_text},
+                                                    "finish_reason": None,
+                                                }
+                                            ],
+                                        }
+                                        yield f"data: {json.dumps(chunk_data)}\n\n".encode(
+                                            "utf-8"
+                                        )
+                                        await asyncio.sleep(0.005)
+
+                                    finish_data = {
                                         "id": chunk_id,
                                         "object": "chat.completion.chunk",
                                         "created": created_time,
@@ -2219,58 +2425,53 @@ async def chat_completions(request: Request):
                                         "choices": [
                                             {
                                                 "index": 0,
-                                                "delta": {"content": chunk_text},
-                                                "finish_reason": None,
+                                                "delta": {},
+                                                "finish_reason": "stop",
                                             }
                                         ],
                                     }
-                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode(
+                                    yield f"data: {json.dumps(finish_data)}\n\n".encode(
                                         "utf-8"
                                     )
-                                    await asyncio.sleep(0.005)
-
-                                finish_data = {
-                                    "id": chunk_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created_time,
-                                    "model": model_name,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {},
-                                            "finish_reason": "stop",
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                    "utf-8"
-                                )
-                                yield b"data: [DONE]\n\n"
+                                    yield b"data: [DONE]\n\n"
+                                    # Finalize parent trace for simulated agy stream
+                                    _end_parent_obs(parent_obs,
+                                        output={"model": model_name, "stream": True,
+                                                "tier": target_model, "route": "google_oauth_direct"},
+                                        metadata={"latency_ms": latency_ms,
+                                                  "completion_tokens": len(content) // 4})
+                                    _close_prop_ctx(_agy_gen_prop)
+                                    finalized = True
+                                finally:
+                                    if not finalized:
+                                        _end_parent_obs(parent_obs,
+                                            output={"error": "cancelled",
+                                                    "route": "google_oauth_direct", "stream": True})
+                                        _close_prop_ctx(_agy_gen_prop)
 
                             return StreamingResponse(
                                 agy_stream_generator(), media_type="text/event-stream"
                             )
                         else:
+                            # Finalize parent trace for non-streaming agy
+                            _end_parent_obs(parent_obs,
+                                output={"model": model_name, "tier": target_model,
+                                        "route": "google_oauth_direct"},
+                                metadata={"latency_ms": latency_ms,
+                                          "completion_tokens": completion_tokens})
+                            _close_prop_ctx(_prop_ctx)
                             return agy_response
         except ImportError:
-            if agy_span_obj:
-                try:
-                    agy_span_obj.end(
-                        output={"error": "module_not_available"},
-                        metadata={"status": "skipped"},
-                    )
-                except Exception:
-                    pass
+            _end_child_span(agy_span_obj, 
+                output={"error": "module_not_available"},
+                metadata={"status": "skipped"},
+            )
             logger.warning("agy_proxy module not available, falling back to LiteLLM")
         except Exception as e:
-            if agy_span_obj:
-                try:
-                    agy_span_obj.end(
-                        output={"error": type(e).__name__},
-                        metadata={"status": "failed"},
-                    )
-                except Exception:
-                    pass
+            _end_child_span(agy_span_obj, 
+                output={"error": type(e).__name__},
+                metadata={"status": "failed"},
+            )
             logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
 
     if target_model == "llm-routing-agy":
@@ -2372,6 +2573,10 @@ async def chat_completions(request: Request):
                     )
                     body_to_send["max_tokens"] = _safe_max
             except HTTPException:
+                _end_child_span(litellm_span_obj,
+                    output={"error": "Context window exceeded"},
+                    metadata={"status": "failed"},
+                )
                 raise
             except Exception as e:
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
@@ -2402,6 +2607,17 @@ async def chat_completions(request: Request):
                         request_tokens = estimate_prompt_tokens(body_to_send)
                         sse_buffer = ""
                         decoder = codecs.getincrementaldecoder("utf-8")()
+                        finalized = False
+                        _litellm_gen_prop = (
+                            propagate_attributes(
+                                session_id=_trace_session_id or None,
+                                user_id=_trace_user_id or None,
+                                tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                            )
+                            if propagate_attributes and (_trace_session_id or _trace_user_id)
+                            else nullcontext()
+                        )
+                        _litellm_gen_prop.__enter__()
                         try:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
@@ -2444,19 +2660,34 @@ async def chat_completions(request: Request):
                                 route="litellm_fallback",
                             ))
                             # Finalize LiteLLM span (streaming path)
-                            if litellm_span_obj:
-                                try:
-                                    litellm_span_obj.end(
-                                        output={"model": model_name, "stream": True},
-                                        metadata={
-                                            "latency_ms": proxy_latency,
-                                            "tokens": completion_chars // 4,
-                                        },
-                                    )
-                                except Exception:
-                                    pass
+                            _end_child_span(litellm_span_obj, 
+                                output={"model": model_name, "stream": True},
+                                metadata={
+                                    "latency_ms": proxy_latency,
+                                    "tokens": completion_chars // 4,
+                                },
+                            )
+                            # Finalize parent trace (streaming path)
+                            _end_parent_obs(parent_obs,
+                                output={"model": model_name, "stream": True,
+                                        "tier": target_model, "route": "litellm_fallback"},
+                                metadata={"latency_ms": proxy_latency,
+                                          "completion_tokens": completion_chars // 4})
+                            _close_prop_ctx(_litellm_gen_prop)
+                            finalized = True
                         except Exception as ex:
                             logger.error(f"Stream error: {ex}")
+                            # End child span before parent on stream error (CodeRabbit: missing finalization)
+                            _end_child_span(litellm_span_obj,
+                                output={"error": type(ex).__name__},
+                                metadata={"status": "failed"},
+                            )
+                            # End parent trace on stream error (before any cooldown logic)
+                            _end_parent_obs(parent_obs,
+                                output={"error": type(ex).__name__, "route": "litellm_fallback",
+                                        "stream": True})
+                            _close_prop_ctx(_litellm_gen_prop)
+                            finalized = True
                             if model_name.startswith("ollama-"):
                                 global _ollama_cooldown_until
                                 _ollama_cooldown_until = (
@@ -2472,6 +2703,15 @@ async def chat_completions(request: Request):
                                         f"Failed to save cooldowns to Valkey: {save_err}"
                                     )
                         finally:
+                            if not finalized:
+                                _end_child_span(litellm_span_obj,
+                                    output={"error": "cancelled"},
+                                    metadata={"status": "cancelled"},
+                                )
+                                _end_parent_obs(parent_obs,
+                                    output={"error": "cancelled", "route": "litellm_fallback",
+                                            "stream": True})
+                                _close_prop_ctx(_litellm_gen_prop)
                             await r.aclose()
 
                     return StreamingResponse(
@@ -2483,6 +2723,11 @@ async def chat_completions(request: Request):
                         f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}"
                     )
                     await r.aclose()
+                    # Finalize child span before raising on stream connection failure
+                    _end_child_span(litellm_span_obj,
+                        output={"status": r.status_code, "error": "litellm_stream_failed"},
+                        metadata={"status": "failed"},
+                    )
                     raise HTTPException(
                         status_code=r.status_code,
                         detail="LiteLLM upstream request failed",
@@ -2523,21 +2768,30 @@ async def chat_completions(request: Request):
                         route="litellm_fallback",
                     ))
                     # Finalize LiteLLM span (non-streaming path)
-                    if litellm_span_obj:
-                        try:
-                            litellm_span_obj.end(
-                                output={
-                                    "model": model_name,
-                                    "tokens": completion_tokens,
-                                },
-                                metadata={"latency_ms": proxy_latency},
-                            )
-                        except Exception:
-                            pass
+                    _end_child_span(litellm_span_obj, 
+                        output={
+                            "model": model_name,
+                            "tokens": completion_tokens,
+                        },
+                        metadata={"latency_ms": proxy_latency},
+                    )
+                    # Finalize parent trace (non-streaming path)
+                    _end_parent_obs(parent_obs,
+                        output={"model": model_name, "tier": target_model,
+                                "route": "litellm_fallback"},
+                        metadata={"latency_ms": proxy_latency,
+                                  "prompt_tokens": prompt_tokens,
+                                  "completion_tokens": completion_tokens})
+                    _close_prop_ctx(_prop_ctx)
                     return resp_json
                 else:
                     logger.warning(
                         f"LiteLLM failed ({response.status_code}): {response.text[:300]}"
+                    )
+                    # Finalize child span before raising on non-200 response
+                    _end_child_span(litellm_span_obj,
+                        output={"status": response.status_code, "error": "litellm_upstream_failed"},
+                        metadata={"status": "failed"},
                     )
                     raise HTTPException(
                         status_code=response.status_code,
@@ -2547,6 +2801,11 @@ async def chat_completions(request: Request):
             raise
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
+            # Finalize child span before raising on proxy exception
+            _end_child_span(litellm_span_obj,
+                output={"error": type(exc).__name__},
+                metadata={"status": "failed"},
+            )
             raise HTTPException(
                 status_code=502, detail="Proxy call failed"
             ) from exc
@@ -2572,10 +2831,19 @@ async def chat_completions(request: Request):
                 logger.info(
                     f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)"
                 )
-                return await execute_proxy(original_target_model)
+                try:
+                    return await execute_proxy(original_target_model)
+                except HTTPException:
+                    _end_parent_obs(parent_obs,
+                        output={"error": "all_backends_failed", "route": "ollama_cooldown_fallback"})
+                    _close_prop_ctx(_prop_ctx)
+                    raise
             else:
                 # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
                 # skips this model group and moves to openrouter-auto
+                _end_parent_obs(parent_obs,
+                    output={"error": "ollama_cooldown", "route": "ollama"})
+                _close_prop_ctx(_prop_ctx)
                 raise HTTPException(
                     status_code=429,
                     detail=f"Ollama backend cooled down ({remaining}s remaining)",
@@ -2601,8 +2869,17 @@ async def chat_completions(request: Request):
                     logger.warning(
                         f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}"
                     )
-                    return await execute_proxy(original_target_model)
+                    try:
+                        return await execute_proxy(original_target_model)
+                    except HTTPException:
+                        _end_parent_obs(parent_obs,
+                            output={"error": "all_backends_failed", "route": "ollama_fallback"})
+                        _close_prop_ctx(_prop_ctx)
+                        raise
                 else:
+                    _end_parent_obs(parent_obs,
+                        output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise e
             else:
                 # Direct/fallback llm-routing-ollama request
@@ -2610,11 +2887,17 @@ async def chat_completions(request: Request):
                     logger.error(
                         f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429"
                     )
+                    _end_parent_obs(parent_obs,
+                        output={"error": "ollama_rate_limited", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise HTTPException(
                         status_code=429,
                         detail="Ollama backend rate limited/unavailable",
                     ) from e
                 else:
+                    _end_parent_obs(parent_obs,
+                        output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise e
         except Exception as e:
             # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
@@ -2630,13 +2913,28 @@ async def chat_completions(request: Request):
                 logger.warning(
                     f"Ollama proxy error ({e}), falling back to free tier {original_target_model}"
                 )
-                return await execute_proxy(original_target_model)
+                try:
+                    return await execute_proxy(original_target_model)
+                except HTTPException:
+                    _end_parent_obs(parent_obs,
+                        output={"error": "all_backends_failed", "route": "ollama_unexpected_fallback"})
+                    _close_prop_ctx(_prop_ctx)
+                    raise
             else:
+                _end_parent_obs(parent_obs,
+                    output={"error": type(e).__name__, "route": "ollama"})
+                _close_prop_ctx(_prop_ctx)
                 raise HTTPException(
                     status_code=429, detail="Ollama backend rate limited/unavailable"
                 ) from e
     else:
-        return await execute_proxy(target_model)
+        try:
+            return await execute_proxy(target_model)
+        except HTTPException:
+            _end_parent_obs(parent_obs,
+                output={"error": "all_backends_failed", "route": "default_proxy"})
+            _close_prop_ctx(_prop_ctx)
+            raise
 
 
 @app.get("/metrics")
@@ -2758,7 +3056,7 @@ async def get_dashboard_data():
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", _valkey_port()),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/"),
-        check_http_endpoint(f"{LLAMA_SERVER_URL}/health"),
+        asyncio.wait_for(_check_llama_health(), timeout=3.0),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}"),
         get_gemini_oauth_status(),
         asyncio.wait_for(get_best_free_model(), timeout=5.0),

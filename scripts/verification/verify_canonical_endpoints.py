@@ -71,6 +71,8 @@ def load_env(dev: bool = False) -> dict:
         "public_base_url": (os.environ.get("PUBLIC_BASE_URL") or env.get("PUBLIC_BASE_URL") or "").rstrip("/"),
         "minio_s3_port": os.environ.get("MINIO_S3_PORT") or env.get("MINIO_S3_PORT") or "9002",
         "clickhouse_http_port": os.environ.get("CLICKHOUSE_HTTP_PORT") or env.get("CLICKHOUSE_HTTP_PORT") or "8123",
+        "langfuse_public_key": os.environ.get("LANGFUSE_PUBLIC_KEY") or env.get("LANGFUSE_PUBLIC_KEY") or "",
+        "langfuse_secret_key": os.environ.get("LANGFUSE_SECRET_KEY") or env.get("LANGFUSE_SECRET_KEY") or "",
     }
 
 
@@ -365,6 +367,187 @@ def test_litellm_direct_chat(cfg: dict) -> tuple[int, int]:
     return passed, total
 
 
+def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
+    """Verify Langfuse session/user propagation and no cross-request leak.
+
+    1. Send a chat request WITH session_id + user, verify trace has them.
+    2. Send a second chat request WITHOUT session info, verify NO leak.
+    Returns (passed, total).
+    """
+    router_base = f"http://127.0.0.1:{cfg['router_port']}"
+    lf_host = cfg["langfuse_web_port"]
+    lf_base = f"http://127.0.0.1:{lf_host}"
+    pk = cfg["langfuse_public_key"]
+    sk = cfg["langfuse_secret_key"]
+    key = cfg["router_api_key"]
+
+    if not pk or not sk:
+        print(
+            "\n── Langfuse session propagation — SKIPPED "
+            "(LANGFUSE_PUBLIC_KEY/SECRET_KEY not set) ──"
+        )
+        return 0, 0
+
+    auth = (pk, sk)
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    session_id = f"e2e-verify-{os.urandom(4).hex()}"
+    user_id = "verify-script"
+    passed = total = 0
+
+    print("\n── Langfuse session propagation ──")
+
+    # --- Step 1: Request WITH session ---
+    total += 1
+    payload = {
+        "model": "agent-simple-core",
+        "messages": [{"role": "user", "content": "Say 'test' and nothing else."}],
+        "max_tokens": 5,
+        "session_id": session_id,
+        "user": user_id,
+    }
+    try:
+        r = httpx.post(
+            f"{router_base}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=120,
+        )
+        if r.status_code != 200:
+            passed += check(
+                "Session request (200)", False,
+                f"HTTP {r.status_code}: {r.text[:100]}"
+            )
+            return passed, total
+        passed += check("Session request (200)", True, session_id[:16])
+    except Exception as e:
+        passed += check("Session request (200)", False, str(e)[:100])
+        return passed, total
+
+    # Wait for Langfuse SDK auto-flush (poll up to 10s)
+    session_trace_id = None
+    _attempt = 0
+    for _attempt in range(10):
+        time.sleep(1)
+        try:
+            resp = httpx.get(
+                f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
+                auth=auth, timeout=10,
+            )
+            if resp.status_code != 200:
+                continue
+            traces = resp.json().get("data", [])
+            for t in traces:
+                if t.get("sessionId") == session_id and t.get("userId") == user_id:
+                    session_trace_id = t["id"]
+                    break
+            if session_trace_id:
+                break
+        except Exception:
+            continue
+
+    # Report session trace result
+    total += 1
+    if session_trace_id:
+        passed += check(
+            "Trace has session+user", True,
+            f"session={session_id[:12]} user={user_id} (found after {_attempt+1}s)",
+        )
+    else:
+        passed += check(
+            "Trace has session+user", False,
+            f"session={session_id[:12]} not found after 10s polling",
+        )
+
+    # --- Step 2: Request WITHOUT session (leak test) ---
+    total += 1
+    payload_no_session = {
+        "model": "agent-simple-core",
+        "messages": [{"role": "user", "content": "Say 'leaktest' and nothing else."}],
+        "max_tokens": 5,
+    }
+    try:
+        r2 = httpx.post(
+            f"{router_base}/v1/chat/completions",
+            json=payload_no_session,
+            headers=headers,
+            timeout=120,
+        )
+        if r2.status_code != 200:
+            passed += check(
+                "No-session request (200)", False,
+                f"HTTP {r2.status_code}: {r2.text[:100]}"
+            )
+            return passed, total
+        passed += check("No-session request (200)", True, "clean")
+    except Exception as e:
+        passed += check("No-session request (200)", False, str(e)[:100])
+        return passed, total
+
+    # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check)
+    no_session_trace_found = False
+    traces2 = []
+    for _attempt2 in range(10):
+        time.sleep(1)
+        try:
+            resp2 = httpx.get(
+                f"{lf_base}/api/public/traces?page=1&limit=10&orderBy=timestamp.desc",
+                auth=auth, timeout=10,
+            )
+            if resp2.status_code != 200:
+                continue
+            traces2 = resp2.json().get("data", [])
+            # Check for traces created after the session request
+            recent_ids = {t["id"] for t in traces2}
+            if session_trace_id and session_trace_id in recent_ids:
+                no_session_trace_found = True
+                break
+            # If session trace hasn't appeared yet, continue waiting
+            if not session_trace_id:
+                # Session trace was never found in step 1; leak check is inconclusive.
+                # Poll for remaining time, then break without a definitive answer.
+                if _attempt2 >= 5 and len(traces2) > 0:
+                    break
+        except Exception:
+            continue
+
+    # Report leak test result
+    # If session_trace_id was never found in step 1, the leak check is inconclusive.
+    # We cannot distinguish between "no leak" and "session trace still unflushed."
+    # Don't count this as a failure — just warn and move on.
+    if session_trace_id is None:
+        print("  ⚠ No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
+        return passed, total
+    total += 1
+    leaked = False
+    if no_session_trace_found and traces2:
+        leaked = any(
+            t.get("sessionId") == session_id and t.get("id") != session_trace_id
+            for t in traces2
+        )
+    elif _attempt2 == 9:
+        passed += check(
+            "No session leak", False,
+            "Traces not flushed within 10s — cannot verify leak",
+        )
+        return passed, total
+
+    if leaked:
+        passed += check(
+            "No session leak", False,
+            "Previous session leaked into no-session request!"
+        )
+    else:
+        passed += check(
+            "No session leak", True,
+            f"{len(traces2)} recent traces clean (excluded known session trace)"
+        )
+
+    return passed, total
+
+
 def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set).
     Returns (passed, total, skipped)."""
@@ -460,6 +643,7 @@ def main():
         ("Infrastructure", test_infra_health),
         ("E2E chat (router)", test_e2e_chat),
         ("LiteLLM direct chat", test_litellm_direct_chat),
+        ("Langfuse session propagation", test_langfuse_session_propagation),
         ("Canonical URLs", test_canonical_urls),
     ]:
         result = fn(cfg)
