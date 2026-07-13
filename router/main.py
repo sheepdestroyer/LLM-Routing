@@ -44,12 +44,6 @@ _redis_last_init_attempt = 0.0
 _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
 
-
-
-_redis_client = None
-_redis_last_init_attempt = 0.0
-_REDIS_RETRY_INTERVAL_SECONDS = 5.0
-
 def _valkey_port() -> int:
     """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
     port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
@@ -334,7 +328,7 @@ def _end_parent_obs(parent_obs, output=None, metadata=None) -> None:
     Non-fatal — swallows all exceptions.
     """
     if parent_obs is None:
-        return None
+        return
     try:
         update_kwargs = {}
         if output is not None:
@@ -347,7 +341,7 @@ def _end_parent_obs(parent_obs, output=None, metadata=None) -> None:
     except Exception:
         logger.debug("_end_parent_obs failed (non-fatal)", exc_info=True)
         pass
-        return None
+        return
 
 
 def _end_child_span(span, output=None, metadata=None) -> None:
@@ -383,7 +377,7 @@ def _close_prop_ctx(prop_ctx):
         except Exception:
             logger.debug("_close_prop_ctx failed (non-fatal)", exc_info=True)
             pass
-    return None
+    return
 
 
 def _make_prop_ctx(session_id, user_id):
@@ -2231,8 +2225,7 @@ async def chat_completions(request: Request):
                             # Real native stream generator
                             async def native_agy_stream_generator(stream_gen, model_name):
                                 """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
-                                import uuid
-
+                                import time
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 token_count = 0
@@ -2393,8 +2386,6 @@ async def chat_completions(request: Request):
 
                                 async def agy_stream_generator():
                                     """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
-                                    import uuid
-
                                     created_time = int(time.time())
                                     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                     chunk_size = 40
@@ -2612,7 +2603,15 @@ async def chat_completions(request: Request):
                     body_to_send["metadata"], dict
                 ):
                     body_to_send["metadata"] = {}
+                else:
+                    # Deep-copy to avoid mutating original body's metadata
+                    # during fallback retries (shallow copy shares the dict)
+                    body_to_send["metadata"] = dict(body_to_send["metadata"])
                 body_to_send["metadata"]["trace_name"] = "agent-completion"
+                if _trace_session_id:
+                    body_to_send["metadata"]["session_id"] = _trace_session_id
+                if _trace_user_id:
+                    body_to_send["metadata"]["trace_user_id"] = _trace_user_id
 
                 if body.get("stream", False):
                     logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
