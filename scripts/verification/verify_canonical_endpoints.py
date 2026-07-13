@@ -426,40 +426,40 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         passed += check("Session request (200)", False, str(e)[:100])
         return passed, total
 
-    # Wait for Langfuse flush (async background task)
-    time.sleep(2)
-
-    # Query Langfuse for trace with our session
-    total += 1
+    # Wait for Langfuse SDK auto-flush (poll up to 10s)
     session_trace_id = None
-    try:
-        resp = httpx.get(
-            f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
-            auth=auth, timeout=10,
-        )
-        if resp.status_code != 200:
-            passed += check(
-                "Trace has session", False,
-                f"Langfuse API HTTP {resp.status_code}"
+    _attempt = 0
+    for _attempt in range(10):
+        time.sleep(1)
+        try:
+            resp = httpx.get(
+                f"{lf_base}/api/public/traces?page=1&limit=20&orderBy=timestamp.desc",
+                auth=auth, timeout=10,
             )
-            return passed, total
-        traces = resp.json().get("data", [])
-        for t in traces:
-            if t.get("sessionId") == session_id and t.get("userId") == user_id:
-                session_trace_id = t["id"]
-                passed += check(
-                    "Trace has session+user",
-                    True,
-                    f"session={session_id[:12]} user={user_id}",
-                )
+            if resp.status_code != 200:
+                continue
+            traces = resp.json().get("data", [])
+            for t in traces:
+                if t.get("sessionId") == session_id and t.get("userId") == user_id:
+                    session_trace_id = t["id"]
+                    break
+            if session_trace_id:
                 break
-        if not session_trace_id:
-            passed += check(
-                "Trace has session+user", False,
-                f"session={session_id[:12]} not found in {len(traces)} recent traces"
-            )
-    except Exception as e:
-        passed += check("Trace has session+user", False, str(e)[:100])
+        except Exception:
+            continue
+
+    # Report session trace result
+    total += 1
+    if session_trace_id:
+        passed += check(
+            "Trace has session+user", True,
+            f"session={session_id[:12]} user={user_id} (found after {_attempt+1}s)",
+        )
+    else:
+        passed += check(
+            "Trace has session+user", False,
+            f"session={session_id[:12]} not found after 10s polling",
+        )
 
     # --- Step 2: Request WITHOUT session (leak test) ---
     total += 1
@@ -486,41 +486,58 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         passed += check("No-session request (200)", False, str(e)[:100])
         return passed, total
 
-    # Wait for flush
-    time.sleep(2)
-
-    # Verify second request's traces have no session (exclude the known
-    # session trace from step 1 — it may still be in recent results)
-    total += 1
-    try:
-        resp2 = httpx.get(
-            f"{lf_base}/api/public/traces?page=1&limit=10&orderBy=timestamp.desc",
-            auth=auth, timeout=10,
-        )
-        if resp2.status_code != 200:
-            passed += check(
-                "No session leak", False,
-                f"Langfuse API HTTP {resp2.status_code}"
+    # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check)
+    no_session_trace_found = False
+    traces2 = []
+    for _attempt2 in range(10):
+        time.sleep(1)
+        try:
+            resp2 = httpx.get(
+                f"{lf_base}/api/public/traces?page=1&limit=10&orderBy=timestamp.desc",
+                auth=auth, timeout=10,
             )
-            return passed, total
-        traces2 = resp2.json().get("data", [])
-        # Filter out the known session trace from step 1
+            if resp2.status_code != 200:
+                continue
+            traces2 = resp2.json().get("data", [])
+            # Check for traces created after the session request
+            recent_ids = {t["id"] for t in traces2}
+            if session_trace_id and session_trace_id in recent_ids:
+                no_session_trace_found = True
+                break
+            # If session trace hasn't appeared yet, continue waiting
+            if not session_trace_id:
+                # Session trace was never found; check if new traces exist at all
+                if len(traces2) > 0:
+                    no_session_trace_found = True
+                    break
+        except Exception:
+            continue
+
+    # Report leak test result
+    total += 1
+    leaked = False
+    if no_session_trace_found and traces2:
         leaked = any(
             t.get("sessionId") == session_id and t.get("id") != session_trace_id
             for t in traces2
         )
-        if leaked:
-            passed += check(
-                "No session leak", False,
-                "Previous session leaked into no-session request!"
-            )
-        else:
-            passed += check(
-                "No session leak", True,
-                f"{len(traces2)} recent traces clean (excluded known session trace)"
-            )
-    except Exception as e:
-        passed += check("No session leak", False, str(e)[:100])
+    elif _attempt2 == 9:
+        passed += check(
+            "No session leak", False,
+            "Traces not flushed within 10s — cannot verify leak",
+        )
+        return passed, total
+
+    if leaked:
+        passed += check(
+            "No session leak", False,
+            "Previous session leaked into no-session request!"
+        )
+    else:
+        passed += check(
+            "No session leak", True,
+            f"{len(traces2)} recent traces clean (excluded known session trace)"
+        )
 
     return passed, total
 
