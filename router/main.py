@@ -27,6 +27,11 @@ except ImportError:
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
 from typing import Dict, Optional, Union
 
+try:
+    from langfuse import propagate_attributes  # noqa: F401
+except ImportError:
+    propagate_attributes = None
+
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
 LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
@@ -1992,12 +1997,21 @@ async def chat_completions(request: Request):
     # --- Langfuse parent trace: create early so child spans can reference it ---
     langfuse_trace_id = None
     parent_obs = None
+    _prop_ctx = None
     lf = get_langfuse()
     if lf:
         try:
             langfuse_trace_id = lf.create_trace_id(
                 seed=f"triage_{stats['total_requests']}"
             )
+            # Propagate session_id/user_id via Langfuse's native session mechanism
+            if propagate_attributes and (_trace_session_id or _trace_user_id):
+                _prop_ctx = propagate_attributes(
+                    session_id=_trace_session_id or None,
+                    user_id=_trace_user_id or None,
+                    tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
+                )
+                _prop_ctx.__enter__()
             parent_obs = lf.start_observation(
                 trace_context={"trace_id": langfuse_trace_id},
                 name=f"triage-{client_model}",
@@ -2006,15 +2020,18 @@ async def chat_completions(request: Request):
                 metadata={
                     "client_model": client_model,
                     "environment": os.getenv("ENVIRONMENT", "production"),
-                    "session_id": _trace_session_id or "",
-                    "user_id": _trace_user_id or "",
-                    "tags": [os.getenv("ENVIRONMENT", "production"), "llm-routing"],
                 },
             )
         except Exception as e:
             logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
             langfuse_trace_id = None
             parent_obs = None
+            if _prop_ctx:
+                try:
+                    _prop_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
+                _prop_ctx = None
 
     if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
         # Full pipeline: classify → route to best tier
@@ -2187,6 +2204,7 @@ async def chat_completions(request: Request):
                             created_time = int(time.time())
                             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                             token_count = 0
+                            finalized = False
                             try:
                                 async for token in stream_gen:
                                     if not token:
@@ -2266,6 +2284,7 @@ async def chat_completions(request: Request):
                                 _flush_task = asyncio.create_task(_flush_langfuse_async())
                                 _background_tasks.add(_flush_task)
                                 _flush_task.add_done_callback(_background_tasks.discard)
+                                finalized = True
                             except Exception as stream_err:
                                 logger.error(
                                     f"Error during native agy stream generation: {type(stream_err).__name__}"
@@ -2281,7 +2300,20 @@ async def chat_completions(request: Request):
                                 _flush_task = asyncio.create_task(_flush_langfuse_async())
                                 _background_tasks.add(_flush_task)
                                 _flush_task.add_done_callback(_background_tasks.discard)
+                                finalized = True
                                 raise
+                            finally:
+                                if not finalized:
+                                    _end_child_span(agy_span_obj,
+                                        output={"error": "cancelled"},
+                                        metadata={"status": "cancelled"},
+                                    )
+                                    _end_parent_obs(parent_obs,
+                                        output={"error": "cancelled",
+                                                "route": "google_oauth_direct", "stream": True})
+                                    _flush_task = asyncio.create_task(_flush_langfuse_async())
+                                    _background_tasks.add(_flush_task)
+                                    _flush_task.add_done_callback(_background_tasks.discard)
 
                         return StreamingResponse(
                             native_agy_stream_generator(
@@ -2335,9 +2367,29 @@ async def chat_completions(request: Request):
                                 created_time = int(time.time())
                                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                                 chunk_size = 40
-                                for i in range(0, len(content), chunk_size):
-                                    chunk_text = content[i : i + chunk_size]
-                                    chunk_data = {
+                                finalized = False
+                                try:
+                                    for i in range(0, len(content), chunk_size):
+                                        chunk_text = content[i : i + chunk_size]
+                                        chunk_data = {
+                                            "id": chunk_id,
+                                            "object": "chat.completion.chunk",
+                                            "created": created_time,
+                                            "model": model_name,
+                                            "choices": [
+                                                {
+                                                    "index": 0,
+                                                    "delta": {"content": chunk_text},
+                                                    "finish_reason": None,
+                                                }
+                                            ],
+                                        }
+                                        yield f"data: {json.dumps(chunk_data)}\n\n".encode(
+                                            "utf-8"
+                                        )
+                                        await asyncio.sleep(0.005)
+
+                                    finish_data = {
                                         "id": chunk_id,
                                         "object": "chat.completion.chunk",
                                         "created": created_time,
@@ -2345,42 +2397,33 @@ async def chat_completions(request: Request):
                                         "choices": [
                                             {
                                                 "index": 0,
-                                                "delta": {"content": chunk_text},
-                                                "finish_reason": None,
+                                                "delta": {},
+                                                "finish_reason": "stop",
                                             }
                                         ],
                                     }
-                                    yield f"data: {json.dumps(chunk_data)}\n\n".encode(
+                                    yield f"data: {json.dumps(finish_data)}\n\n".encode(
                                         "utf-8"
                                     )
-                                    await asyncio.sleep(0.005)
-
-                                finish_data = {
-                                    "id": chunk_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created_time,
-                                    "model": model_name,
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {},
-                                            "finish_reason": "stop",
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                    "utf-8"
-                                )
-                                yield b"data: [DONE]\n\n"
-                                # Finalize parent trace for simulated agy stream
-                                _end_parent_obs(parent_obs,
-                                    output={"model": model_name, "stream": True,
-                                            "tier": target_model, "route": "google_oauth_direct"},
-                                    metadata={"latency_ms": latency_ms,
-                                              "completion_tokens": len(content) // 4})
-                                _flush_task = asyncio.create_task(_flush_langfuse_async())
-                                _background_tasks.add(_flush_task)
-                                _flush_task.add_done_callback(_background_tasks.discard)
+                                    yield b"data: [DONE]\n\n"
+                                    # Finalize parent trace for simulated agy stream
+                                    _end_parent_obs(parent_obs,
+                                        output={"model": model_name, "stream": True,
+                                                "tier": target_model, "route": "google_oauth_direct"},
+                                        metadata={"latency_ms": latency_ms,
+                                                  "completion_tokens": len(content) // 4})
+                                    _flush_task = asyncio.create_task(_flush_langfuse_async())
+                                    _background_tasks.add(_flush_task)
+                                    _flush_task.add_done_callback(_background_tasks.discard)
+                                    finalized = True
+                                finally:
+                                    if not finalized:
+                                        _end_parent_obs(parent_obs,
+                                            output={"error": "cancelled",
+                                                    "route": "google_oauth_direct", "stream": True})
+                                        _flush_task = asyncio.create_task(_flush_langfuse_async())
+                                        _background_tasks.add(_flush_task)
+                                        _flush_task.add_done_callback(_background_tasks.discard)
 
                             return StreamingResponse(
                                 agy_stream_generator(), media_type="text/event-stream"
@@ -2536,6 +2579,7 @@ async def chat_completions(request: Request):
                         request_tokens = estimate_prompt_tokens(body_to_send)
                         sse_buffer = ""
                         decoder = codecs.getincrementaldecoder("utf-8")()
+                        finalized = False
                         try:
                             async for chunk in r.aiter_bytes():
                                 yield chunk
@@ -2594,6 +2638,7 @@ async def chat_completions(request: Request):
                             _flush_task = asyncio.create_task(_flush_langfuse_async())
                             _background_tasks.add(_flush_task)
                             _flush_task.add_done_callback(_background_tasks.discard)
+                            finalized = True
                         except Exception as ex:
                             logger.error(f"Stream error: {ex}")
                             # End child span before parent on stream error (CodeRabbit: missing finalization)
@@ -2608,6 +2653,7 @@ async def chat_completions(request: Request):
                             _flush_task = asyncio.create_task(_flush_langfuse_async())
                             _background_tasks.add(_flush_task)
                             _flush_task.add_done_callback(_background_tasks.discard)
+                            finalized = True
                             if model_name.startswith("ollama-"):
                                 global _ollama_cooldown_until
                                 _ollama_cooldown_until = (
@@ -2623,6 +2669,17 @@ async def chat_completions(request: Request):
                                         f"Failed to save cooldowns to Valkey: {save_err}"
                                     )
                         finally:
+                            if not finalized:
+                                _end_child_span(litellm_span_obj,
+                                    output={"error": "cancelled"},
+                                    metadata={"status": "cancelled"},
+                                )
+                                _end_parent_obs(parent_obs,
+                                    output={"error": "cancelled", "route": "litellm_fallback",
+                                            "stream": True})
+                                _flush_task = asyncio.create_task(_flush_langfuse_async())
+                                _background_tasks.add(_flush_task)
+                                _flush_task.add_done_callback(_background_tasks.discard)
                             await r.aclose()
 
                     return StreamingResponse(
