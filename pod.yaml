@@ -69,7 +69,7 @@ spec:
       value: 'LITELLM_PORT_PLACEHOLDER'
     - name: POSTGRES_PORT
       value: 'POSTGRES_PORT_PLACEHOLDER'
-    image: ghcr.io/berriai/litellm:v1.91.1
+    image: ghcr.io/berriai/litellm:v1.92.0
     livenessProbe:
       exec:
         command:
