@@ -343,6 +343,7 @@ def _end_parent_obs(parent_obs, output=None, metadata=None) -> None:
             parent_obs.update(**update_kwargs)
         parent_obs.end()
     except Exception:
+        logger.debug("_end_parent_obs failed (non-fatal)", exc_info=True)
         pass
 
 
@@ -363,6 +364,7 @@ def _end_child_span(span, output=None, metadata=None) -> None:
             span.update(**update_kwargs)
         span.end()
     except Exception:
+        logger.debug("_end_child_span failed (non-fatal)", exc_info=True)
         pass
 
 
@@ -376,6 +378,7 @@ def _close_prop_ctx(prop_ctx):
         try:
             prop_ctx.__exit__(None, None, None)
         except Exception:
+            logger.debug("_close_prop_ctx failed (non-fatal)", exc_info=True)
             pass
     return None
 
@@ -2503,9 +2506,6 @@ async def chat_completions(request: Request):
         backend_conf = backends.get(model_name)
         if not backend_conf:
             logger.error(f"Backend '{model_name}' not found in configuration backends.")
-            _end_parent_obs(parent_obs,
-                output={"error": f"Backend {model_name} misconfigured"})
-            _close_prop_ctx(_prop_ctx)
             raise HTTPException(
                 status_code=500, detail=f"Backend {model_name} misconfigured"
             )
@@ -2572,9 +2572,10 @@ async def chat_completions(request: Request):
                     )
                     body_to_send["max_tokens"] = _safe_max
             except HTTPException:
-                _end_parent_obs(parent_obs,
-                    output={"error": "Context window exceeded"})
-                _close_prop_ctx(_prop_ctx)
+                _end_child_span(litellm_span_obj,
+                    output={"error": "Context window exceeded"},
+                    metadata={"status": "failed"},
+                )
                 raise
             except Exception as e:
                 logger.warning(f"Pre-screening failed (non-fatal): {e}")
@@ -2721,15 +2722,11 @@ async def chat_completions(request: Request):
                         f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}"
                     )
                     await r.aclose()
-                    # Finalize traces before raising on stream connection failure
+                    # Finalize child span before raising on stream connection failure
                     _end_child_span(litellm_span_obj,
                         output={"status": r.status_code, "error": "litellm_stream_failed"},
                         metadata={"status": "failed"},
                     )
-                    _end_parent_obs(parent_obs,
-                        output={"error": f"HTTP {r.status_code}", "route": "litellm_fallback",
-                                "stream": True})
-                    _close_prop_ctx(_prop_ctx)
                     raise HTTPException(
                         status_code=r.status_code,
                         detail="LiteLLM upstream request failed",
@@ -2790,15 +2787,11 @@ async def chat_completions(request: Request):
                     logger.warning(
                         f"LiteLLM failed ({response.status_code}): {response.text[:300]}"
                     )
-                    # Finalize traces before raising on non-200 response
+                    # Finalize child span before raising on non-200 response
                     _end_child_span(litellm_span_obj,
                         output={"status": response.status_code, "error": "litellm_upstream_failed"},
                         metadata={"status": "failed"},
                     )
-                    _end_parent_obs(parent_obs,
-                        output={"error": f"HTTP {response.status_code}",
-                                "route": "litellm_fallback"})
-                    _close_prop_ctx(_prop_ctx)
                     raise HTTPException(
                         status_code=response.status_code,
                         detail="LiteLLM upstream request failed",
@@ -2807,14 +2800,11 @@ async def chat_completions(request: Request):
             raise
         except Exception as exc:
             logger.error(f"httpx call failed: {exc}")
-            # Finalize traces before raising on proxy exception
+            # Finalize child span before raising on proxy exception
             _end_child_span(litellm_span_obj,
                 output={"error": type(exc).__name__},
                 metadata={"status": "failed"},
             )
-            _end_parent_obs(parent_obs,
-                output={"error": type(exc).__name__, "route": "litellm_fallback"})
-            _close_prop_ctx(_prop_ctx)
             raise HTTPException(
                 status_code=502, detail="Proxy call failed"
             ) from exc
@@ -2840,7 +2830,13 @@ async def chat_completions(request: Request):
                 logger.info(
                     f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)"
                 )
-                return await execute_proxy(original_target_model)
+                try:
+                    return await execute_proxy(original_target_model)
+                except HTTPException:
+                    _end_parent_obs(parent_obs,
+                        output={"error": "all_backends_failed", "route": "ollama_cooldown_fallback"})
+                    _close_prop_ctx(_prop_ctx)
+                    raise
             else:
                 # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
                 # skips this model group and moves to openrouter-auto
@@ -2872,8 +2868,17 @@ async def chat_completions(request: Request):
                     logger.warning(
                         f"Ollama proxy failed ({e.detail}), falling back to free tier {original_target_model}"
                     )
-                    return await execute_proxy(original_target_model)
+                    try:
+                        return await execute_proxy(original_target_model)
+                    except HTTPException:
+                        _end_parent_obs(parent_obs,
+                            output={"error": "all_backends_failed", "route": "ollama_fallback"})
+                        _close_prop_ctx(_prop_ctx)
+                        raise
                 else:
+                    _end_parent_obs(parent_obs,
+                        output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise e
             else:
                 # Direct/fallback llm-routing-ollama request
@@ -2889,6 +2894,9 @@ async def chat_completions(request: Request):
                         detail="Ollama backend rate limited/unavailable",
                     ) from e
                 else:
+                    _end_parent_obs(parent_obs,
+                        output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                    _close_prop_ctx(_prop_ctx)
                     raise e
         except Exception as e:
             # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
@@ -2904,7 +2912,13 @@ async def chat_completions(request: Request):
                 logger.warning(
                     f"Ollama proxy error ({e}), falling back to free tier {original_target_model}"
                 )
-                return await execute_proxy(original_target_model)
+                try:
+                    return await execute_proxy(original_target_model)
+                except HTTPException:
+                    _end_parent_obs(parent_obs,
+                        output={"error": "all_backends_failed", "route": "ollama_unexpected_fallback"})
+                    _close_prop_ctx(_prop_ctx)
+                    raise
             else:
                 _end_parent_obs(parent_obs,
                     output={"error": type(e).__name__, "route": "ollama"})
@@ -2913,7 +2927,13 @@ async def chat_completions(request: Request):
                     status_code=429, detail="Ollama backend rate limited/unavailable"
                 ) from e
     else:
-        return await execute_proxy(target_model)
+        try:
+            return await execute_proxy(target_model)
+        except HTTPException:
+            _end_parent_obs(parent_obs,
+                output={"error": "all_backends_failed", "route": "default_proxy"})
+            _close_prop_ctx(_prop_ctx)
+            raise
 
 
 @app.get("/metrics")
