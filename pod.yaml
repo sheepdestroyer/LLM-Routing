@@ -377,7 +377,7 @@ spec:
       value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse:3.212.0
+    image: langfuse/langfuse:3.214.0
     livenessProbe:
       exec:
         command:
