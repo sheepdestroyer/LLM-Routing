@@ -8,7 +8,7 @@ The gateway exposes a unified OpenAI-compatible endpoint that dynamically assess
 
 ## 1. System Architecture
 
-The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
+The gateway runs as a rootless Podman pod (`prod-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
 
 ### High-Level Topology
 
@@ -397,10 +397,10 @@ Run the startup script from the root of the repository:
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
 
 ### 2. Verify Container Status
-Check that all **10 containers** inside `agent-router-pod` are up and running:
+Check that all **10 containers** inside `prod-router-pod` are up and running:
 ```bash
 podman pod ps
-podman ps --pod --filter pod=agent-router-pod
+podman ps --pod --filter pod=prod-router-pod
 ```
 Your output should display:
 * `valkey-cache` (Redis-compatible cache)
@@ -491,7 +491,7 @@ curl -s http://127.0.0.1:5000/v1/chat/completions \
 
 Check the triage classification and model cascades by viewing the router container's standard output logs:
 ```bash
-podman logs agent-router-pod-llm-triage-router
+podman logs prod-router-pod-llm-triage-router
 ```
 
 ---

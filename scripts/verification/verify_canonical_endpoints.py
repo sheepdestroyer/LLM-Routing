@@ -657,7 +657,7 @@ def main():
         "--dev", action="store_true", help="Test dev environment (dev-router-pod)"
     )
     parser.add_argument(
-        "--prod", action="store_true", help="Test prod environment (agent-router-pod, default)"
+        "--prod", action="store_true", help="Test prod environment (prod-router-pod, default)"
     )
     args = parser.parse_args()
 
