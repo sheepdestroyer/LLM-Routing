@@ -71,6 +71,24 @@ def test_resolve_with_valid_base_request():
     assert lm == "http://llama.sub.vendeuvre.lan:8000/"
 
 
+def test_resolve_with_valid_base_request_without_port():
+    os.environ["ROUTING_DOMAIN"] = "vendeuvre.lan"
+    os.environ["PUBLIC_BASE_URL"] = "http://[::1]:5000"
+
+    req = MockRequest(
+        base_host="sub.vendeuvre.lan",
+        base_netloc="sub.vendeuvre.lan",
+        url_scheme="https",
+        url_netloc="[::1]:8000",
+    )
+
+    lf, ll, lm = resolve_external_urls(req)
+
+    assert lf == "http://langfuse.sub.vendeuvre.lan"
+    assert ll == "http://litellm.sub.vendeuvre.lan/ui/"
+    assert lm == "http://llama.sub.vendeuvre.lan/"
+
+
 def test_local_fallback_ipv6():
     # Force fallback to local development logic (domain check fails)
     os.environ["ROUTING_DOMAIN"] = "vendeuvre.lan"

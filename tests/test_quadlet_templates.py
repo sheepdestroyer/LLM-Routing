@@ -45,3 +45,13 @@ def test_rendered_quadlets_are_owner_only():
     assert 'chmod 700 "$QUADLET_DIR"' in script
     assert "os.chmod(out_path, 0o600)" in script
     assert "systemctl --user daemon-reload" in script
+    assert "stack_ownership()" in script
+    assert "PODMAN_SYSTEMD_UNIT" in script
+    assert "require_user_systemd()" in script
+
+
+def test_quadlet_renderer_quotes_environment_values_for_systemd():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)' in script
+    assert "def quote_environment(match):" in script
+    assert "return f'Environment=\"{value}\"'" in script

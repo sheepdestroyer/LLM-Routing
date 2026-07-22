@@ -845,14 +845,15 @@ Tests cover:
 | Section | Endpoints |
 |---------|-----------|
 | Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
-| LiteLLM | `/health/liveness`, `/health/readiness`, `/v1/models`, `/llm-routing/litellm/ui/` |
-| Langfuse | `/api/public/health`, `/` (web UI) |
+| LiteLLM | Local `/health/liveness`, `/health/readiness`, `/v1/models`; canonical `https://litellm.<host>/ui/` |
+| Langfuse | Local `/api/public/health`, `/`; canonical `https://langfuse.<host>/` |
+| llama.cpp | Canonical `https://llama.<host>/health` |
 | Infrastructure | MinIO `/minio/health/live`, ClickHouse `/ping` |
 | E2E chat | 3 completions through triage router |
 | LiteLLM direct | 1 completion directly to LiteLLM |
-| Canonical URLs | 6 GET + 1 POST through public HTTPS (graceful DNS skip) |
+| Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
 
 ## 10. Performance Benchmarks
 

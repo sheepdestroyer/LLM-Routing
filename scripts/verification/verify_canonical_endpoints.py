@@ -14,6 +14,7 @@ import json
 import time
 import datetime
 import argparse
+import urllib.parse
 import httpx
 from pathlib import Path
 
@@ -597,18 +598,25 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
 
     print(f"\n── Canonical URLs ({public}) ──")
 
+    parsed_public = urllib.parse.urlparse(public if "://" in public else f"https://{public}")
+    scheme = parsed_public.scheme if parsed_public.scheme in ("http", "https") else "https"
+    host = parsed_public.netloc or parsed_public.path.split("/", 1)[0]
+    if not host:
+        print("  ⚠ Canonical URLs — SKIPPED (PUBLIC_BASE_URL has no host)")
+        return 0, 0, 0
+    router_base = public.rstrip("/")
     endpoints = [
-        ("/v1/models", "router models"),
-        ("/dashboard", "dashboard"),
-        ("/metrics", "metrics"),
-        ("/visualizer", "visualizer"),
-        ("/litellm/ui/", "LiteLLM admin UI"),
-        ("/langfuse", "Langfuse web UI"),
+        (f"{router_base}/v1/models", "router models"),
+        (f"{router_base}/dashboard", "dashboard"),
+        (f"{router_base}/metrics", "metrics"),
+        (f"{router_base}/visualizer", "visualizer"),
+        (f"{scheme}://litellm.{host}/ui/", "LiteLLM admin UI"),
+        (f"{scheme}://langfuse.{host}/", "Langfuse web UI"),
+        (f"{scheme}://llama.{host}/health", "llama.cpp health"),
     ]
 
-    for path, label in endpoints:
+    for url, label in endpoints:
         total += 1
-        url = f"{public}{path}"
         try:
             r = httpx.get(url, timeout=15, follow_redirects=True,
                           headers={"Authorization": f"Bearer {cfg['router_api_key']}"})

@@ -530,21 +530,50 @@ verify_stack_health() {
     echo "   ⚠️  Triage router pipeline not responding after 120s — dashboard may still work"
     return 1
 }
-# ── Safe pod teardown ──
+# ── Stack ownership and teardown ──
+# Quadlet-managed pods carry PODMAN_SYSTEMD_UNIT on their infra container.
+# Consult that metadata rather than inferring ownership from active state: a
+# stopped or failed generated unit is still Quadlet-owned and must be reconciled
+# through systemd before a replacement pod is created.
+stack_ownership() {
+    local infra_unit
+    if podman pod exists "${POD_NAME}" 2>/dev/null; then
+        infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
+        if [[ "$infra_unit" == "llm-routing-pod.service" ]]; then
+            printf 'quadlet\n'
+        else
+            printf 'legacy\n'
+        fi
+    elif systemctl --user show llm-routing-pod.service -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
+        printf 'quadlet\n'
+    else
+        printf 'absent\n'
+    fi
+}
+
+require_user_systemd() {
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+        echo "❌ Error: the Quadlet deployment requires a reachable systemd --user manager." >&2
+        echo "   Log in through a user session or restore the user D-Bus before deploying." >&2
+        return 1
+    fi
+}
+
 # Graceful stop (SIGTERM with 30s timeout) lets ClickHouse/Postgres flush,
 # then force-remove if needed. Avoids data corruption from SIGKILL.
 safe_pod_teardown() {
-    # If the stack is systemd-managed (quadlets), stop via systemd so the
-    # manager state stays consistent; then remove any leftover pod.
-    if systemctl --user is-active --quiet llm-routing-pod.service 2>/dev/null; then
-        echo "🛑 Stopping systemd-managed stack (llm-routing-pod.service)..."
-        systemctl --user stop llm-routing-pod.service || true
-        podman pod rm -f ${POD_NAME} 2>/dev/null || true
+    local ownership
+    ownership=$(stack_ownership)
+    if [[ "$ownership" == "quadlet" ]]; then
+        echo "🛑 Reconciling Quadlet-owned stack (unit may be active, inactive, or failed)..."
+        systemctl --user stop llm-routing-pod.service 2>/dev/null || true
+        systemctl --user reset-failed llm-routing-pod.service 2>/dev/null || true
+        podman pod rm -f "${POD_NAME}" 2>/dev/null || true
         cleanup_zombie_ports
-        echo "✓ Stack stopped, ports cleaned"
+        echo "✓ Quadlet stack stopped, state reconciled, ports cleaned"
         return
     fi
-    if podman pod exists ${POD_NAME} 2>/dev/null; then
+    if [[ "$ownership" == "legacy" ]]; then
         echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
         podman pod stop -t 30 ${POD_NAME} 2>/dev/null || true
         # podman pod exists returns 0 for stopped pods too — check running state
@@ -558,6 +587,25 @@ safe_pod_teardown() {
         cleanup_zombie_ports
         echo "✓ Pod torn down, ports cleaned"
     fi
+}
+
+# Derive service URLs once so legacy pod rendering and Quadlet rendering cannot drift.
+derive_external_service_urls() {
+    local values
+    values=$(python3 -c '
+import os
+from urllib.parse import urlparse
+public = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
+routing_domain = os.environ.get("ROUTING_DOMAIN") or "vendeuvre.lan"
+parsed = urlparse(public if "://" in public else f"https://{public}")
+scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "https"
+host = parsed.netloc or parsed.path.split("/", 1)[0] or routing_domain
+print(os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host}")
+print(os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host}")
+') || return 1
+    PROXY_BASE_URL_DERIVED=${values%%$'\n'*}
+    NEXTAUTH_URL_DERIVED=${values#*$'\n'}
+    export PROXY_BASE_URL_DERIVED NEXTAUTH_URL_DERIVED
 }
 
 # Pre-deploy database backup (runs before any pod modification)
@@ -633,6 +681,7 @@ render_pod_yaml() {
     export LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT
     export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
     export MINIO_S3_PORT MINIO_CONSOLE_PORT
+    derive_external_service_urls
     python3 - "$WORKDIR/pod.yaml" <<'PY'
 import os, sys, urllib.parse, json
 uid = os.getuid()
@@ -708,21 +757,9 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
-# Derive PROXY_BASE_URL and NEXTAUTH_URL (favoring explicit env or subdomain formatting)
-public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
-parsed_pub = urllib.parse.urlparse(public_base_url)
-scheme = parsed_pub.scheme or "https"
-host = parsed_pub.netloc or parsed_pub.path.split("/")[0] or "vendeuvre.lan"
-
-if "PROXY_BASE_URL" in os.environ:
-    proxy_base_url = os.environ["PROXY_BASE_URL"]
-else:
-    proxy_base_url = f"{scheme}://litellm.{host}"
-
-if "NEXTAUTH_URL" in os.environ:
-    nextauth_url = os.environ["NEXTAUTH_URL"]
-else:
-    nextauth_url = f"{scheme}://langfuse.{host}"
+# Service URLs are derived once by the shell wrapper for both rendering paths.
+proxy_base_url = os.environ["PROXY_BASE_URL_DERIVED"]
+nextauth_url = os.environ["NEXTAUTH_URL_DERIVED"]
 
 text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
 text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
@@ -779,6 +816,7 @@ render_quadlets() {
     export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
     export MINIO_S3_PORT MINIO_CONSOLE_PORT
     local src_dir="${WORKDIR}/quadlets"
+    derive_external_service_urls
     mkdir -p "$QUADLET_DIR"
     chmod 700 "$QUADLET_DIR"
     python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
@@ -787,13 +825,9 @@ uid = os.getuid()
 src_dir, out_dir = sys.argv[1], sys.argv[2]
 
 encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
-# Derive PROXY_BASE_URL / NEXTAUTH_URL exactly as render_pod_yaml does.
-public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
-parsed_pub = urllib.parse.urlparse(public_base_url)
-scheme = parsed_pub.scheme or "https"
-host = parsed_pub.netloc or parsed_pub.path.split("/")[0] or os.environ["ROUTING_DOMAIN"]
-proxy_base_url = os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host}"
-nextauth_url = os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host}"
+# Derived by derive_external_service_urls(), shared with render_pod_yaml.
+proxy_base_url = os.environ["PROXY_BASE_URL_DERIVED"]
+nextauth_url = os.environ["NEXTAUTH_URL_DERIVED"]
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
@@ -818,7 +852,7 @@ repl = {
     "REDIS_AUTH_PLACEHOLDER": os.environ["REDIS_AUTH"],
     "CLICKHOUSE_PASSWORD_PLACEHOLDER": os.environ["CLICKHOUSE_PASSWORD"],
     "PROXY_BASE_URL_PLACEHOLDER": proxy_base_url,
-    "PUBLIC_BASE_URL_PLACEHOLDER": public_base_url,
+    "PUBLIC_BASE_URL_PLACEHOLDER": os.environ["PUBLIC_BASE_URL"].rstrip("/"),
     "ROUTING_DOMAIN_PLACEHOLDER": os.environ["ROUTING_DOMAIN"],
     "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
     "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
@@ -854,6 +888,13 @@ for tpl in templates:
     if unresolved:
         sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
         sys.exit(1)
+    # Quadlet Environment= values use systemd's command-line parser. Quote each
+    # complete KEY=value assignment after substitution so spaces, quotes, and
+    # backslashes in configurable values remain one environment value.
+    def quote_environment(match):
+        value = match.group(1).replace("\\", "\\\\").replace('"', '\\"')
+        return f'Environment="{value}"'
+    text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)
     out_path = os.path.join(out_dir, os.path.basename(tpl))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(text)
@@ -866,6 +907,7 @@ PY
 
 # Install quadlets and (re)generate systemd units; start or restart the stack.
 deploy_quadlets() {
+    require_user_systemd
     echo "📋 Rendering quadlet units..."
     render_quadlets
     if ! systemctl --user daemon-reload; then
@@ -891,7 +933,8 @@ deploy_fresh_pod() {
     verify_stack_health
 }
 
-if podman pod exists ${POD_NAME} 2>/dev/null; then
+STACK_OWNERSHIP=$(stack_ownership)
+if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."
         podman build -t "${ROUTER_IMAGE}" -f router/Dockerfile router
@@ -909,12 +952,14 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🚀 Deploying replacement pod from YAML..."
         deploy_fresh_pod
     else
-        if systemctl --user is-active --quiet llm-routing-pod.service 2>/dev/null; then
-            echo "🔄 Restarting stack via systemd (llm-routing-pod.service)..."
+        if [[ "$STACK_OWNERSHIP" == "quadlet" ]]; then
+            require_user_systemd
+            echo "🔄 Restarting Quadlet-owned stack via systemd..."
+            systemctl --user reset-failed llm-routing-pod.service 2>/dev/null || true
             systemctl --user restart llm-routing-pod.service
         else
-            echo "🔄 Restarting existing ${POD_NAME} (use --replace or --pull to recreate)..."
-            podman pod restart ${POD_NAME}
+            echo "🔄 Restarting legacy ${POD_NAME} (use --replace or --pull to migrate)..."
+            podman pod restart "${POD_NAME}"
         fi
         setup_minio_buckets
         verify_stack_health
@@ -926,7 +971,7 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "   (local)          : ${LOCAL_BASE_URL}/v1"
         echo "⚙️  Dashboard URL  : ${PUBLIC_BASE_URL}/dashboard"
         echo "🔑 Gateway API Key : gateway-pass"
-        echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
+        echo "🔐 LiteLLM Admin UI: ${PROXY_BASE_URL_DERIVED}/ui/"
         echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
         echo "========================================================================="
         exit 0
@@ -958,6 +1003,6 @@ echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
 echo "   (local)          : ${LOCAL_BASE_URL}/v1"
 echo "⚙️  Dashboard URL : ${PUBLIC_BASE_URL}/dashboard"
 echo "🔑 Gateway API Key : gateway-pass"
-echo "🔐 LiteLLM Admin UI: ${PUBLIC_BASE_URL}/litellm/ui"
+echo "🔐 LiteLLM Admin UI: ${PROXY_BASE_URL_DERIVED}/ui/"
 echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
 echo "========================================================================="
