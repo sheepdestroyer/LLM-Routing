@@ -389,15 +389,20 @@ For secure production deployments, the gateway services are configured to run un
 ### 1. Launching the Stack
 Run the startup script from the root of the repository:
 ```bash
-./start-stack.sh              # Fast restart (preserves container IDs and logs)
-./start-stack.sh --replace    # Recreate pod from YAML (picks up new ports,
-                              #   health probes, env vars, containers — no rebuild)
-./start-stack.sh --full-rebuild  # Full reset: rebuild image + recreate pod
+./start-stack.sh              # Restart the systemd-managed Quadlet stack
+./start-stack.sh --replace    # Render Quadlets, daemon-reload, and recreate the stack
+                              #   (picks up ports, probes, env vars, and containers)
+./start-stack.sh --full-rebuild  # Same as --replace plus rebuild the router image
+
+# Inspect the generated systemd units and their logs
+systemctl --user status llm-routing-pod.service --no-pager
+systemctl --user list-units 'llm-routing-*' --no-pager
+journalctl --user -u llm-routing-router.service -n 100 --no-pager
 ```
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
 
 ### 2. Verify Container Status
-Check that all **10 containers** inside `prod-router-pod` are up and running:
+Check that all **9 application containers** in `prod-router-pod` are up and running (the tenth pod infra container is Podman-managed):
 ```bash
 podman pod ps
 podman ps --pod --filter pod=prod-router-pod

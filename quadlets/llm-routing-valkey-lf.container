@@ -14,6 +14,7 @@ Volume=DATA_ROOT_PLACEHOLDER/redis-lf-data:/data
 HealthCmd=valkey-cli -p VALKEY_LF_PORT_PLACEHOLDER -a REDIS_AUTH_PLACEHOLDER ping
 HealthInterval=10s
 HealthTimeout=2s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=5s
 

@@ -16,6 +16,7 @@ Volume=DATA_ROOT_PLACEHOLDER/valkey-data:/data
 HealthCmd=valkey-cli -p VALKEY_CACHE_PORT_PLACEHOLDER ping
 HealthInterval=10s
 HealthTimeout=2s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=5s
 

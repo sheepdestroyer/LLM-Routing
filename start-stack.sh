@@ -769,6 +769,7 @@ render_quadlets() {
     export MINIO_S3_PORT MINIO_CONSOLE_PORT
     local src_dir="${WORKDIR}/quadlets"
     mkdir -p "$QUADLET_DIR"
+    chmod 700 "$QUADLET_DIR"
     python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
 import os, sys, urllib.parse, re, glob
 uid = os.getuid()
@@ -843,7 +844,8 @@ for tpl in templates:
     out_path = os.path.join(out_dir, os.path.basename(tpl))
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(text)
-    os.chmod(out_path, 0o644)
+    # Rendered units include credentials; systemd user generator can read owner-only files.
+    os.chmod(out_path, 0o600)
     print(f"  ✓ {os.path.basename(tpl)}")
 PY
     echo "✓ Quadlets rendered to ${QUADLET_DIR}"

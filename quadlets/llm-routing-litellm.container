@@ -35,6 +35,7 @@ Volume=HOME_PLACEHOLDER/.gemini:/config/gemini_auth
 HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')"
 HealthInterval=15s
 HealthTimeout=5s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=240s
 

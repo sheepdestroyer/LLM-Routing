@@ -18,6 +18,7 @@ Volume=DATA_ROOT_PLACEHOLDER/minio-data:/data
 HealthCmd=curl -f http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live
 HealthInterval=15s
 HealthTimeout=5s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=10s
 

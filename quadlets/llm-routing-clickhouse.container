@@ -18,6 +18,7 @@ Volume=DATA_ROOT_PLACEHOLDER/clickhouse-config/port-override.xml:/etc/clickhouse
 HealthCmd=clickhouse-client --host 127.0.0.1 --port CLICKHOUSE_TCP_PORT_PLACEHOLDER --user clickhouse --password CLICKHOUSE_PASSWORD_PLACEHOLDER --query "SELECT 1"
 HealthInterval=15s
 HealthTimeout=5s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=20s
 

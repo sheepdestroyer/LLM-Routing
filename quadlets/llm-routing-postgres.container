@@ -17,6 +17,7 @@ Volume=DATA_ROOT_PLACEHOLDER/postgres-data:/var/lib/postgresql
 HealthCmd=pg_isready -U postgres -p POSTGRES_PORT_PLACEHOLDER
 HealthInterval=10s
 HealthTimeout=5s
+HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=15s
 

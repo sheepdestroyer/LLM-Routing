@@ -4,7 +4,7 @@
 # Flow:
 #   1. Fetch the latest release tag from GitHub
 #   2. Check out a clean copy of that tag to a temp dir
-#   3. Rsync runtime files (pod.yaml, start-stack.sh, litellm/, router/, scripts/)
+#   3. Rsync runtime files (pod.yaml, start-stack.sh, quadlets/, litellm/, router/, scripts/)
 #      into ~/prod/LLM-Routing — data/, backups/, and .env are NEVER touched
 #   4. Redeploy with start-stack.sh --pull (pulls latest container images)
 #
@@ -67,7 +67,7 @@ echo "📥 Cloning $REPO @ $TAG..."
 git clone -q --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR"
 
 # ── verify the tag has the files we need ──
-for f in pod.yaml start-stack.sh litellm/ router/ scripts/; do
+for f in pod.yaml start-stack.sh quadlets/ litellm/ router/ scripts/; do
     if [ ! -e "$TEMP_DIR/$f" ]; then
         echo "❌ Release $TAG is missing expected file/dir: $f"
         exit 1
@@ -80,7 +80,7 @@ if $DRY_RUN; then
     echo "── Dry run: files that would change ──"
     diff -rq "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml" 2>/dev/null || echo "  pod.yaml differs"
     diff -rq "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh" 2>/dev/null || echo "  start-stack.sh differs"
-    for dir in litellm router scripts; do
+    for dir in quadlets litellm router scripts; do
         diff -rq "$TEMP_DIR/$dir" "$PROD_DIR/$dir" 2>/dev/null || echo "  $dir/ differs"
     done
     echo "── End dry run ──"
@@ -90,7 +90,7 @@ fi
 # ── confirm ──
 echo ""
 echo "⚠️  This will OVERWRITE the following in $PROD_DIR:"
-echo "     pod.yaml  start-stack.sh  litellm/  router/  scripts/"
+echo "     pod.yaml  start-stack.sh  quadlets/  litellm/  router/  scripts/"
 echo "   .env and data/ are NEVER touched."
 echo ""
 # Require interactive confirmation in TTY mode; auto-proceed in non-interactive
@@ -141,6 +141,7 @@ fi
 # handles graceful shutdown (including pre-deploy backup) before redeploy.
 echo "📋 Syncing runtime files..."
 # Sync directories with --delete (clean stale files within each dir)
+rsync -a --delete "$TEMP_DIR/quadlets/" "$PROD_DIR/quadlets/"
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
 rsync -a --delete "$TEMP_DIR/router/" "$PROD_DIR/router/"
 rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
