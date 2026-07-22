@@ -20,7 +20,7 @@ fi
 if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
     set -a; source "$DEV_ENV_FILE"; set +a
 fi
-POD_NAME="${POD_NAME:-agent-router-pod}"
+POD_NAME="${POD_NAME:-prod-router-pod}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 mkdir -p "$BACKUP_DIR"
