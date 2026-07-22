@@ -673,133 +673,7 @@ render_router_config() {
     echo "✓ Router config rendered to ${rendered_dir}/config.yaml"
 }
 
-render_pod_yaml() {
-    export WORKDIR HOME LITELLM_MASTER_KEY UI_USERNAME UI_PASSWORD
-    export POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
-    export LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD
-    export OLLAMA_API_KEY OPENROUTER_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
-    export CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
-    export PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT
-    export LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL
-    export ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT
-    export LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT
-    export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
-    export MINIO_S3_PORT MINIO_CONSOLE_PORT
-    derive_external_service_urls
-    python3 - "$WORKDIR/pod.yaml" <<'PY'
-import os, sys, urllib.parse, json
-uid = os.getuid()
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    text = f.read()
-
-def yaml_scalar(val):
-    return json.dumps(val)
-
-placeholders = [
-    "WORKDIR_PLACEHOLDER",
-    "HOME_PLACEHOLDER",
-    "RUN_USER_PLACEHOLDER",
-    "LITELLM_MASTER_KEY_PLACEHOLDER",
-    "LITELLM_UI_USERNAME_PLACEHOLDER",
-    "LITELLM_UI_PASSWORD_PLACEHOLDER",
-    "POSTGRES_PASSWORD_RAW_PLACEHOLDER",
-    "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER",
-    "NEXTAUTH_SECRET_PLACEHOLDER",
-    "NEXTAUTH_URL_PLACEHOLDER",
-    "SALT_PLACEHOLDER",
-    "ENCRYPTION_KEY_PLACEHOLDER",
-    "OLLAMA_API_KEY_PLACEHOLDER",
-    "OPENROUTER_API_KEY_PLACEHOLDER",
-    "LANGFUSE_PUBLIC_KEY_PLACEHOLDER",
-    "LANGFUSE_SECRET_KEY_PLACEHOLDER",
-    "MINIO_USER_PLACEHOLDER",
-    "MINIO_PASSWORD_PLACEHOLDER",
-    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER",
-    "REDIS_AUTH_PLACEHOLDER",
-    "CLICKHOUSE_PASSWORD_PLACEHOLDER",
-    "PROXY_BASE_URL_PLACEHOLDER",
-    "PUBLIC_BASE_URL_PLACEHOLDER",
-    "ROUTING_DOMAIN_PLACEHOLDER",
-    "POD_NAME_PLACEHOLDER",
-    "DATA_ROOT_PLACEHOLDER",
-    "ROUTER_PORT_PLACEHOLDER",
-    "LITELLM_PORT_PLACEHOLDER",
-    "LANGFUSE_WEB_PORT_PLACEHOLDER",
-    "LANGFUSE_WORKER_PORT_PLACEHOLDER",
-    "POSTGRES_PORT_PLACEHOLDER",
-    "VALKEY_CACHE_PORT_PLACEHOLDER",
-    "VALKEY_LF_PORT_PLACEHOLDER",
-    "CLICKHOUSE_HTTP_PORT_PLACEHOLDER",
-    "CLICKHOUSE_TCP_PORT_PLACEHOLDER",
-    "MINIO_S3_PORT_PLACEHOLDER",
-    "MINIO_CONSOLE_PORT_PLACEHOLDER",
-    "ROUTER_IMAGE_PLACEHOLDER",
-]
-for ph in placeholders:
-    if ph not in text:
-        sys.stderr.write(f"Error: Required placeholder '{ph}' not found in pod.yaml. Ensure you are using the latest version of the template.\n")
-        sys.exit(1)
-text = text.replace("WORKDIR_PLACEHOLDER", os.environ["WORKDIR"])
-text = text.replace("HOME_PLACEHOLDER", os.environ["HOME"])
-text = text.replace("RUN_USER_PLACEHOLDER", f"/run/user/{uid}")
-text = text.replace("LITELLM_MASTER_KEY_PLACEHOLDER", yaml_scalar(os.environ["LITELLM_MASTER_KEY"]))
-text = text.replace("LITELLM_UI_USERNAME_PLACEHOLDER", yaml_scalar(os.environ.get("UI_USERNAME") or "admin"))
-text = text.replace("LITELLM_UI_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ.get("UI_PASSWORD") or os.environ.get("LITELLM_MASTER_KEY") or "admin"))
-text = text.replace("POSTGRES_PASSWORD_RAW_PLACEHOLDER", yaml_scalar(os.environ["POSTGRES_PASSWORD"]))
-# URL-encode the postgres password for DSN insertion
-encoded_password = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
-text = text.replace("POSTGRES_PASSWORD_ENCODED_PLACEHOLDER", encoded_password)
-text = text.replace("NEXTAUTH_SECRET_PLACEHOLDER", yaml_scalar(os.environ["NEXTAUTH_SECRET"]))
-text = text.replace("SALT_PLACEHOLDER", yaml_scalar(os.environ["SALT"]))
-text = text.replace("ENCRYPTION_KEY_PLACEHOLDER", yaml_scalar(os.environ["ENCRYPTION_KEY"]))
-text = text.replace("OLLAMA_API_KEY_PLACEHOLDER", yaml_scalar(os.environ["OLLAMA_API_KEY"]))
-text = text.replace("OPENROUTER_API_KEY_PLACEHOLDER", yaml_scalar(os.environ["OPENROUTER_API_KEY"]))
-text = text.replace("LANGFUSE_PUBLIC_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_PUBLIC_KEY"]))
-text = text.replace("LANGFUSE_SECRET_KEY_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_SECRET_KEY"]))
-text = text.replace("MINIO_USER_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_USER"]))
-text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_ROOT_PASSWORD"]))
-text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
-text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
-text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
-# Service URLs are derived once by the shell wrapper for both rendering paths.
-proxy_base_url = os.environ["PROXY_BASE_URL_DERIVED"]
-nextauth_url = os.environ["NEXTAUTH_URL_DERIVED"]
-
-text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
-text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
-text = text.replace("NEXTAUTH_URL_PLACEHOLDER", yaml_scalar(nextauth_url))
-text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
-# Raw replacements (no quoting — used for pod name, data root, and integer port values)
-raw_replacements = {
-    "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
-    "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
-    "ROUTER_PORT_PLACEHOLDER": os.environ["ROUTER_PORT"],
-    "LITELLM_PORT_PLACEHOLDER": os.environ["LITELLM_PORT"],
-    "LANGFUSE_WEB_PORT_PLACEHOLDER": os.environ["LANGFUSE_WEB_PORT"],
-    "LANGFUSE_WORKER_PORT_PLACEHOLDER": os.environ["LANGFUSE_WORKER_PORT"],
-    "POSTGRES_PORT_PLACEHOLDER": os.environ["POSTGRES_PORT"],
-    "VALKEY_CACHE_PORT_PLACEHOLDER": os.environ["VALKEY_CACHE_PORT"],
-    "VALKEY_LF_PORT_PLACEHOLDER": os.environ["VALKEY_LF_PORT"],
-    "CLICKHOUSE_HTTP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_HTTP_PORT"],
-    "CLICKHOUSE_TCP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_TCP_PORT"],
-    "MINIO_S3_PORT_PLACEHOLDER": os.environ["MINIO_S3_PORT"],
-    "MINIO_CONSOLE_PORT_PLACEHOLDER": os.environ["MINIO_CONSOLE_PORT"],
-    "ROUTER_IMAGE_PLACEHOLDER": os.environ["ROUTER_IMAGE"],
-}
-for ph, val in raw_replacements.items():
-    text = text.replace(ph, val)
-import re
-unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
-if unresolved:
-    sys.stderr.write(
-        "Error: Unresolved placeholders remain in rendered pod.yaml: "
-        + ", ".join(unresolved)
-        + "\n"
-    )
-    sys.exit(1)
-sys.stdout.write(text)
-PY
-}
+# Legacy pod.yaml rendering was removed: all deployment paths render Quadlets.
 
 # ── Quadlet rendering + installation ──
 # Renders quadlets/*.pod + quadlets/*.container templates (same _PLACEHOLDER
@@ -821,7 +695,10 @@ render_quadlets() {
     export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
     export MINIO_S3_PORT MINIO_CONSOLE_PORT
     local src_dir="${WORKDIR}/quadlets"
-    derive_external_service_urls
+    if ! derive_external_service_urls; then
+        echo "❌ Error: failed to derive external service URLs for Quadlet rendering" >&2
+        return 1
+    fi
     mkdir -p "$QUADLET_DIR"
     chmod 700 "$QUADLET_DIR"
     python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
@@ -924,7 +801,7 @@ PY
 
 # Install quadlets and (re)generate systemd units; start or restart the stack.
 deploy_quadlets() {
-    require_user_systemd
+    require_user_systemd || exit 1
     echo "📋 Rendering quadlet units..."
     render_quadlets
     if ! systemctl --user daemon-reload; then
@@ -978,7 +855,7 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
         deploy_fresh_pod
     else
         if [[ "$STACK_OWNERSHIP" == "quadlet" ]]; then
-            require_user_systemd
+            require_user_systemd || exit 1
             echo "🔄 Restarting Quadlet-owned stack via systemd..."
             systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
             if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then
@@ -988,7 +865,10 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
             fi
         else
             echo "🔄 Restarting legacy ${POD_NAME} (use --replace or --pull to migrate)..."
-            podman pod restart "${POD_NAME}"
+            if ! podman pod restart "${POD_NAME}"; then
+                echo "❌ Error: failed to restart legacy pod ${POD_NAME}" >&2
+                exit 1
+            fi
         fi
         setup_minio_buckets
         verify_stack_health

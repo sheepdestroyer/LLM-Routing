@@ -3514,7 +3514,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
 
     # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
     # fall back to the request base URL rather than silently forcing localhost.
-    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-:]+$", external_host):
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.:-]+$", external_host):
         logger.warning(
             "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
             external_host,

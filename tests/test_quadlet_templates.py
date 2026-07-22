@@ -79,3 +79,11 @@ def test_router_quadlet_reasserts_overlayed_llama_urls_after_env_source():
     script = (ROOT / "start-stack.sh").read_text()
     assert '"LLAMA_CLASSIFIER_URL_PLACEHOLDER": os.environ["LLAMA_CLASSIFIER_URL"]' in script
     assert '"LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"]' in script
+
+
+def test_quadlet_deployment_enforces_prerequisite_and_restart_failures():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert "render_pod_yaml()" not in script
+    assert "require_user_systemd || exit 1" in script
+    assert "failed to derive external service URLs for Quadlet rendering" in script
+    assert 'if ! podman pod restart "${POD_NAME}"; then' in script

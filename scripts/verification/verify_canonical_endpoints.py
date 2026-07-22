@@ -623,7 +623,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
             r = httpx.get(url, timeout=15, follow_redirects=True,
                           headers={"Authorization": f"Bearer {cfg['router_api_key']}"})
             ok = r.status_code == 200
-            passed += check(f"GET {url}", ok, f"HTTP {r.status_code}")
+            passed += check(f"GET {url} ({label})", ok, f"HTTP {r.status_code}")
         except httpx.RequestError as e:
             # DNS/unreachable/timeout — skip gracefully (host may not resolve from test machine)
             skipped += 1
