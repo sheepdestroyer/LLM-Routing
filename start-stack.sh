@@ -708,13 +708,24 @@ text = text.replace("MINIO_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["MINIO_
 text = text.replace("LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["LANGFUSE_INIT_USER_PASSWORD"]))
 text = text.replace("REDIS_AUTH_PLACEHOLDER", yaml_scalar(os.environ["REDIS_AUTH"]))
 text = text.replace("CLICKHOUSE_PASSWORD_PLACEHOLDER", yaml_scalar(os.environ["CLICKHOUSE_PASSWORD"]))
-# Derive PROXY_BASE_URL from PUBLIC_BASE_URL
+# Derive PROXY_BASE_URL and NEXTAUTH_URL (favoring explicit env or subdomain formatting)
 public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
-proxy_base_url = f"{public_base_url}/litellm"
+parsed_pub = urllib.parse.urlparse(public_base_url)
+scheme = parsed_pub.scheme or "https"
+host = parsed_pub.netloc or parsed_pub.path.split("/")[0] or "vendeuvre.lan"
+
+if "PROXY_BASE_URL" in os.environ:
+    proxy_base_url = os.environ["PROXY_BASE_URL"]
+else:
+    proxy_base_url = f"{scheme}://litellm.{host}"
+
+if "NEXTAUTH_URL" in os.environ:
+    nextauth_url = os.environ["NEXTAUTH_URL"]
+else:
+    nextauth_url = f"{scheme}://langfuse.{host}"
+
 text = text.replace("PROXY_BASE_URL_PLACEHOLDER", yaml_scalar(proxy_base_url))
 text = text.replace("PUBLIC_BASE_URL_PLACEHOLDER", yaml_scalar(os.environ["PUBLIC_BASE_URL"]))
-# Derive NEXTAUTH_URL from PUBLIC_BASE_URL (Langfuse needs the public URL for OAuth redirects)
-nextauth_url = f"{public_base_url}/langfuse"
 text = text.replace("NEXTAUTH_URL_PLACEHOLDER", yaml_scalar(nextauth_url))
 text = text.replace("ROUTING_DOMAIN_PLACEHOLDER", yaml_scalar(os.environ["ROUTING_DOMAIN"]))
 # Raw replacements (no quoting — used for pod name, data root, and integer port values)

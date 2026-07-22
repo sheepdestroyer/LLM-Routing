@@ -3546,21 +3546,15 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
     is_valid_external = external_host == domain or external_host.endswith("." + domain)
     is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
 
-    if is_valid_external:
-        # Centralized base URL path under subdomain/reverse proxy
+    if is_valid_external or is_valid_base:
+        host_val = external_host if is_valid_external else (request.base_url.hostname or "vendeuvre.lan")
+        host_base = host_val.replace("dashboard.", "")
+        if host_base.startswith("litellm.") or host_base.startswith("langfuse.") or host_base.startswith("llama."):
+            host_base = re.sub(r"^(litellm|langfuse|llama)\.", "", host_base)
         return (
-            f"{external_scheme}://{external_netloc}/llm-routing/langfuse",
-            f"{external_scheme}://{external_netloc}/llm-routing/litellm/ui",
-            f"{external_scheme}://{external_netloc}/llm-routing/llama/"
-        )
-    elif is_valid_base:
-        parsed_netloc = urlparse(f"{external_scheme}://{request.url.netloc}")
-        netloc = request.url.netloc if parsed_netloc.hostname else "localhost"
-        base = f"{external_scheme}://{netloc}"
-        return (
-            f"{base}/llm-routing/langfuse",
-            f"{base}/llm-routing/litellm/ui",
-            f"{base}/llm-routing/llama/"
+            f"{external_scheme}://langfuse.{host_base}",
+            f"{external_scheme}://litellm.{host_base}/ui/",
+            f"{external_scheme}://llama.{host_base}/"
         )
     else:
         # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants
