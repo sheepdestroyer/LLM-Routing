@@ -1,0 +1,24 @@
+[Unit]
+Description=Valkey Cache — LiteLLM response cache (POD_NAME_PLACEHOLDER)
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-valkey-cache
+Image=valkey/valkey:9.1.1
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+# pod.yaml used command: (replaces entrypoint). Image entrypoint docker-entrypoint.sh
+# would also work, but explicit Entrypoint= matches play-kube semantics exactly.
+Entrypoint=valkey-server
+Exec=--bind 127.0.0.1 --port VALKEY_CACHE_PORT_PLACEHOLDER --loglevel warning
+Volume=DATA_ROOT_PLACEHOLDER/valkey-data:/data
+HealthCmd=valkey-cli -p VALKEY_CACHE_PORT_PLACEHOLDER ping
+HealthInterval=10s
+HealthTimeout=2s
+HealthRetries=5
+HealthStartPeriod=5s
+
+[Service]
+Restart=always
+TimeoutStartSec=90

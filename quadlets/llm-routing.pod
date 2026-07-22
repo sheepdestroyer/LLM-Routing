@@ -1,0 +1,13 @@
+# LLM Triage Gateway pod — Quadlet template (rendered by start-stack.sh)
+# Pod name is rendered from POD_NAME (prod-router-pod / dev-router-pod).
+[Unit]
+Description=LLM Triage Gateway Pod (POD_NAME_PLACEHOLDER)
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=POD_NAME_PLACEHOLDER
+Network=host
+
+[Install]
+WantedBy=default.target

@@ -534,6 +534,16 @@ verify_stack_health() {
 # Graceful stop (SIGTERM with 30s timeout) lets ClickHouse/Postgres flush,
 # then force-remove if needed. Avoids data corruption from SIGKILL.
 safe_pod_teardown() {
+    # If the stack is systemd-managed (quadlets), stop via systemd so the
+    # manager state stays consistent; then remove any leftover pod.
+    if systemctl --user is-active --quiet llm-routing-pod.service 2>/dev/null; then
+        echo "🛑 Stopping systemd-managed stack (llm-routing-pod.service)..."
+        systemctl --user stop llm-routing-pod.service || true
+        podman pod rm -f ${POD_NAME} 2>/dev/null || true
+        cleanup_zombie_ports
+        echo "✓ Stack stopped, ports cleaned"
+        return
+    fi
     if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
         podman pod stop -t 30 ${POD_NAME} 2>/dev/null || true
@@ -739,11 +749,129 @@ sys.stdout.write(text)
 PY
 }
 
+# ── Quadlet rendering + installation ──
+# Renders quadlets/*.pod + quadlets/*.container templates (same _PLACEHOLDER
+# convention as pod.yaml) into ~/.config/containers/systemd/llm-routing/ and
+# lets systemd's podman-user-generator turn them into real units.
+# Quadlet values are bare scalars (not YAML) so plain string replacement is used.
+QUADLET_DIR="${HOME}/.config/containers/systemd/llm-routing"
+
+render_quadlets() {
+    export WORKDIR HOME LITELLM_MASTER_KEY UI_USERNAME UI_PASSWORD
+    export POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
+    export LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD
+    export OLLAMA_API_KEY OPENROUTER_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+    export CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
+    export PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT
+    export ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT
+    export LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT
+    export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
+    export MINIO_S3_PORT MINIO_CONSOLE_PORT
+    local src_dir="${WORKDIR}/quadlets"
+    mkdir -p "$QUADLET_DIR"
+    python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
+import os, sys, urllib.parse, re, glob
+uid = os.getuid()
+src_dir, out_dir = sys.argv[1], sys.argv[2]
+
+encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
+# Derive PROXY_BASE_URL / NEXTAUTH_URL exactly as render_pod_yaml does
+# (path-based on master; subdomain switch lands with the routing branch)
+public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
+proxy_base_url = f"{public_base_url}/litellm"
+nextauth_url = f"{public_base_url}/langfuse"
+
+repl = {
+    "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
+    "HOME_PLACEHOLDER": os.environ["HOME"],
+    "RUN_USER_PLACEHOLDER": f"/run/user/{uid}",
+    "LITELLM_MASTER_KEY_PLACEHOLDER": os.environ["LITELLM_MASTER_KEY"],
+    "LITELLM_UI_USERNAME_PLACEHOLDER": os.environ.get("UI_USERNAME") or "admin",
+    "LITELLM_UI_PASSWORD_PLACEHOLDER": os.environ.get("UI_PASSWORD") or os.environ.get("LITELLM_MASTER_KEY") or "admin",
+    "POSTGRES_PASSWORD_RAW_PLACEHOLDER": os.environ["POSTGRES_PASSWORD"],
+    "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER": encoded_pg,
+    "NEXTAUTH_SECRET_PLACEHOLDER": os.environ["NEXTAUTH_SECRET"],
+    "NEXTAUTH_URL_PLACEHOLDER": nextauth_url,
+    "SALT_PLACEHOLDER": os.environ["SALT"],
+    "ENCRYPTION_KEY_PLACEHOLDER": os.environ["ENCRYPTION_KEY"],
+    "OLLAMA_API_KEY_PLACEHOLDER": os.environ["OLLAMA_API_KEY"],
+    "OPENROUTER_API_KEY_PLACEHOLDER": os.environ["OPENROUTER_API_KEY"],
+    "LANGFUSE_PUBLIC_KEY_PLACEHOLDER": os.environ["LANGFUSE_PUBLIC_KEY"],
+    "LANGFUSE_SECRET_KEY_PLACEHOLDER": os.environ["LANGFUSE_SECRET_KEY"],
+    "MINIO_USER_PLACEHOLDER": os.environ["MINIO_ROOT_USER"],
+    "MINIO_PASSWORD_PLACEHOLDER": os.environ["MINIO_ROOT_PASSWORD"],
+    "LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER": os.environ["LANGFUSE_INIT_USER_PASSWORD"],
+    "REDIS_AUTH_PLACEHOLDER": os.environ["REDIS_AUTH"],
+    "CLICKHOUSE_PASSWORD_PLACEHOLDER": os.environ["CLICKHOUSE_PASSWORD"],
+    "PROXY_BASE_URL_PLACEHOLDER": proxy_base_url,
+    "PUBLIC_BASE_URL_PLACEHOLDER": public_base_url,
+    "ROUTING_DOMAIN_PLACEHOLDER": os.environ["ROUTING_DOMAIN"],
+    "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
+    "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
+    "ROUTER_IMAGE_PLACEHOLDER": os.environ["ROUTER_IMAGE"],
+    "ROUTER_PORT_PLACEHOLDER": os.environ["ROUTER_PORT"],
+    "LITELLM_PORT_PLACEHOLDER": os.environ["LITELLM_PORT"],
+    "LANGFUSE_WEB_PORT_PLACEHOLDER": os.environ["LANGFUSE_WEB_PORT"],
+    "LANGFUSE_WORKER_PORT_PLACEHOLDER": os.environ["LANGFUSE_WORKER_PORT"],
+    "POSTGRES_PORT_PLACEHOLDER": os.environ["POSTGRES_PORT"],
+    "VALKEY_CACHE_PORT_PLACEHOLDER": os.environ["VALKEY_CACHE_PORT"],
+    "VALKEY_LF_PORT_PLACEHOLDER": os.environ["VALKEY_LF_PORT"],
+    "CLICKHOUSE_HTTP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_HTTP_PORT"],
+    "CLICKHOUSE_TCP_PORT_PLACEHOLDER": os.environ["CLICKHOUSE_TCP_PORT"],
+    "MINIO_S3_PORT_PLACEHOLDER": os.environ["MINIO_S3_PORT"],
+    "MINIO_CONSOLE_PORT_PLACEHOLDER": os.environ["MINIO_CONSOLE_PORT"],
+}
+
+templates = sorted(glob.glob(os.path.join(src_dir, "*.pod")) + glob.glob(os.path.join(src_dir, "*.container")))
+if not templates:
+    sys.stderr.write(f"Error: no quadlet templates found in {src_dir}\n")
+    sys.exit(1)
+
+# Remove stale rendered files from previous deploys (e.g. renamed containers)
+for stale in glob.glob(os.path.join(out_dir, "*.pod")) + glob.glob(os.path.join(out_dir, "*.container")):
+    os.unlink(stale)
+
+for tpl in templates:
+    with open(tpl, "r", encoding="utf-8") as f:
+        text = f.read()
+    for ph, val in repl.items():
+        text = text.replace(ph, str(val))
+    unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
+    if unresolved:
+        sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
+        sys.exit(1)
+    out_path = os.path.join(out_dir, os.path.basename(tpl))
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.chmod(out_path, 0o644)
+    print(f"  ✓ {os.path.basename(tpl)}")
+PY
+    echo "✓ Quadlets rendered to ${QUADLET_DIR}"
+}
+
+# Install quadlets and (re)generate systemd units; start or restart the stack.
+deploy_quadlets() {
+    echo "📋 Rendering quadlet units..."
+    render_quadlets
+    if ! systemctl --user daemon-reload; then
+        echo "❌ Error: systemctl --user daemon-reload failed (no systemd user session?)" >&2
+        exit 1
+    fi
+    echo "✓ systemd units regenerated"
+    if systemctl --user is-active --quiet llm-routing-pod.service; then
+        echo "🔄 Restarting llm-routing-pod.service..."
+        systemctl --user restart llm-routing-pod.service
+    else
+        echo "🚀 Starting llm-routing-pod.service..."
+        systemctl --user start llm-routing-pod.service
+    fi
+}
+
 deploy_fresh_pod() {
     generate_clickhouse_config
     render_litellm_config
     render_router_config
-    render_pod_yaml | podman play kube -
+    deploy_quadlets
     setup_minio_buckets
     verify_stack_health
 }
@@ -766,8 +894,13 @@ if podman pod exists ${POD_NAME} 2>/dev/null; then
         echo "🚀 Deploying replacement pod from YAML..."
         deploy_fresh_pod
     else
-        echo "🔄 Restarting existing ${POD_NAME} (use --replace or --pull to recreate)..."
-        podman pod restart ${POD_NAME}
+        if systemctl --user is-active --quiet llm-routing-pod.service 2>/dev/null; then
+            echo "🔄 Restarting stack via systemd (llm-routing-pod.service)..."
+            systemctl --user restart llm-routing-pod.service
+        else
+            echo "🔄 Restarting existing ${POD_NAME} (use --replace or --pull to recreate)..."
+            podman pod restart ${POD_NAME}
+        fi
         setup_minio_buckets
         verify_stack_health
 

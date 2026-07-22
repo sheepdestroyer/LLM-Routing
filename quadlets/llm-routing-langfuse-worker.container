@@ -1,0 +1,39 @@
+[Unit]
+Description=Langfuse Worker — background job processor (POD_NAME_PLACEHOLDER)
+After=llm-routing-postgres.service llm-routing-clickhouse.service llm-routing-valkey-lf.service llm-routing-minio.service
+Wants=llm-routing-postgres.service llm-routing-clickhouse.service llm-routing-valkey-lf.service llm-routing-minio.service
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-langfuse-worker
+Image=langfuse/langfuse-worker:3.222.0
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+Environment=DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/langfuse
+Environment=CLICKHOUSE_URL=http://127.0.0.1:CLICKHOUSE_HTTP_PORT_PLACEHOLDER
+Environment=CLICKHOUSE_USER=clickhouse
+Environment=CLICKHOUSE_PASSWORD=CLICKHOUSE_PASSWORD_PLACEHOLDER
+Environment=CLICKHOUSE_CLUSTER_ENABLED=false
+Environment=REDIS_HOST=127.0.0.1
+Environment=REDIS_PORT=VALKEY_LF_PORT_PLACEHOLDER
+Environment=REDIS_AUTH=REDIS_AUTH_PLACEHOLDER
+Environment=HOSTNAME=0.0.0.0
+Environment=PORT=LANGFUSE_WORKER_PORT_PLACEHOLDER
+Environment=TELEMETRY_ENABLED=false
+Environment=LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse-events
+Environment=LANGFUSE_S3_EVENT_UPLOAD_REGION=us-east-1
+Environment=LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=MINIO_USER_PLACEHOLDER
+Environment=LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=MINIO_PASSWORD_PLACEHOLDER
+Environment=LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER
+Environment=S3_FORCE_PATH_STYLE=true
+Environment=LANGFUSE_LOG_LEVEL=warn
+HealthCmd=pgrep node
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=240s
+
+[Service]
+Restart=always
+TimeoutStartSec=300

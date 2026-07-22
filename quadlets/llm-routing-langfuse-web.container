@@ -1,0 +1,50 @@
+[Unit]
+Description=Langfuse Web — observability dashboard (POD_NAME_PLACEHOLDER)
+After=llm-routing-postgres.service llm-routing-clickhouse.service llm-routing-valkey-lf.service llm-routing-minio.service
+Wants=llm-routing-postgres.service llm-routing-clickhouse.service llm-routing-valkey-lf.service llm-routing-minio.service
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-langfuse-web
+Image=langfuse/langfuse:3.222.0
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+Environment=DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/langfuse
+Environment=NEXTAUTH_SECRET=NEXTAUTH_SECRET_PLACEHOLDER
+Environment=NEXTAUTH_URL=NEXTAUTH_URL_PLACEHOLDER
+Environment=SALT=SALT_PLACEHOLDER
+Environment=ENCRYPTION_KEY=ENCRYPTION_KEY_PLACEHOLDER
+Environment=HOSTNAME=0.0.0.0
+Environment=PORT=LANGFUSE_WEB_PORT_PLACEHOLDER
+Environment=TELEMETRY_ENABLED=false
+Environment=LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse-events
+Environment=LANGFUSE_S3_EVENT_UPLOAD_REGION=us-east-1
+Environment=LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=MINIO_USER_PLACEHOLDER
+Environment=LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=MINIO_PASSWORD_PLACEHOLDER
+Environment=LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER
+Environment=S3_FORCE_PATH_STYLE=true
+Environment=CLICKHOUSE_URL=http://127.0.0.1:CLICKHOUSE_HTTP_PORT_PLACEHOLDER
+Environment=CLICKHOUSE_MIGRATION_URL=clickhouse://127.0.0.1:CLICKHOUSE_TCP_PORT_PLACEHOLDER
+Environment=CLICKHOUSE_USER=clickhouse
+Environment=CLICKHOUSE_PASSWORD=CLICKHOUSE_PASSWORD_PLACEHOLDER
+Environment=CLICKHOUSE_CLUSTER_ENABLED=false
+Environment=REDIS_HOST=127.0.0.1
+Environment=REDIS_PORT=VALKEY_LF_PORT_PLACEHOLDER
+Environment=REDIS_AUTH=REDIS_AUTH_PLACEHOLDER
+Environment=LANGFUSE_INIT_ORG_ID=org-local-dev-id
+Environment=LANGFUSE_INIT_ORG_NAME=Local Development
+Environment=LANGFUSE_INIT_PROJECT_ID=proj-triage-gateway-id
+Environment=LANGFUSE_INIT_PROJECT_NAME=Triage Gateway
+Environment=LANGFUSE_INIT_USER_EMAIL=admin@local.dev
+Environment=LANGFUSE_INIT_USER_PASSWORD=LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
+Environment=LANGFUSE_LOG_LEVEL=warn
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=240s
+
+[Service]
+Restart=always
+TimeoutStartSec=300
