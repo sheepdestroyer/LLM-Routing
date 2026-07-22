@@ -78,7 +78,7 @@ if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
 fi
 
 # Port assignments — read from env (set by .env or .env.dev) with prod defaults
-POD_NAME="${POD_NAME:-agent-router-pod}"
+POD_NAME="${POD_NAME:-prod-router-pod}"
 ROUTER_PORT="${ROUTER_PORT:-5000}"
 LITELLM_PORT="${LITELLM_PORT:-4000}"
 LANGFUSE_WEB_PORT="${LANGFUSE_WEB_PORT:-3001}"
