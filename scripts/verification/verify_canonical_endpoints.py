@@ -453,7 +453,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             # all sibling traces (they may flush asynchronously)
         except Exception as e:
             if _attempt == 9:
-                print(f"  warning trace poll error: {str(e)[:100]}")
+                print(f"  ⚠ trace poll error: {str(e)[:100]}")
             continue
 
     # Report session trace result
@@ -497,10 +497,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         return passed, total
 
     # Wait for Langfuse SDK auto-flush (poll up to 10s for leak check).
-    # We poll until step 2 traces appear (session_trace_id is no longer at
-    # index 0, meaning newer traces from step 2 have been flushed), then
-    # check only traces with timestamps AFTER step 2 for session leaks.
-    session_trace_visible = False
+    # Collect traces with timestamps AFTER step 2 for session leak verification.
     # Compute cutoff as timezone-aware datetime for robust comparison.
     # Parsing timestamps avoids lexicographic pitfalls between Z/+00:00
     # suffixes and differing sub-second precision.
@@ -519,10 +516,6 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             if resp2.status_code != 200:
                 continue
             all_traces = resp2.json().get("data", [])
-            recent_ids = [t["id"] for t in all_traces]
-            if session_trace_id and session_trace_id in recent_ids:
-                if recent_ids.index(session_trace_id) > 0:
-                    session_trace_visible = True
             # Accumulate step-2 traces across all polls — do NOT break early.
             # Sibling traces may flush at different times; collecting across
             # the full 10s window ensures we don't miss a late-flushing leak.
@@ -552,7 +545,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
                     break
         except Exception as e:
             if _attempt2 == 9:
-                print(f"  warning trace poll error: {str(e)[:100]}")
+                print(f"  ⚠ trace poll error: {str(e)[:100]}")
             continue
 
     # Report leak test result
@@ -560,13 +553,13 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     # We cannot distinguish between "no leak" and "session trace still unflushed."
     # Don't count this as a failure — just warn and move on.
     if session_trace_id is None:
-        print("  warning No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
+        print("  ⚠ No session leak — INCONCLUSIVE (session trace not found in step 1 polling)")
         return passed, total
 
     total += 1
-    if not session_trace_visible:
+    if not step2_traces:
         print(
-            "  warning No session leak — INCONCLUSIVE "
+            "  ⚠ No session leak — INCONCLUSIVE "
             "(second request trace not flushed within 10s)"
         )
         return passed, total
