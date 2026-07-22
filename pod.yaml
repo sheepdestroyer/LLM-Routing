@@ -13,7 +13,7 @@ spec:
     - 'VALKEY_CACHE_PORT_PLACEHOLDER'
     - --loglevel
     - warning
-    image: valkey/valkey:9.1.0
+    image: valkey/valkey:9.1.1
     livenessProbe:
       exec:
         command:
@@ -288,7 +288,7 @@ spec:
     - noeviction
     - --loglevel
     - warning
-    image: valkey/valkey:9.1.0
+    image: valkey/valkey:9.1.1
     livenessProbe:
       exec:
         command:
