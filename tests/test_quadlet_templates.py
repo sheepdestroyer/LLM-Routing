@@ -69,3 +69,13 @@ def test_quadlet_systemd_failures_are_reported():
     script = (ROOT / "start-stack.sh").read_text()
     assert 'if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then' in script
     assert 'if ! systemctl --user start "$LLM_ROUTING_POD_UNIT"; then' in script
+
+
+def test_router_quadlet_reasserts_overlayed_llama_urls_after_env_source():
+    template = (QUADLETS / "llm-routing-router.container").read_text()
+    assert "LLAMA_CLASSIFIER_URL=LLAMA_CLASSIFIER_URL_PLACEHOLDER" in template
+    assert "LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER" in template
+    assert template.index("LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER") < template.index("exec uvicorn")
+    script = (ROOT / "start-stack.sh").read_text()
+    assert '"LLAMA_CLASSIFIER_URL_PLACEHOLDER": os.environ["LLAMA_CLASSIFIER_URL"]' in script
+    assert '"LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"]' in script

@@ -13,7 +13,7 @@ AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
 # Router image has no entrypoint (EP=null, CMD=uvicorn...); pod.yaml used
 # command: /bin/sh + args: -c ... — Entrypoint=/bin/sh, Exec=-c "..." matches.
 Entrypoint=/bin/sh
-Exec=-c "set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level $${LOG_LEVEL:-warning}"
+Exec=-c "set -a && . /config/.env && set +a && LLAMA_CLASSIFIER_URL=LLAMA_CLASSIFIER_URL_PLACEHOLDER LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level $${LOG_LEVEL:-warning}"
 Environment=CONFIG_PATH=/config/router_dir/config.yaml
 Environment=LITELLM_CONFIG_PATH=/config/litellm_dir/config.yaml
 Environment=DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/postgres
@@ -25,6 +25,10 @@ Environment=LANGFUSE_HOST=http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
 Environment=OLLAMA_API_KEY=OLLAMA_API_KEY_PLACEHOLDER
 Environment=PUBLIC_BASE_URL=PUBLIC_BASE_URL_PLACEHOLDER
 Environment=ROUTING_DOMAIN=ROUTING_DOMAIN_PLACEHOLDER
+# Reassert these after /config/.env is sourced by Exec so a dev overlay cannot
+# be overwritten by the production bind-mounted file.
+Environment=LLAMA_CLASSIFIER_URL=LLAMA_CLASSIFIER_URL_PLACEHOLDER
+Environment=LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER
 Environment=LITELLM_PORT=LITELLM_PORT_PLACEHOLDER
 Environment=VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER
 Environment=ROUTER_PORT=ROUTER_PORT_PLACEHOLDER
