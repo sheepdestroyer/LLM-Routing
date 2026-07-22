@@ -3547,14 +3547,25 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
     is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
 
     if is_valid_external or is_valid_base:
-        host_val = external_host if is_valid_external else (request.base_url.hostname or "vendeuvre.lan")
-        host_base = host_val.replace("dashboard.", "")
-        if host_base.startswith("litellm.") or host_base.startswith("langfuse.") or host_base.startswith("llama."):
-            host_base = re.sub(r"^(litellm|langfuse|llama)\.", "", host_base)
+        # Use configured routing domain if a proxy supplies no request hostname.
+        # Preserve an explicit public port from the selected netloc so dashboard
+        # links remain valid behind non-standard TLS listeners.
+        host_val = external_host if is_valid_external else (request.base_url.hostname or domain)
+        netloc_val = external_netloc if is_valid_external else (request.base_url.netloc or host_val)
+        parsed_public = urlparse(f"{external_scheme}://{netloc_val}")
+        try:
+            port_suffix = f":{parsed_public.port}" if parsed_public.port else ""
+        except ValueError:
+            logger.warning("Invalid public port in netloc %r; omitting port", netloc_val)
+            port_suffix = ""
+
+        host_base = re.sub(r"^dashboard\.", "", host_val)
+        host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+        service_netloc = f"{host_base}{port_suffix}"
         return (
-            f"{external_scheme}://langfuse.{host_base}",
-            f"{external_scheme}://litellm.{host_base}/ui/",
-            f"{external_scheme}://llama.{host_base}/"
+            f"{external_scheme}://langfuse.{service_netloc}",
+            f"{external_scheme}://litellm.{service_netloc}/ui/",
+            f"{external_scheme}://llama.{service_netloc}/"
         )
     else:
         # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants

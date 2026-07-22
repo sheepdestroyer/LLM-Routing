@@ -787,11 +787,13 @@ uid = os.getuid()
 src_dir, out_dir = sys.argv[1], sys.argv[2]
 
 encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
-# Derive PROXY_BASE_URL / NEXTAUTH_URL exactly as render_pod_yaml does
-# (path-based on master; subdomain switch lands with the routing branch)
+# Derive PROXY_BASE_URL / NEXTAUTH_URL exactly as render_pod_yaml does.
 public_base_url = os.environ["PUBLIC_BASE_URL"].rstrip("/")
-proxy_base_url = f"{public_base_url}/litellm"
-nextauth_url = f"{public_base_url}/langfuse"
+parsed_pub = urllib.parse.urlparse(public_base_url)
+scheme = parsed_pub.scheme or "https"
+host = parsed_pub.netloc or parsed_pub.path.split("/")[0] or os.environ["ROUTING_DOMAIN"]
+proxy_base_url = os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host}"
+nextauth_url = os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host}"
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],

@@ -45,9 +45,9 @@ def test_resolve_with_public_base_url_vaild_domain():
     req = MockRequest()
     lf, ll, lm = resolve_external_urls(req)
     
-    assert lf == "https://app.vendeuvre.lan/llm-routing/langfuse"
-    assert ll == "https://app.vendeuvre.lan/llm-routing/litellm/ui"
-    assert lm == "https://app.vendeuvre.lan/llm-routing/llama/"
+    assert lf == "https://langfuse.app.vendeuvre.lan"
+    assert ll == "https://litellm.app.vendeuvre.lan/ui/"
+    assert lm == "https://llama.app.vendeuvre.lan/"
 
 
 def test_resolve_with_valid_base_request():
@@ -64,11 +64,11 @@ def test_resolve_with_valid_base_request():
     
     lf, ll, lm = resolve_external_urls(req)
     
-    # Netloc should use [::1]:8000 because request base host is valid,
-    # and netloc was validated successfully via urlparse.
-    assert lf == "http://[::1]:8000/llm-routing/langfuse"
-    assert ll == "http://[::1]:8000/llm-routing/litellm/ui"
-    assert lm == "http://[::1]:8000/llm-routing/llama/"
+    # Valid request host is converted to service subdomains while preserving
+    # its explicit port, rather than leaking the configured IPv6 fallback.
+    assert lf == "http://langfuse.sub.vendeuvre.lan:8000"
+    assert ll == "http://litellm.sub.vendeuvre.lan:8000/ui/"
+    assert lm == "http://llama.sub.vendeuvre.lan:8000/"
 
 
 def test_local_fallback_ipv6():
