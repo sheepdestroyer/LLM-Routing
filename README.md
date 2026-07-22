@@ -853,7 +853,7 @@ Tests cover:
 | LiteLLM direct | 1 completion directly to LiteLLM |
 | Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
 
 ## 10. Performance Benchmarks
 

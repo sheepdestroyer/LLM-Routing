@@ -604,7 +604,9 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     if not host:
         print("  ⚠ Canonical URLs — SKIPPED (PUBLIC_BASE_URL has no host)")
         return 0, 0, 0
-    router_base = public.rstrip("/")
+    # Preserve a configured router path (e.g. /llm-routing) while normalizing
+    # scheme-less PUBLIC_BASE_URL values into valid absolute URLs.
+    router_base = f"{scheme}://{host}{parsed_public.path.rstrip('/')}"
     endpoints = [
         (f"{router_base}/v1/models", "router models"),
         (f"{router_base}/dashboard", "dashboard"),
@@ -631,7 +633,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
 
     # Canonical chat completion (POST through public URL)
     total += 1
-    url = f"{public}/v1/chat/completions"
+    url = f"{router_base}/v1/chat/completions"
     try:
         payload = {
             "model": "agent-simple-core",

@@ -531,6 +531,9 @@ verify_stack_health() {
     return 1
 }
 # ── Stack ownership and teardown ──
+# Keep the generated Quadlet unit name in one place: it is used for ownership
+# detection, lifecycle operations, and user-facing diagnostics.
+LLM_ROUTING_POD_UNIT="llm-routing-pod.service"
 # Quadlet-managed pods carry PODMAN_SYSTEMD_UNIT on their infra container.
 # Consult that metadata rather than inferring ownership from active state: a
 # stopped or failed generated unit is still Quadlet-owned and must be reconciled
@@ -539,12 +542,12 @@ stack_ownership() {
     local infra_unit
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
         infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
-        if [[ "$infra_unit" == "llm-routing-pod.service" ]]; then
+        if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" ]]; then
             printf 'quadlet\n'
         else
             printf 'legacy\n'
         fi
-    elif systemctl --user show llm-routing-pod.service -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
+    elif systemctl --user show "$LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
         printf 'quadlet\n'
     else
         printf 'absent\n'
@@ -566,8 +569,8 @@ safe_pod_teardown() {
     ownership=$(stack_ownership)
     if [[ "$ownership" == "quadlet" ]]; then
         echo "🛑 Reconciling Quadlet-owned stack (unit may be active, inactive, or failed)..."
-        systemctl --user stop llm-routing-pod.service 2>/dev/null || true
-        systemctl --user reset-failed llm-routing-pod.service 2>/dev/null || true
+        systemctl --user stop "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+        systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
         podman pod rm -f "${POD_NAME}" 2>/dev/null || true
         cleanup_zombie_ports
         echo "✓ Quadlet stack stopped, state reconciled, ports cleaned"
@@ -820,7 +823,7 @@ render_quadlets() {
     mkdir -p "$QUADLET_DIR"
     chmod 700 "$QUADLET_DIR"
     python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
-import os, sys, urllib.parse, re, glob
+import os, sys, urllib.parse, re, glob, shutil, tempfile
 uid = os.getuid()
 src_dir, out_dir = sys.argv[1], sys.argv[2]
 
@@ -875,32 +878,42 @@ if not templates:
     sys.stderr.write(f"Error: no quadlet templates found in {src_dir}\n")
     sys.exit(1)
 
-# Remove stale rendered files from previous deploys (e.g. renamed containers)
-for stale in glob.glob(os.path.join(out_dir, "*.pod")) + glob.glob(os.path.join(out_dir, "*.container")):
-    os.unlink(stale)
+staging_dir = tempfile.mkdtemp(prefix=".llm-routing-render-", dir=os.path.dirname(out_dir))
+try:
+    for tpl in templates:
+        with open(tpl, "r", encoding="utf-8") as f:
+            text = f.read()
+        for ph, val in repl.items():
+            text = text.replace(ph, str(val))
+        unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
+        if unresolved:
+            sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
+            sys.exit(1)
+        # Quadlet Environment= values use systemd's command-line parser. Quote each
+        # complete KEY=value assignment after substitution so spaces, quotes, and
+        # backslashes in configurable values remain one environment value.
+        def quote_environment(match):
+            value = match.group(1).replace("\\", "\\\\").replace('"', '\\"')
+            return f'Environment="{value}"'
+        text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)
+        staged_path = os.path.join(staging_dir, os.path.basename(tpl))
+        with open(staged_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        # Rendered units include credentials; systemd user generator can read owner-only files.
+        os.chmod(staged_path, 0o600)
 
-for tpl in templates:
-    with open(tpl, "r", encoding="utf-8") as f:
-        text = f.read()
-    for ph, val in repl.items():
-        text = text.replace(ph, str(val))
-    unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
-    if unresolved:
-        sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
-        sys.exit(1)
-    # Quadlet Environment= values use systemd's command-line parser. Quote each
-    # complete KEY=value assignment after substitution so spaces, quotes, and
-    # backslashes in configurable values remain one environment value.
-    def quote_environment(match):
-        value = match.group(1).replace("\\", "\\\\").replace('"', '\\"')
-        return f'Environment="{value}"'
-    text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)
-    out_path = os.path.join(out_dir, os.path.basename(tpl))
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(text)
-    # Rendered units include credentials; systemd user generator can read owner-only files.
-    os.chmod(out_path, 0o600)
-    print(f"  ✓ {os.path.basename(tpl)}")
+    # All templates are now valid. Replace individual files atomically, then
+    # remove stale units; a failed render above leaves the prior unit set intact.
+    rendered_names = {os.path.basename(tpl) for tpl in templates}
+    for name in rendered_names:
+        os.replace(os.path.join(staging_dir, name), os.path.join(out_dir, name))
+    for stale in glob.glob(os.path.join(out_dir, "*.pod")) + glob.glob(os.path.join(out_dir, "*.container")):
+        if os.path.basename(stale) not in rendered_names:
+            os.unlink(stale)
+    for name in sorted(rendered_names):
+        print(f"  ✓ {name}")
+finally:
+    shutil.rmtree(staging_dir, ignore_errors=True)
 PY
     echo "✓ Quadlets rendered to ${QUADLET_DIR}"
 }
@@ -915,12 +928,20 @@ deploy_quadlets() {
         exit 1
     fi
     echo "✓ systemd units regenerated"
-    if systemctl --user is-active --quiet llm-routing-pod.service; then
-        echo "🔄 Restarting llm-routing-pod.service..."
-        systemctl --user restart llm-routing-pod.service
+    if systemctl --user is-active --quiet "$LLM_ROUTING_POD_UNIT"; then
+        echo "🔄 Restarting ${LLM_ROUTING_POD_UNIT}..."
+        if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then
+            echo "❌ Error: failed to restart ${LLM_ROUTING_POD_UNIT}" >&2
+            echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2
+            exit 1
+        fi
     else
-        echo "🚀 Starting llm-routing-pod.service..."
-        systemctl --user start llm-routing-pod.service
+        echo "🚀 Starting ${LLM_ROUTING_POD_UNIT}..."
+        if ! systemctl --user start "$LLM_ROUTING_POD_UNIT"; then
+            echo "❌ Error: failed to start ${LLM_ROUTING_POD_UNIT}" >&2
+            echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2
+            exit 1
+        fi
     fi
 }
 
@@ -955,8 +976,12 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
         if [[ "$STACK_OWNERSHIP" == "quadlet" ]]; then
             require_user_systemd
             echo "🔄 Restarting Quadlet-owned stack via systemd..."
-            systemctl --user reset-failed llm-routing-pod.service 2>/dev/null || true
-            systemctl --user restart llm-routing-pod.service
+            systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+            if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then
+                echo "❌ Error: failed to restart ${LLM_ROUTING_POD_UNIT}" >&2
+                echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2
+                exit 1
+            fi
         else
             echo "🔄 Restarting legacy ${POD_NAME} (use --replace or --pull to migrate)..."
             podman pod restart "${POD_NAME}"
@@ -964,6 +989,7 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
         setup_minio_buckets
         verify_stack_health
 
+        derive_external_service_urls
         echo ""
         echo "========================================================================="
         echo "🎉 SUCCESS: LLM Triage Gateway restarted!"
@@ -997,6 +1023,7 @@ else
 fi
 
 
+derive_external_service_urls
 echo "========================================================================="
 echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
 echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"

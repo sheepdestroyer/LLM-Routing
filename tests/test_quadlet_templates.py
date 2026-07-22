@@ -43,7 +43,8 @@ def test_upgrade_syncs_quadlets_before_quadlet_start_stack():
 def test_rendered_quadlets_are_owner_only():
     script = (ROOT / "start-stack.sh").read_text()
     assert 'chmod 700 "$QUADLET_DIR"' in script
-    assert "os.chmod(out_path, 0o600)" in script
+    assert "os.chmod(staged_path, 0o600)" in script
+    assert 'LLM_ROUTING_POD_UNIT="llm-routing-pod.service"' in script
     assert "systemctl --user daemon-reload" in script
     assert "stack_ownership()" in script
     assert "PODMAN_SYSTEMD_UNIT" in script
@@ -55,3 +56,16 @@ def test_quadlet_renderer_quotes_environment_values_for_systemd():
     assert 'text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)' in script
     assert "def quote_environment(match):" in script
     assert "return f'Environment=\"{value}\"'" in script
+
+
+def test_quadlet_renderer_stages_before_replacing_live_units():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert "tempfile.mkdtemp(prefix=\".llm-routing-render-\"" in script
+    assert "os.replace(os.path.join(staging_dir, name), os.path.join(out_dir, name))" in script
+    assert "shutil.rmtree(staging_dir, ignore_errors=True)" in script
+
+
+def test_quadlet_systemd_failures_are_reported():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then' in script
+    assert 'if ! systemctl --user start "$LLM_ROUTING_POD_UNIT"; then' in script
