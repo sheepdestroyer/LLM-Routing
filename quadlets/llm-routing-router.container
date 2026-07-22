@@ -1,0 +1,57 @@
+[Unit]
+Description=LLM Triage Router — classification + routing gateway (POD_NAME_PLACEHOLDER)
+After=llm-routing-litellm.service
+Wants=llm-routing-litellm.service
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-llm-triage-router
+Image=ROUTER_IMAGE_PLACEHOLDER
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+# Router image has no entrypoint (EP=null, CMD=uvicorn...); pod.yaml used
+# command: /bin/sh + args: -c ... — Entrypoint=/bin/sh, Exec=-c "..." matches.
+Entrypoint=/bin/sh
+Exec=-c "set -a && . /config/.env && set +a && LLAMA_CLASSIFIER_URL=LLAMA_CLASSIFIER_URL_PLACEHOLDER LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level $${LOG_LEVEL:-warning}"
+Environment=CONFIG_PATH=/config/router_dir/config.yaml
+Environment=LITELLM_CONFIG_PATH=/config/litellm_dir/config.yaml
+Environment=DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/postgres
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=RUN_USER_PLACEHOLDER/bus
+Environment=LITELLM_MASTER_KEY=LITELLM_MASTER_KEY_PLACEHOLDER
+Environment=LANGFUSE_PUBLIC_KEY=LANGFUSE_PUBLIC_KEY_PLACEHOLDER
+Environment=LANGFUSE_SECRET_KEY=LANGFUSE_SECRET_KEY_PLACEHOLDER
+Environment=LANGFUSE_HOST=http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
+Environment=OLLAMA_API_KEY=OLLAMA_API_KEY_PLACEHOLDER
+Environment=PUBLIC_BASE_URL=PUBLIC_BASE_URL_PLACEHOLDER
+Environment=ROUTING_DOMAIN=ROUTING_DOMAIN_PLACEHOLDER
+# Reassert these after /config/.env is sourced by Exec so a dev overlay cannot
+# be overwritten by the production bind-mounted file.
+Environment=LLAMA_CLASSIFIER_URL=LLAMA_CLASSIFIER_URL_PLACEHOLDER
+Environment=LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER
+Environment=LITELLM_PORT=LITELLM_PORT_PLACEHOLDER
+Environment=VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER
+Environment=ROUTER_PORT=ROUTER_PORT_PLACEHOLDER
+Environment=LANGFUSE_WEB_PORT=LANGFUSE_WEB_PORT_PLACEHOLDER
+Environment=LOG_LEVEL=info
+Volume=DATA_ROOT_PLACEHOLDER/router-rendered:/config/router_dir
+Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered:/config/litellm_dir
+Volume=DATA_ROOT_PLACEHOLDER/datasets:/app/data
+Volume=HOME_PLACEHOLDER/.gemini:/config/gemini_auth
+Volume=HOME_PLACEHOLDER/.gemini:/root/.gemini
+Volume=HOME_PLACEHOLDER/.local/share/goose:/config/goose_sessions
+Volume=HOME_PLACEHOLDER/.local/bin/agy:/usr/local/bin/agy
+Volume=RUN_USER_PLACEHOLDER/bus:RUN_USER_PLACEHOLDER/bus
+Volume=HOME_PLACEHOLDER/.local/share/keyrings:/root/.local/share/keyrings
+Volume=RUN_USER_PLACEHOLDER:RUN_USER_PLACEHOLDER
+Volume=WORKDIR_PLACEHOLDER/.env:/config/.env
+HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics')"
+HealthInterval=15s
+HealthTimeout=5s
+HealthOnFailure=kill
+HealthRetries=5
+HealthStartPeriod=240s
+
+[Service]
+Restart=always
+TimeoutStartSec=300

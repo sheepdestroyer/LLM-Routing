@@ -1,0 +1,44 @@
+[Unit]
+Description=LiteLLM Gateway — upstream proxy with adaptive routing (POD_NAME_PLACEHOLDER)
+After=llm-routing-postgres.service llm-routing-valkey-cache.service
+Wants=llm-routing-postgres.service llm-routing-valkey-cache.service
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-litellm-gateway
+Image=ghcr.io/berriai/litellm:v1.93.0
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+# Image entrypoint is docker/prod_entrypoint.sh (litellm CLI); pod.yaml used
+# command: python3 /app/entrypoint.py which replaced it. Quadlet Exec= only sets
+# args, so override Entrypoint= with the venv python (matches play-kube behavior).
+Entrypoint=/app/.venv/bin/python3
+Exec=/app/entrypoint.py
+Environment=DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:POSTGRES_PORT_PLACEHOLDER/postgres
+Environment=STORE_MODEL_IN_DB=True
+Environment=LITELLM_LOG=INFO
+Environment=LANGFUSE_HOST=http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
+Environment=LITELLM_MASTER_KEY=LITELLM_MASTER_KEY_PLACEHOLDER
+Environment=LITELLM_UI_USERNAME=LITELLM_UI_USERNAME_PLACEHOLDER
+Environment=LITELLM_UI_PASSWORD=LITELLM_UI_PASSWORD_PLACEHOLDER
+Environment=OLLAMA_API_KEY=OLLAMA_API_KEY_PLACEHOLDER
+Environment=OPENROUTER_API_KEY=OPENROUTER_API_KEY_PLACEHOLDER
+Environment=SERVER_ROOT_PATH=/llm-routing/litellm
+Environment=PROXY_BASE_URL=PROXY_BASE_URL_PLACEHOLDER
+Environment=LITELLM_PORT=LITELLM_PORT_PLACEHOLDER
+Environment=POSTGRES_PORT=POSTGRES_PORT_PLACEHOLDER
+Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/config.yaml:/app/config.yaml
+Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/entrypoint.py:/app/entrypoint.py
+Volume=WORKDIR_PLACEHOLDER/.env:/config/.env
+Volume=HOME_PLACEHOLDER/.gemini:/config/gemini_auth
+HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')"
+HealthInterval=15s
+HealthTimeout=5s
+HealthOnFailure=kill
+HealthRetries=5
+HealthStartPeriod=240s
+
+[Service]
+Restart=always
+TimeoutStartSec=300

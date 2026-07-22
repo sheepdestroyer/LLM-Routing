@@ -3514,7 +3514,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
 
     # Basic sanity-check on external_host, but don't over-restrict valid hostnames;
     # fall back to the request base URL rather than silently forcing localhost.
-    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.-:]+$", external_host):
+    if not isinstance(external_host, str) or not re.match(r"^[a-zA-Z0-9.:-]+$", external_host):
         logger.warning(
             "Unexpected external_host %r, falling back to request.base_url.hostname (%r)",
             external_host,
@@ -3546,21 +3546,26 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
     is_valid_external = external_host == domain or external_host.endswith("." + domain)
     is_valid_base = request.base_url.hostname == domain or (request.base_url.hostname or "").endswith("." + domain)
 
-    if is_valid_external:
-        # Centralized base URL path under subdomain/reverse proxy
+    if is_valid_external or is_valid_base:
+        # Use configured routing domain if a proxy supplies no request hostname.
+        # Preserve an explicit public port from the selected netloc so dashboard
+        # links remain valid behind non-standard TLS listeners.
+        host_val = external_host if is_valid_external else (request.base_url.hostname or domain)
+        netloc_val = external_netloc if is_valid_external else (request.base_url.netloc or host_val)
+        parsed_public = urlparse(f"{external_scheme}://{netloc_val}")
+        try:
+            port_suffix = f":{parsed_public.port}" if parsed_public.port else ""
+        except ValueError:
+            logger.warning("Invalid public port in netloc %r; omitting port", netloc_val)
+            port_suffix = ""
+
+        host_base = re.sub(r"^dashboard\.", "", host_val)
+        host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+        service_netloc = f"{host_base}{port_suffix}"
         return (
-            f"{external_scheme}://{external_netloc}/llm-routing/langfuse",
-            f"{external_scheme}://{external_netloc}/llm-routing/litellm/ui",
-            f"{external_scheme}://{external_netloc}/llm-routing/llama/"
-        )
-    elif is_valid_base:
-        parsed_netloc = urlparse(f"{external_scheme}://{request.url.netloc}")
-        netloc = request.url.netloc if parsed_netloc.hostname else "localhost"
-        base = f"{external_scheme}://{netloc}"
-        return (
-            f"{base}/llm-routing/langfuse",
-            f"{base}/llm-routing/litellm/ui",
-            f"{base}/llm-routing/llama/"
+            f"{external_scheme}://langfuse.{service_netloc}",
+            f"{external_scheme}://litellm.{service_netloc}/ui/",
+            f"{external_scheme}://llama.{service_netloc}/"
         )
     else:
         # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants

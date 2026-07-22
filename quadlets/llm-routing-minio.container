@@ -1,0 +1,27 @@
+[Unit]
+Description=MinIO S3 — Langfuse v3 event storage (POD_NAME_PLACEHOLDER)
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-minio-s3
+Image=minio/minio:RELEASE.2025-09-07T16-13-09Z
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+Environment=MINIO_ROOT_USER=MINIO_USER_PLACEHOLDER
+Environment=MINIO_ROOT_PASSWORD=MINIO_PASSWORD_PLACEHOLDER
+# pod.yaml used args: server ... with no command:, so image entrypoint
+# /usr/bin/docker-entrypoint.sh ran and consumed them. Quadlet Exec= sets args
+# the same way — image entrypoint stays, Exec provides the server args.
+Exec=server --quiet /data --address :MINIO_S3_PORT_PLACEHOLDER --console-address :MINIO_CONSOLE_PORT_PLACEHOLDER
+Volume=DATA_ROOT_PLACEHOLDER/minio-data:/data
+HealthCmd=curl -f http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live
+HealthInterval=15s
+HealthTimeout=5s
+HealthOnFailure=kill
+HealthRetries=5
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+TimeoutStartSec=90
