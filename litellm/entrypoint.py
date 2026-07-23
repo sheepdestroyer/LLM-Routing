@@ -6,6 +6,7 @@ import sys
 import time
 import socket
 import datetime
+import shlex
 from datetime import datetime as original_datetime, timezone
 
 # Load .env into os.environ
@@ -17,7 +18,12 @@ if os.path.exists(env_path):
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
                 key = key.strip()
-                val = val.strip().strip('"').strip("'")
+                # effective.env is shell-quoted by start-stack.sh; parse it with
+                # the same rules as the router's `source /config/.env`.
+                try:
+                    val = shlex.split(val, comments=False, posix=True)[0] if val else ""
+                except ValueError:
+                    val = val.strip().strip('"').strip("'")
                 os.environ.setdefault(key, val)
 
 # Load Gemini OAuth token from credentials JSON

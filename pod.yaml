@@ -98,7 +98,7 @@ spec:
       subPath: entrypoint.py
     - mountPath: /config/.env
       name: env-file
-      subPath: .env
+      subPath: effective.env
     - mountPath: /config/gemini_auth
       name: gemini-secrets
   # LLM Triage Router — classification + routing gateway
@@ -184,7 +184,7 @@ spec:
       name: xdg-runtime
     - mountPath: /config/.env
       name: env-file
-      subPath: .env
+      subPath: effective.env
   # PostgreSQL — Langfuse + LiteLLM metadata store
   - env:
     - name: POSTGRES_USER
@@ -527,7 +527,7 @@ spec:
       path: RUN_USER_PLACEHOLDER
     name: xdg-runtime
   - hostPath:
-      path: WORKDIR_PLACEHOLDER
+      path: DATA_ROOT_PLACEHOLDER
     name: env-file
   - hostPath:
       path: DATA_ROOT_PLACEHOLDER/datasets
