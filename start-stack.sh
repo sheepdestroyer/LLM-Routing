@@ -568,7 +568,7 @@ stack_ownership() {
         elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]] && legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"; then
             printf 'quadlet:%s\n' "$infra_unit"
         elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
-            printf 'absent\n'
+            printf 'conflict:%s\n' "$infra_unit"
         else
             printf 'legacy\n'
         fi
@@ -886,6 +886,12 @@ deploy_fresh_pod() {
 }
 
 STACK_OWNERSHIP=$(stack_ownership)
+if [[ "$STACK_OWNERSHIP" == conflict:* ]]; then
+    conflict_unit="${STACK_OWNERSHIP#conflict:}"
+    echo "❌ Error: pod ${POD_NAME} is attached to an unrelated legacy unit ${conflict_unit}; refusing to stop, replace, or deploy it." >&2
+    echo "   Inspect with: systemctl --user cat ${conflict_unit} --no-pager" >&2
+    exit 1
+fi
 if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
     if $FULL_REBUILD; then
         echo "🔨 Building custom local triage router image..."

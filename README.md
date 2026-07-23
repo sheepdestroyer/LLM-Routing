@@ -265,7 +265,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
-| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 262K |
+| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto` | 262K |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 262K |
@@ -285,7 +285,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
+  Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen-3.6`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
   ```mermaid
   graph TD
