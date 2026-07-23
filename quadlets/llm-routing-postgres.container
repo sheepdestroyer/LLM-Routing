@@ -1,0 +1,26 @@
+[Unit]
+Description=PostgreSQL — Langfuse + LiteLLM metadata store (POD_NAME_PLACEHOLDER)
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-postgres-db
+Image=pgvector/pgvector:0.8.5-pg18
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+Environment=POSTGRES_USER=postgres
+Environment=POSTGRES_PASSWORD=POSTGRES_PASSWORD_RAW_PLACEHOLDER
+Environment=POSTGRES_DB=langfuse
+Environment=PGDATA=/var/lib/postgresql/data/pg18
+Environment=PGPORT=POSTGRES_PORT_PLACEHOLDER
+Volume=DATA_ROOT_PLACEHOLDER/postgres-data:/var/lib/postgresql
+HealthCmd=pg_isready -U postgres -p POSTGRES_PORT_PLACEHOLDER
+HealthInterval=10s
+HealthTimeout=5s
+HealthOnFailure=kill
+HealthRetries=5
+HealthStartPeriod=15s
+
+[Service]
+Restart=always
+TimeoutStartSec=120

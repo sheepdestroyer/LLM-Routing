@@ -1,0 +1,34 @@
+# Labeler configuration for LLM-Routing
+# https://github.com/actions/labeler
+
+router:
+  - changed-files:
+    - any-glob-to-any-file: router/**
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file: tests/**
+
+scripts:
+  - changed-files:
+    - any-glob-to-any-file: scripts/**
+
+litellm:
+  - changed-files:
+    - any-glob-to-any-file: litellm/**
+
+github-actions:
+  - changed-files:
+    - any-glob-to-any-file: .github/workflows/**
+    - any-glob-to-any-file: .github/**/*.yml
+    - any-glob-to-any-file: .github/**/*.yaml
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file: '**/*.md'
+    - any-glob-to-any-file: docs/**
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file: requirements*.txt
+    - any-glob-to-any-file: pyproject.toml

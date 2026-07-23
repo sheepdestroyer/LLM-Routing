@@ -8,7 +8,7 @@ The gateway exposes a unified OpenAI-compatible endpoint that dynamically assess
 
 ## 1. System Architecture
 
-The gateway runs as a rootless Podman pod (`agent-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
+The gateway runs as a rootless Podman pod (`prod-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
 
 ### High-Level Topology
 
@@ -72,7 +72,7 @@ graph TD
 
 ## 1b. Container Health Checks & Auto-Restart
 
-All core containers are configured with **Kubernetes-style liveness and readiness probes** in [`pod.yaml`](pod.yaml) to enable automatic container restart on crash via Podman. This ensures the stack self-heals without manual intervention.
+All core containers are configured with health checks in the Quadlet templates under [`quadlets/`](quadlets/). The legacy [`pod.yaml`](pod.yaml) is retained as a compatibility template. Quadlet `HealthOnFailure=kill` together with systemd `Restart=always` enables automatic recovery from unhealthy containers.
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
@@ -216,7 +216,8 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
-├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
+├── quadlets/            # Quadlet templates for the systemd-managed stack
+├── pod.yaml             # Legacy Podman Kubernetes compatibility template
 ├── start-stack.sh       # Unified startup and credential extraction script
 ├── pytest.ini           # Pytest configuration (test discovery, asyncio mode)
 ├── litellm/
@@ -265,7 +266,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
-| `agent-advanced-core` | ❌ | — | LiteLLM openrouter-auto | 262K |
+| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto` | 262K |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 262K |
@@ -285,7 +286,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then paid local/remote Ollama models, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
+  Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen-3.6`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
   ```mermaid
   graph TD
@@ -303,7 +304,8 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           SM --> SC[agent-complex-core]:::complex
           SC --> SR[agent-reasoning-core]:::reasoning
           SR --> SA[agent-advanced-core]:::advanced
-          SA --> SO1[llm-routing-ollama]:::premium
+          SA --> SL[local-qwen-3.6]:::local
+          SL --> SO1[llm-routing-ollama]:::premium
           SO1 --> SAU[openrouter-auto]:::auto
       end
 
@@ -311,34 +313,38 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           M[agent-medium-core]:::medium --> MC[agent-complex-core]:::complex
           MC --> MR[agent-reasoning-core]:::reasoning
           MR --> MA[agent-advanced-core]:::advanced
-          MA --> MO1[llm-routing-ollama]:::premium
+          MA --> ML[local-qwen-3.6]:::local
+          ML --> MO1[llm-routing-ollama]:::premium
           MO1 --> MAU[openrouter-auto]:::auto
       end
 
       subgraph Complex["agent-complex-core Fallback Tree"]
           C[agent-complex-core]:::complex --> CR[agent-reasoning-core]:::reasoning
           CR --> CA[agent-advanced-core]:::advanced
-          CA --> CO1[llm-routing-ollama]:::premium
+          CA --> CL[local-qwen-3.6]:::local
+          CL --> CO1[llm-routing-ollama]:::premium
           CO1 --> CAU[openrouter-auto]:::auto
       end
 
       subgraph Reasoning["agent-reasoning-core Fallback Tree"]
           R[agent-reasoning-core]:::reasoning --> RA[agent-advanced-core]:::advanced
-          RA --> RO1[llm-routing-ollama]:::premium
+          RA --> RL[local-qwen-3.6]:::local
+          RL --> RO1[llm-routing-ollama]:::premium
           RO1 --> RAU[openrouter-auto]:::auto
       end
 
       subgraph Advanced["agent-advanced-core Fallback Tree"]
-          A[agent-advanced-core]:::advanced --> AO1[llm-routing-ollama]:::premium
+          A[agent-advanced-core]:::advanced --> AL[local-qwen-3.6]:::local
+          AL --> AO1[llm-routing-ollama]:::premium
           AO1 --> AAU[openrouter-auto]:::auto
       end
   ```
 
-  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-reasoning-core`**: advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-advanced-core`**: `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-advanced-core`**: `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
   - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro`, `complex & below` → `ollama-deepseek-v4-flash`. Note: Ollama cooldowns are managed by the triage router internally (5-minute window on failure); during cooldown the router returns 429 immediately so LiteLLM skips to `openrouter-auto`.
   All tiers ultimately land on OpenRouter auto/free model pools or the local Speculative MoE when enabled.
 *Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
@@ -389,18 +395,23 @@ For secure production deployments, the gateway services are configured to run un
 ### 1. Launching the Stack
 Run the startup script from the root of the repository:
 ```bash
-./start-stack.sh              # Fast restart (preserves container IDs and logs)
-./start-stack.sh --replace    # Recreate pod from YAML (picks up new ports,
-                              #   health probes, env vars, containers — no rebuild)
-./start-stack.sh --full-rebuild  # Full reset: rebuild image + recreate pod
+./start-stack.sh              # Restart the systemd-managed Quadlet stack
+./start-stack.sh --replace    # Render Quadlets, daemon-reload, and recreate the stack
+                              #   (picks up ports, probes, env vars, and containers)
+./start-stack.sh --full-rebuild  # Same as --replace plus rebuild the router image
+
+# Inspect the generated systemd units and their logs
+systemctl --user status llm-routing-prod-pod.service --no-pager  # or llm-routing-dev-pod.service
+systemctl --user list-units 'llm-routing-*' --no-pager  # filter for dev/prod namespaces
+journalctl --user -u llm-routing-prod-router.service -n 100 --no-pager  # or llm-routing-dev-router.service
 ```
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
 
 ### 2. Verify Container Status
-Check that all **10 containers** inside `agent-router-pod` are up and running:
+Check that all **9 application containers** in `prod-router-pod` are up and running (the tenth pod infra container is Podman-managed):
 ```bash
 podman pod ps
-podman ps --pod --filter pod=agent-router-pod
+podman ps --pod --filter pod=prod-router-pod
 ```
 Your output should display:
 * `valkey-cache` (Redis-compatible cache)
@@ -491,7 +502,7 @@ curl -s http://127.0.0.1:5000/v1/chat/completions \
 
 Check the triage classification and model cascades by viewing the router container's standard output logs:
 ```bash
-podman logs agent-router-pod-llm-triage-router
+podman logs prod-router-pod-llm-triage-router
 ```
 
 ---
@@ -840,14 +851,34 @@ Tests cover:
 | Section | Endpoints |
 |---------|-----------|
 | Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
-| LiteLLM | `/health/liveness`, `/health/readiness`, `/v1/models`, `/llm-routing/litellm/ui/` |
-| Langfuse | `/api/public/health`, `/` (web UI) |
+| LiteLLM | Local `/health/liveness`, `/health/readiness`, `/v1/models`; canonical `https://litellm.<host>/ui/` |
+| Langfuse | Local `/api/public/health`, `/`; canonical `https://langfuse.<host>/` |
+| llama.cpp | Canonical `https://llama.<host>/health` |
 | Infrastructure | MinIO `/minio/health/live`, ClickHouse `/ping` |
 | E2E chat | 3 completions through triage router |
 | LiteLLM direct | 1 completion directly to LiteLLM |
-| Canonical URLs | 6 GET + 1 POST through public HTTPS (graceful DNS skip) |
+| Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification; production `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
+
+## Environment-isolated Quadlet deployment
+
+Dev and production use distinct Quadlet namespaces because generated systemd
+unit names are global within the user manager. Dev renders units under
+`~/.config/containers/systemd/llm-routing-dev/` and uses
+`llm-routing-dev-pod.service`; production uses
+`~/.config/containers/systemd/llm-routing-prod/` and
+`llm-routing-prod-pod.service`. Their pod/container names, ports, data roots,
+and rendered configuration remain separate. Unless overridden explicitly,
+`DATA_ROOT` is `${WORKDIR}/data`; because dev and production run from separate
+`~/dev/` and `~/prod/` worktrees, their persistent data and rendered configs are
+also physically separate.
+
+The deployment script writes the fully merged environment (base `.env` followed
+by the optional `.env.dev` overlay) to `${DATA_ROOT}/effective.env`. The router
+and LiteLLM containers source this generated file, so dev-only URLs, ports, and
+other overrides reach the containers without modifying the production `.env`.
+The generated file is owner-only and is never committed.
 
 ## 10. Performance Benchmarks
 

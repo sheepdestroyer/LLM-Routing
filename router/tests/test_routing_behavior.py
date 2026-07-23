@@ -103,3 +103,72 @@ def test_llm_routing_agy_fallback_to_advanced_core():
         _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
         assert json_payload["model"] == "agent-advanced-core"
+
+@pytest.mark.asyncio
+async def test_classify_request_exception():
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = Exception("Simulated connection error")
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {}, clear=False):
+        decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True)
+        assert decision == "agent-advanced-core"
+        assert raw_result == "advanced (exception)"
+        assert was_cache_hit is False
+        assert latency >= 0.0
+
+@pytest.mark.asyncio
+async def test_classify_request_value_error_max_chars():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "agent-medium-core"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
+         patch.dict(os.environ, {"CLASSIFIER_INPUT_MAX_CHARS": "invalid_int"}):
+        decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True)
+        assert decision == "agent-medium-core"
+
+@pytest.mark.asyncio
+async def test_classify_request_langfuse_exceptions():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "agent-medium-core"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    mock_lf = MagicMock()
+    mock_lf.start_observation.side_effect = Exception("Langfuse start error")
+
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
+         patch("router.main.get_langfuse", return_value=mock_lf):
+        decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
+        assert decision == "agent-medium-core"
+
+    mock_span = MagicMock()
+    mock_span.end.side_effect = Exception("Langfuse end error")
+    mock_lf.start_observation.side_effect = None
+    mock_lf.start_observation.return_value = mock_span
+
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
+         patch("router.main.get_langfuse", return_value=mock_lf):
+        decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
+        assert decision == "agent-medium-core"
+        mock_span.end.assert_called_once()
+
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+    mock_span.end.reset_mock()
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
+         patch("router.main.get_langfuse", return_value=mock_lf):
+        decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
+        assert decision == "agent-advanced-core"
+        assert raw_result == "advanced (fallback)"
+        mock_span.end.assert_called_once()

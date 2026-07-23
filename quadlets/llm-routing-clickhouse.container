@@ -1,0 +1,27 @@
+[Unit]
+Description=ClickHouse — Langfuse v3 OLAP trace store (POD_NAME_PLACEHOLDER)
+
+[Container]
+ContainerName=POD_NAME_PLACEHOLDER-clickhouse-db
+Image=clickhouse/clickhouse-server:26.6.2.81
+Pod=llm-routing.pod
+# play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
+# (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
+AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
+User=101
+Group=101
+Environment=CLICKHOUSE_DB=default
+Environment=CLICKHOUSE_USER=clickhouse
+Environment=CLICKHOUSE_PASSWORD=CLICKHOUSE_PASSWORD_PLACEHOLDER
+Volume=DATA_ROOT_PLACEHOLDER/clickhouse-data:/var/lib/clickhouse
+Volume=DATA_ROOT_PLACEHOLDER/clickhouse-config/port-override.xml:/etc/clickhouse-server/config.d/port-override.xml
+HealthCmd=clickhouse-client --host 127.0.0.1 --port CLICKHOUSE_TCP_PORT_PLACEHOLDER --user clickhouse --password CLICKHOUSE_PASSWORD_PLACEHOLDER --query "SELECT 1"
+HealthInterval=15s
+HealthTimeout=5s
+HealthOnFailure=kill
+HealthRetries=5
+HealthStartPeriod=20s
+
+[Service]
+Restart=always
+TimeoutStartSec=120

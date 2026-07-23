@@ -209,3 +209,23 @@ async def test_atomic_write_json_async_overwrite_dump_failure_keeps_original(tmp
     with open(target_file, "r", encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+
+@patch("router.main.os.replace")
+@patch("router.main.os.unlink")
+def test_atomic_write_json_sync_unlink_error(mock_unlink, mock_replace, tmp_path):
+    """Test error handling when os.unlink fails during cleanup after replace fails."""
+    target_file = tmp_path / "data.json"
+    data = {"key": "value"}
+
+    mock_replace.side_effect = OSError("Mocked replace error")
+    mock_unlink.side_effect = OSError("Mocked unlink error")
+
+    with pytest.raises(OSError, match="Mocked replace error"):
+        _atomic_write_json_sync(str(target_file), data)
+
+    # Verify replace and unlink cleanup were executed
+    mock_replace.assert_called_once()
+    mock_unlink.assert_called_once()
+
+    # Verify target file wasn't created
+    assert not target_file.exists()
