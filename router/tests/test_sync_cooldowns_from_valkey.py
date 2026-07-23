@@ -1,9 +1,9 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-import time
+from unittest.mock import AsyncMock, patch
 
 from router.main import sync_cooldowns_from_valkey
 import router.main
+
 
 @pytest.fixture
 def mock_globals():
@@ -24,26 +24,33 @@ def mock_globals():
     router.main._redis_client = orig_redis_client
     router.main._redis_last_init_attempt = orig_redis_last_init
 
-@pytest.mark.asyncio
-async def test_sync_no_redis(mock_globals):
-    with patch("router.main.get_redis", return_value=None):
-        with patch("router.main.get_breaker") as mock_get_breaker:
-            await sync_cooldowns_from_valkey()
-            mock_get_breaker.assert_not_called()
+
+@pytest.fixture
+def mock_redis():
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_breaker():
+    return AsyncMock()
+
 
 @pytest.mark.asyncio
-async def test_sync_redis_value_future(mock_globals):
-    mock_redis = AsyncMock()
-    # Mock time.time() to 100.0, so future is 110.0
+async def test_sync_no_redis(mock_globals):
+    with patch("router.main.get_redis", return_value=None), \
+         patch("router.main.get_breaker") as mock_get_breaker:
+        await sync_cooldowns_from_valkey()
+        mock_get_breaker.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_redis_value_future(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = "110.0"
 
     with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker") as mock_get_breaker, \
-         patch("time.time", return_value=100.0), \
-         patch("time.monotonic", return_value=50.0):
-
-        mock_breaker = AsyncMock()
-        mock_get_breaker.return_value = mock_breaker
+         patch("router.main.get_breaker", return_value=mock_breaker), \
+         patch("router.main.time.time", return_value=100.0), \
+         patch("router.main.time.monotonic", return_value=50.0):
 
         await sync_cooldowns_from_valkey()
 
@@ -52,18 +59,14 @@ async def test_sync_redis_value_future(mock_globals):
         assert router.main._ollama_cooldown_until == 60.0
         mock_breaker.sync_from_valkey.assert_awaited_once_with(mock_redis)
 
+
 @pytest.mark.asyncio
-async def test_sync_redis_value_past(mock_globals):
-    mock_redis = AsyncMock()
-    # Mock time.time() to 100.0, so past is 90.0
+async def test_sync_redis_value_past(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = "90.0"
 
     with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker") as mock_get_breaker, \
-         patch("time.time", return_value=100.0):
-
-        mock_breaker = AsyncMock()
-        mock_get_breaker.return_value = mock_breaker
+         patch("router.main.get_breaker", return_value=mock_breaker), \
+         patch("router.main.time.time", return_value=100.0):
 
         # Set cooldown to a positive value first to ensure it gets zeroed
         router.main._ollama_cooldown_until = 999.0
@@ -75,17 +78,14 @@ async def test_sync_redis_value_past(mock_globals):
         assert router.main._ollama_cooldown_until == 0.0
         mock_breaker.sync_from_valkey.assert_awaited_once_with(mock_redis)
 
+
 @pytest.mark.asyncio
-async def test_sync_redis_value_none_past_cooldown(mock_globals):
-    mock_redis = AsyncMock()
+async def test_sync_redis_value_none_past_cooldown(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = None
 
     with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker") as mock_get_breaker, \
-         patch("time.monotonic", return_value=50.0):
-
-        mock_breaker = AsyncMock()
-        mock_get_breaker.return_value = mock_breaker
+         patch("router.main.get_breaker", return_value=mock_breaker), \
+         patch("router.main.time.monotonic", return_value=50.0):
 
         # Current cooldown is in the past
         router.main._ollama_cooldown_until = 40.0
@@ -95,17 +95,14 @@ async def test_sync_redis_value_none_past_cooldown(mock_globals):
         assert router.main._ollama_cooldown_until == 0.0
         mock_breaker.sync_from_valkey.assert_awaited_once_with(mock_redis)
 
+
 @pytest.mark.asyncio
-async def test_sync_redis_value_none_future_cooldown(mock_globals):
-    mock_redis = AsyncMock()
+async def test_sync_redis_value_none_future_cooldown(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = None
 
     with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker") as mock_get_breaker, \
-         patch("time.monotonic", return_value=50.0):
-
-        mock_breaker = AsyncMock()
-        mock_get_breaker.return_value = mock_breaker
+         patch("router.main.get_breaker", return_value=mock_breaker), \
+         patch("router.main.time.monotonic", return_value=50.0):
 
         # Current cooldown is in the future
         router.main._ollama_cooldown_until = 60.0
@@ -116,9 +113,9 @@ async def test_sync_redis_value_none_future_cooldown(mock_globals):
         assert router.main._ollama_cooldown_until == 60.0
         mock_breaker.sync_from_valkey.assert_awaited_once_with(mock_redis)
 
+
 @pytest.mark.asyncio
-async def test_sync_redis_exception(mock_globals):
-    mock_redis = AsyncMock()
+async def test_sync_redis_exception(mock_globals, mock_redis):
     # Throw an exception during get
     mock_redis.get.side_effect = Exception("Redis error")
 
@@ -127,7 +124,7 @@ async def test_sync_redis_exception(mock_globals):
     router.main._redis_last_init_attempt = 0.0
 
     with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("time.monotonic", return_value=123.45):
+         patch("router.main.time.monotonic", return_value=123.45):
 
         await sync_cooldowns_from_valkey()
 
