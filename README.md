@@ -303,7 +303,8 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           SM --> SC[agent-complex-core]:::complex
           SC --> SR[agent-reasoning-core]:::reasoning
           SR --> SA[agent-advanced-core]:::advanced
-          SA --> SO1[llm-routing-ollama]:::premium
+          SA --> SL[local-qwen-3.6]:::local
+          SL --> SO1[llm-routing-ollama]:::premium
           SO1 --> SAU[openrouter-auto]:::auto
       end
 
@@ -311,34 +312,38 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           M[agent-medium-core]:::medium --> MC[agent-complex-core]:::complex
           MC --> MR[agent-reasoning-core]:::reasoning
           MR --> MA[agent-advanced-core]:::advanced
-          MA --> MO1[llm-routing-ollama]:::premium
+          MA --> ML[local-qwen-3.6]:::local
+          ML --> MO1[llm-routing-ollama]:::premium
           MO1 --> MAU[openrouter-auto]:::auto
       end
 
       subgraph Complex["agent-complex-core Fallback Tree"]
           C[agent-complex-core]:::complex --> CR[agent-reasoning-core]:::reasoning
           CR --> CA[agent-advanced-core]:::advanced
-          CA --> CO1[llm-routing-ollama]:::premium
+          CA --> CL[local-qwen-3.6]:::local
+          CL --> CO1[llm-routing-ollama]:::premium
           CO1 --> CAU[openrouter-auto]:::auto
       end
 
       subgraph Reasoning["agent-reasoning-core Fallback Tree"]
           R[agent-reasoning-core]:::reasoning --> RA[agent-advanced-core]:::advanced
-          RA --> RO1[llm-routing-ollama]:::premium
+          RA --> RL[local-qwen-3.6]:::local
+          RL --> RO1[llm-routing-ollama]:::premium
           RO1 --> RAU[openrouter-auto]:::auto
       end
 
       subgraph Advanced["agent-advanced-core Fallback Tree"]
-          A[agent-advanced-core]:::advanced --> AO1[llm-routing-ollama]:::premium
+          A[agent-advanced-core]:::advanced --> AL[local-qwen-3.6]:::local
+          AL --> AO1[llm-routing-ollama]:::premium
           AO1 --> AAU[openrouter-auto]:::auto
       end
   ```
 
-  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-reasoning-core`**: advanced-core → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-advanced-core`**: `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-advanced-core`**: `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
   - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro`, `complex & below` → `ollama-deepseek-v4-flash`. Note: Ollama cooldowns are managed by the triage router internally (5-minute window on failure); during cooldown the router returns 429 immediately so LiteLLM skips to `openrouter-auto`.
   All tiers ultimately land on OpenRouter auto/free model pools or the local Speculative MoE when enabled.
 *Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*

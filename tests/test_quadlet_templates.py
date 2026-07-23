@@ -154,6 +154,8 @@ def test_namespace_is_validated_and_ownership_preserves_exact_unit():
     assert 'legacy_unit_owns_pod()' in script
     assert 'grep -Fqx "PodName=${POD_NAME}"' in script
     assert '&& legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"' in script
+    assert 'elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then' in script
+    assert "printf 'absent\\n'" in script
 
 
 def test_documentation_uses_environment_specific_units():

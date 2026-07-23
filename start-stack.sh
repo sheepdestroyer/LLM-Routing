@@ -563,8 +563,12 @@ stack_ownership() {
 
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
         infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
-        if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" || "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
+        if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" ]]; then
             printf 'quadlet:%s\n' "$infra_unit"
+        elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]] && legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"; then
+            printf 'quadlet:%s\n' "$infra_unit"
+        elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
+            printf 'absent\n'
         else
             printf 'legacy\n'
         fi
