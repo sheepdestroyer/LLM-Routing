@@ -151,6 +151,9 @@ def test_namespace_is_validated_and_ownership_preserves_exact_unit():
     assert 'owner_unit="${STACK_OWNERSHIP#quadlet:}"' in script
     assert 'failed to restart ${owner_unit}' in script
     assert 'status ${owner_unit} --no-pager' in script
+    assert 'legacy_unit_owns_pod()' in script
+    assert 'grep -Fqx "PodName=${POD_NAME}"' in script
+    assert '&& legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"' in script
 
 
 def test_documentation_uses_environment_specific_units():

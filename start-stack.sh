@@ -551,6 +551,16 @@ QUADLET_DIR="${HOME}/.config/containers/systemd/${QUADLET_NAMESPACE}"
 # through systemd before a replacement pod is created.
 stack_ownership() {
     local infra_unit
+
+    # A generic legacy unit is shared by old deployments. Only treat it as
+    # owned when its generated unit explicitly names this stack's pod; merely
+    # being loaded is not sufficient and could tear down the other environment.
+    legacy_unit_owns_pod() {
+        local unit="$1"
+        systemctl --user cat "$unit" --no-pager 2>/dev/null \
+            | grep -Fqx "PodName=${POD_NAME}"
+    }
+
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
         infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
         if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" || "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
@@ -560,7 +570,8 @@ stack_ownership() {
         fi
     elif systemctl --user show "$LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
         printf 'quadlet:%s\n' "$LLM_ROUTING_POD_UNIT"
-    elif systemctl --user show "$LEGACY_LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
+    elif systemctl --user show "$LEGACY_LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found' \
+        && legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"; then
         printf 'quadlet:%s\n' "$LEGACY_LLM_ROUTING_POD_UNIT"
     else
         printf 'absent\n'
