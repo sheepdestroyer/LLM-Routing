@@ -1,6 +1,7 @@
 """Main FastAPI application for the LLM Triage & Fallback Gateway."""
 import os
 import uuid
+import posixpath
 import aiofiles
 import re
 import sys
@@ -1796,10 +1797,36 @@ def get_pie_chart_gradient() -> str:
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
-    litellm_base = f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/v1/memory"
+    litellm_port = os.getenv("LITELLM_PORT") or "4000"
+    expected_netloc = f"127.0.0.1:{litellm_port}"
+
+    clean_path = posixpath.normpath("/" + path.lstrip("/"))
+
+    # SSRF & Directory Traversal Protection: check for path traversal (..), authority override (@), scheme injection (://), and null bytes (\x00)
+    if (
+        ".." in path
+        or ".." in clean_path
+        or "@" in path
+        or "@" in clean_path
+        or "://" in path
+        or "://" in clean_path
+        or "\x00" in path
+        or "\x00" in clean_path
+    ):
+        logger.warning(f"Blocking potentially malicious memory proxy path: {path}")
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    litellm_base = f"http://{expected_netloc}/v1/memory"
 
     # Resolve the destination URL
-    url = f"{litellm_base}{path}"
+    url = f"{litellm_base}{clean_path}"
+
+    parsed_url = urlparse(url)
+    if parsed_url.netloc != expected_netloc:
+        logger.warning(
+            f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}"
+        )
+        raise HTTPException(status_code=400, detail="Invalid path")
 
     # Prepare query parameters
     query_params = dict(request.query_params)
