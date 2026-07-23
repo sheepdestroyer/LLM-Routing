@@ -4440,13 +4440,12 @@ class AnnotationItem(BaseModel):
     note: Optional[str] = Field(default=None, max_length=1000)
     ts: Optional[str] = Field(default=None, max_length=100)
 
-
 class AnnotationPayload(RootModel):
     """Pydantic model representing a payload of multiple annotations."""
     root: Dict[str, AnnotationItem]
 
     @model_validator(mode="after")
-    def validate_payload(self) -> "AnnotationPayload":
+    def _validate_payload(self) -> "AnnotationPayload":
         """Validate the entire annotation payload for size and key constraints."""
         data = self.root
         if len(data) > 1000:
