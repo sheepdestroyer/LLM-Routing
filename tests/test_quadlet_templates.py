@@ -85,6 +85,17 @@ def test_router_quadlet_reasserts_overlayed_llama_urls_after_env_source():
     assert '"LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"]' in script
 
 
+def test_containers_source_the_merged_effective_environment():
+    script = (ROOT / "start-stack.sh").read_text()
+    for template in (QUADLETS / "llm-routing-router.container", QUADLETS / "llm-routing-litellm.container"):
+        assert "EFFECTIVE_ENV_FILE_PLACEHOLDER:/config/.env" in template.read_text()
+    assert 'EFFECTIVE_ENV_FILE="${DATA_ROOT}/effective.env"' in script
+    assert '"EFFECTIVE_ENV_FILE_PLACEHOLDER": os.environ["EFFECTIVE_ENV_FILE"]' in script
+    assert "shlex.quote(os.environ[key])" in script
+    assert "APPLICATION_ENV = {" in script
+    assert "for key in sorted(APPLICATION_ENV):" in script
+
+
 def test_quadlet_deployment_enforces_prerequisite_and_restart_failures():
     script = (ROOT / "start-stack.sh").read_text()
     assert "render_pod_yaml()" not in script
@@ -120,7 +131,8 @@ def test_namespace_rendering_preserves_non_identifiers():
         "NEXTAUTH_URL_DERIVED": "https://next", "PUBLIC_BASE_URL": "https://host/llm-routing",
         "ROUTING_DOMAIN": "vendeuvre.lan", "LLAMA_CLASSIFIER_URL": "http://127.0.0.1:8083/v1",
         "LLAMA_SERVER_URL": "http://127.0.0.1:8083", "POD_NAME": "dev-router-pod",
-        "DATA_ROOT": str(ROOT / "data"), "ROUTER_IMAGE": "registry/llm-routing-router:latest",
+        "DATA_ROOT": str(ROOT / "data"), "EFFECTIVE_ENV_FILE": str(ROOT / "data" / "effective.env"),
+        "ROUTER_IMAGE": "registry/llm-routing-router:latest",
         "ROUTER_PORT": "5010", "LITELLM_PORT": "4010", "LANGFUSE_WEB_PORT": "3011",
         "LANGFUSE_WORKER_PORT": "3030", "POSTGRES_PORT": "5442", "VALKEY_CACHE_PORT": "6389",
         "VALKEY_LF_PORT": "6390", "CLICKHOUSE_HTTP_PORT": "8123", "CLICKHOUSE_TCP_PORT": "9003",

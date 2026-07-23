@@ -72,7 +72,7 @@ graph TD
 
 ## 1b. Container Health Checks & Auto-Restart
 
-All core containers are configured with **Kubernetes-style liveness and readiness probes** in [`pod.yaml`](pod.yaml) to enable automatic container restart on crash via Podman. This ensures the stack self-heals without manual intervention.
+All core containers are configured with health checks in the Quadlet templates under [`quadlets/`](quadlets/). The legacy [`pod.yaml`](pod.yaml) is retained as a compatibility template. Quadlet `HealthOnFailure=kill` together with systemd `Restart=always` enables automatic recovery from unhealthy containers.
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
@@ -216,7 +216,8 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── .env                 # Environment file for API keys, passwords, and generated secrets (ignored by git)
 ├── .gitignore           # Git ignore policy protecting secrets & database files
 ├── README.md            # In-depth system and operational guide
-├── pod.yaml             # Podman Kubernetes template defining the 10-container stack
+├── quadlets/            # Quadlet templates for the systemd-managed stack
+├── pod.yaml             # Legacy Podman Kubernetes compatibility template
 ├── start-stack.sh       # Unified startup and credential extraction script
 ├── pytest.ini           # Pytest configuration (test discovery, asyncio mode)
 ├── litellm/
@@ -858,7 +859,7 @@ Tests cover:
 | LiteLLM direct | 1 completion directly to LiteLLM |
 | Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification; production `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
 
 ## Environment-isolated Quadlet deployment
 
@@ -872,6 +873,12 @@ and rendered configuration remain separate. Unless overridden explicitly,
 `DATA_ROOT` is `${WORKDIR}/data`; because dev and production run from separate
 `~/dev/` and `~/prod/` worktrees, their persistent data and rendered configs are
 also physically separate.
+
+The deployment script writes the fully merged environment (base `.env` followed
+by the optional `.env.dev` overlay) to `${DATA_ROOT}/effective.env`. The router
+and LiteLLM containers source this generated file, so dev-only URLs, ports, and
+other overrides reach the containers without modifying the production `.env`.
+The generated file is owner-only and is never committed.
 
 ## 10. Performance Benchmarks
 

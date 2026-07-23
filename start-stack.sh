@@ -124,6 +124,10 @@ LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:${ROUTER_PORT}}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL%/}"
 export PUBLIC_BASE_URL LOCAL_BASE_URL
 
+# Containers source this generated file, not the production .env bind mount.
+# This preserves the .env + optional .env.dev overlay inside each container.
+EFFECTIVE_ENV_FILE="${DATA_ROOT}/effective.env"
+export EFFECTIVE_ENV_FILE
 
 # Ensure openssl is installed if we need to generate passwords/keys
 if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
@@ -359,8 +363,36 @@ if [ -z "$CLASSIFIER_INPUT_MAX_CHARS" ]; then
     echo "✓ Set default CLASSIFIER_INPUT_MAX_CHARS=300 and saved to $ENV_FILE"
 fi
 
+# Persist only the application environment for bind-mounted container consumers.
+# Quote values as shell syntax so URLs, credentials, and special characters
+# survive the second `source` performed by the router/LiteLLM entrypoints.
+python3 - "$EFFECTIVE_ENV_FILE" <<'PY'
+import os
+import shlex
+import sys
 
+# Explicit allowlist: never copy unrelated host credentials into containers.
+APPLICATION_ENV = {
+    "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
+    "CLICKHOUSE_TCP_PORT", "DATA_ROOT", "LANGFUSE_INIT_USER_PASSWORD",
+    "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_WEB_PORT",
+    "LANGFUSE_WORKER_PORT", "LLAMA_CLASSIFIER_URL", "LLAMA_SERVER_URL",
+    "LITELLM_MASTER_KEY", "LITELLM_PORT", "MINIO_CONSOLE_PORT", "MINIO_ROOT_PASSWORD",
+    "MINIO_ROOT_USER", "MINIO_S3_PORT", "NEXTAUTH_SECRET", "NEXTAUTH_URL",
+    "OLLAMA_API_KEY", "OPENROUTER_API_KEY", "POD_NAME", "POSTGRES_PASSWORD",
+    "POSTGRES_PORT", "PROXY_BASE_URL", "PUBLIC_BASE_URL", "QUADLET_NAMESPACE",
+    "REDIS_AUTH", "ROUTER_API_KEY", "ROUTER_IMAGE", "ROUTER_PORT", "ROUTING_DOMAIN",
+    "SALT", "ENCRYPTION_KEY", "UI_PASSWORD", "UI_USERNAME", "VALKEY_CACHE_PORT",
+    "VALKEY_LF_PORT",
+}
 
+target = sys.argv[1]
+with open(target, "w", encoding="utf-8") as handle:
+    for key in sorted(APPLICATION_ENV):
+        if key in os.environ:
+            handle.write(f"{key}={shlex.quote(os.environ[key])}\n")
+os.chmod(target, 0o600)
+PY
 
 # DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER in router config is resolved at runtime from env
 
@@ -773,6 +805,7 @@ repl = {
     "LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"],
     "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
     "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
+    "EFFECTIVE_ENV_FILE_PLACEHOLDER": os.environ["EFFECTIVE_ENV_FILE"],
     "ROUTER_IMAGE_PLACEHOLDER": os.environ["ROUTER_IMAGE"],
     "ROUTER_PORT_PLACEHOLDER": os.environ["ROUTER_PORT"],
     "LITELLM_PORT_PLACEHOLDER": os.environ["LITELLM_PORT"],

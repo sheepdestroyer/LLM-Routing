@@ -30,7 +30,7 @@ Environment=LITELLM_PORT=LITELLM_PORT_PLACEHOLDER
 Environment=POSTGRES_PORT=POSTGRES_PORT_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/config.yaml:/app/config.yaml
 Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/entrypoint.py:/app/entrypoint.py
-Volume=WORKDIR_PLACEHOLDER/.env:/config/.env
+Volume=EFFECTIVE_ENV_FILE_PLACEHOLDER:/config/.env
 Volume=HOME_PLACEHOLDER/.gemini:/config/gemini_auth
 HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')"
 HealthInterval=15s
