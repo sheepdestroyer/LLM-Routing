@@ -223,5 +223,9 @@ def test_atomic_write_json_sync_unlink_error(mock_unlink, mock_replace, tmp_path
     with pytest.raises(OSError, match="Mocked replace error"):
         _atomic_write_json_sync(str(target_file), data)
 
+    # Verify replace and unlink cleanup were executed
+    mock_replace.assert_called_once()
+    mock_unlink.assert_called_once()
+
     # Verify target file wasn't created
     assert not target_file.exists()
