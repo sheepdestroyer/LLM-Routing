@@ -9,10 +9,11 @@ This directory and the repository root contain various scripts used for stack or
 ### `start-stack.sh` (Root Directory)
 Unified startup and credential extraction script for the systemd Quadlet-managed Podman stack.
 - **Usage**:
-  - `./start-stack.sh` (Restart the generated `llm-routing-pod.service`)
+  - `./start-stack.sh` (Restart the generated environment-specific pod service)
   - `./start-stack.sh --replace` (Stop + clean ports + render/install Quadlets + daemon-reload + recreate stack)
   - `./start-stack.sh --full-rebuild` (Same as `--replace` + rebuild the triage router image; required for code changes in `router/`)
-- Quadlet templates live in `quadlets/`; rendered owner-only units are installed under `~/.config/containers/systemd/llm-routing/`. Use `systemctl --user status llm-routing-pod.service --no-pager` and `journalctl --user -u llm-routing-router.service --no-pager` for lifecycle diagnostics.
+- Quadlet templates live in `quadlets/`; rendered owner-only units use environment-specific namespaces: dev under `~/.config/containers/systemd/llm-routing-dev/` and prod under `~/.config/containers/systemd/llm-routing-prod/`. Dev uses `llm-routing-dev-pod.service`; prod uses `llm-routing-prod-pod.service`. Use the matching `systemctl --user status <namespace>-pod.service --no-pager` and `journalctl --user -u <namespace>-router.service --no-pager` for lifecycle diagnostics.
+- Before rendering, the script writes the merged `.env` plus optional `.env.dev` overlay to `${DATA_ROOT}/effective.env` (mode `600`). Router and LiteLLM mount this generated file as `/config/.env`; the source `.env` remains unchanged.
 
 ### `scripts/backup.sh`
 Automated database backup script that runs before every stack deployment. Uses `pg_isready` to safely wait for database connections and manages timestamped backups under `backups/`.
