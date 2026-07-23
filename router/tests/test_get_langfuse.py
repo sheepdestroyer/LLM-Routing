@@ -19,7 +19,8 @@ def test_get_langfuse_success():
     mock_langfuse_instance = MagicMock()
     mock_langfuse_module.Langfuse.return_value = mock_langfuse_instance
 
-    with patch.dict("sys.modules", {"langfuse": mock_langfuse_module}):
+    with patch.dict("sys.modules", {"langfuse": mock_langfuse_module}), \
+         patch("router.main.LANGFUSE_HOST", "host"):
         with patch.dict(os.environ, {
             "LANGFUSE_PUBLIC_KEY": "pk",
             "LANGFUSE_SECRET_KEY": "sk",
