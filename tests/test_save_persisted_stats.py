@@ -8,6 +8,7 @@ from router.main import save_persisted_stats
 def reset_last_save():
     """Reset the global _last_stats_save before and after each test."""
     original = main._last_stats_save
+    main._last_stats_save = 0.0
     yield
     main._last_stats_save = original
 
@@ -16,24 +17,30 @@ async def test_save_persisted_stats_force():
     """Test that force=True bypasses the throttle and saves stats."""
     with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
         main._last_stats_save = time.monotonic()
+        start_time = time.monotonic()
         await save_persisted_stats(force=True)
         mock_write.assert_called_once_with(main.STATS_JSON_PATH, main.stats)
+        assert main._last_stats_save >= start_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_throttle():
     """Test that disk writes are throttled when time hasn't passed."""
     with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
-        main._last_stats_save = time.monotonic()
+        initial_save_time = time.monotonic()
+        main._last_stats_save = initial_save_time
         await save_persisted_stats(force=False)
         mock_write.assert_not_called()
+        assert main._last_stats_save == initial_save_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_time_passed():
     """Test that stats are saved when the throttle interval has passed."""
     with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
         main._last_stats_save = time.monotonic() - 3.0 # More than 2.0 seconds ago
+        start_time = time.monotonic()
         await save_persisted_stats(force=False)
         mock_write.assert_called_once_with(main.STATS_JSON_PATH, main.stats)
+        assert main._last_stats_save >= start_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_exception():
