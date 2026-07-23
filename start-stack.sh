@@ -585,12 +585,15 @@ stack_ownership() {
     local infra_unit
 
     # A generic legacy unit is shared by old deployments. Only treat it as
-    # owned when its generated unit explicitly names this stack's pod; merely
-    # being loaded is not sufficient and could tear down the other environment.
+    # owned when its generated ExecStartPre command creates this stack's pod;
+    # a PodName= source line alone does not prove which pod the unit owns.
     legacy_unit_owns_pod() {
         local unit="$1"
+        local pod_name_pattern
+        pod_name_pattern=$(printf '%s' "$POD_NAME" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
         systemctl --user cat "$unit" --no-pager 2>/dev/null \
-            | grep -Fqx "PodName=${POD_NAME}"
+            | grep -E 'podman[[:space:]]+pod[[:space:]]+create' \
+            | grep -Eq -- "--name[=[:space:]]${pod_name_pattern}([[:space:]]|$)"
     }
 
     if podman pod exists "${POD_NAME}" 2>/dev/null; then

@@ -141,7 +141,8 @@ def test_namespace_rendering_preserves_non_identifiers():
     env.update(values)
     with tempfile.TemporaryDirectory() as tmp:
         src, out = Path(tmp) / "src", Path(tmp) / "out"
-        src.mkdir(); out.mkdir()
+        src.mkdir()
+        out.mkdir()
         (src / "llm-routing.pod").write_text("[Pod]\nPodName=llm-routing.pod\n")
         (src / "llm-routing-router.container").write_text(
             "[Unit]\nAfter=llm-routing-litellm.service\n[Container]\n"
@@ -164,7 +165,8 @@ def test_namespace_is_validated_and_ownership_preserves_exact_unit():
     assert 'failed to restart ${owner_unit}' in script
     assert 'status ${owner_unit} --no-pager' in script
     assert 'legacy_unit_owns_pod()' in script
-    assert 'grep -Fqx "PodName=${POD_NAME}"' in script
+    assert "grep -E 'podman[[:space:]]+pod[[:space:]]+create'" in script
+    assert 'grep -Eq -- "--name[=[:space:]]${pod_name_pattern}' in script
     assert '&& legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"' in script
     assert 'elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then' in script
     assert 'printf \'conflict:%s\\n\' "$infra_unit"' in script
