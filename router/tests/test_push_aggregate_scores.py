@@ -1,15 +1,9 @@
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
-import sys
-import os
 
-# Ensure router directory is in sys.path
-router_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if router_path not in sys.path:
-    sys.path.insert(0, router_path)
+from router import main
 
-import main
 
 @pytest.mark.asyncio
 async def test_push_aggregate_scores_success():
@@ -33,11 +27,11 @@ async def test_push_aggregate_scores_success():
         "routing_paths": {"google_oauth_direct": 25},
     }
 
-    with patch("main.get_langfuse", return_value=mock_lf), \
-         patch("main.get_breaker", return_value=mock_router), \
-         patch.dict("main.stats", mock_stats, clear=True), \
-         patch("main.logger") as mock_logger, \
-         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("router.main.get_langfuse", return_value=mock_lf), \
+         patch("router.main.get_breaker", return_value=mock_router), \
+         patch.dict("router.main.stats", mock_stats, clear=True), \
+         patch("router.main.logger") as mock_logger, \
+         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
 
         # Make sleep raise CancelledError on second call to break the infinite loop
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
@@ -50,14 +44,37 @@ async def test_push_aggregate_scores_success():
         assert mock_sleep.call_count == 2
         mock_lf.create_trace_id.assert_called_once()
         mock_lf.start_observation.assert_called_once()
-        assert mock_lf.create_score.call_count == 12  # 12 scores pushed
+
+        # Dynamically verify pushed score names and values derived from mock_stats
+        pushed_scores = {
+            kwargs["name"]: kwargs["value"]
+            for _, kwargs in mock_lf.create_score.call_args_list
+        }
+        expected_scores = {
+            "simple_ratio_pct": 20.0,
+            "medium_ratio_pct": 30.0,
+            "complex_ratio_pct": 40.0,
+            "reasoning_ratio_pct": 5.0,
+            "advanced_ratio_pct": 5.0,
+            "cache_hit_rate_pct": 10.0,
+            "avg_triage_latency_ms": 150.0,
+            "avg_proxy_latency_ms": 800.0,
+            "total_requests": 100.0,
+            "circuit_breaker_google_tier": 1.0,
+            "circuit_breaker_vendor_tier": 2.0,
+            "google_oauth_direct_ratio_pct": 25.0,
+        }
+        assert mock_lf.create_score.call_count == len(expected_scores)
+        assert pushed_scores == expected_scores
+
         mock_lf.flush.assert_called_once()
         mock_logger.info.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_push_aggregate_scores_no_langfuse():
-    with patch("main.get_langfuse", return_value=None), \
-         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("router.main.get_langfuse", return_value=None), \
+         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
 
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
@@ -69,14 +86,15 @@ async def test_push_aggregate_scores_no_langfuse():
         assert mock_sleep.call_count == 2
         # Should not throw exception and should just continue
 
+
 @pytest.mark.asyncio
 async def test_push_aggregate_scores_zero_requests():
     mock_lf = MagicMock()
     mock_stats = {"total_requests": 0}
 
-    with patch("main.get_langfuse", return_value=mock_lf), \
-         patch.dict("main.stats", mock_stats, clear=True), \
-         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("router.main.get_langfuse", return_value=mock_lf), \
+         patch.dict("router.main.stats", mock_stats, clear=True), \
+         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
 
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
@@ -87,6 +105,7 @@ async def test_push_aggregate_scores_zero_requests():
 
         assert mock_sleep.call_count == 2
         mock_lf.create_trace_id.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_push_aggregate_scores_exception_handling():
@@ -108,11 +127,11 @@ async def test_push_aggregate_scores_exception_handling():
         "routing_paths": {"google_oauth_direct": 25},
     }
 
-    with patch("main.get_langfuse", return_value=mock_lf), \
-         patch("main.get_breaker", return_value=mock_router), \
-         patch.dict("main.stats", mock_stats, clear=True), \
-         patch("main.logger") as mock_logger, \
-         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("router.main.get_langfuse", return_value=mock_lf), \
+         patch("router.main.get_breaker", return_value=mock_router), \
+         patch.dict("router.main.stats", mock_stats, clear=True), \
+         patch("router.main.logger") as mock_logger, \
+         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
 
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
