@@ -653,8 +653,10 @@ async def test_purge_stale_deployments():
     import main
 
     mock_conn = AsyncMock()
+    mock_asyncpg = MagicMock()
+    mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-    with patch("asyncpg.connect", return_value=mock_conn):
+    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}):
         await main._purge_stale_deployments("postgres://test", "agent-%")
 
         mock_conn.execute.assert_called_with('DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', 'agent-%')
@@ -670,8 +672,10 @@ async def test_purge_stale_deployments_exception_closes_conn():
 
     mock_conn = AsyncMock()
     mock_conn.execute.side_effect = Exception("Execute failed")
+    mock_asyncpg = MagicMock()
+    mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-    with patch("asyncpg.connect", return_value=mock_conn):
+    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}):
         with pytest.raises(Exception):
             await main._purge_stale_deployments("postgres://test", "agent-%")
 
