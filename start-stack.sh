@@ -797,13 +797,22 @@ try:
         # Namespace both filenames and internal dependencies to isolate dev/prod.
         # Namespace Quadlet identifiers only. Do not rewrite image names, URL
         # paths, or other configuration values containing "llm-routing".
-        text = re.sub(
-            r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))",
-            namespace + "-",
-            text,
-        )
-        text = text.replace("llm-routing.pod", namespace + ".pod")
-        text = text.replace("llm-routing-pod.service", namespace + "-pod.service")
+        # Namespace only Quadlet identifier lines and values. This preserves
+        # arbitrary image names, URLs, and credentials containing llm-routing.
+        def namespace_identifier(match):
+            field, value = match.group(1), match.group(2)
+            if field in {"Pod", "After", "Wants", "BindsTo", "Requires", "PartOf"}:
+                value = re.sub(
+                    r"\bllm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))",
+                    namespace + "-",
+                    value,
+                )
+                value = value.replace("llm-routing.pod", namespace + ".pod")
+                value = value.replace("llm-routing-pod.service", namespace + "-pod.service")
+            elif field == "Pod":
+                value = value.replace("llm-routing.pod", namespace + ".pod")
+            return f"{field}={value}"
+        text = re.sub(r"(?m)^(Pod|After|Wants|BindsTo|Requires|PartOf)=(.*)$", namespace_identifier, text)
         unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
         if unresolved:
             sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")

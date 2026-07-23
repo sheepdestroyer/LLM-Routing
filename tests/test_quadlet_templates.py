@@ -97,8 +97,8 @@ def test_quadlet_namespace_is_environment_specific():
     assert 'QUADLET_NAMESPACE="${QUADLET_NAMESPACE:-llm-routing-prod}"' in (ROOT / "start-stack.sh").read_text()
     assert prod_namespace in (ROOT / "start-stack.sh").read_text()
     script = (ROOT / "start-stack.sh").read_text()
-    assert 'r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))"' in script
-    assert 'text = text.replace("llm-routing.pod", namespace + ".pod")' in script
+    assert 'def namespace_identifier(match):' in script
+    assert 'namespace + "-"' in script
     assert 'rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)' in script
 
 
