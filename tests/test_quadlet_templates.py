@@ -159,3 +159,4 @@ def test_documentation_uses_environment_specific_units():
     assert "systemctl --user status llm-routing-prod-pod.service" in readme
     assert "llm-routing-dev-pod.service" in readme
     assert "llm-routing-pod.service" not in scripts_readme
+    assert "llm-routing-{dev,prod}" not in readme

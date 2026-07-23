@@ -691,7 +691,8 @@ render_router_config() {
 
 # ── Quadlet rendering + installation ──
 # Renders quadlets/*.pod + quadlets/*.container templates (same _PLACEHOLDER
-# convention as pod.yaml) into ~/.config/containers/systemd/llm-routing/ and
+# convention as pod.yaml) into the environment-specific
+# ~/.config/containers/systemd/${QUADLET_NAMESPACE}/ directory and
 # lets systemd's podman-user-generator turn them into real units.
 # Quadlet values are bare scalars (not YAML) so plain string replacement is used.
 render_quadlets() {

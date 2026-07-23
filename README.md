@@ -396,7 +396,7 @@ Run the startup script from the root of the repository:
 
 # Inspect the generated systemd units and their logs
 systemctl --user status llm-routing-prod-pod.service --no-pager  # or llm-routing-dev-pod.service
-systemctl --user list-units 'llm-routing-{dev,prod}-*' --no-pager
+systemctl --user list-units 'llm-routing-*' --no-pager  # filter for dev/prod namespaces
 journalctl --user -u llm-routing-prod-router.service -n 100 --no-pager  # or llm-routing-dev-router.service
 ```
 *Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
