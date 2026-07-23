@@ -44,7 +44,8 @@ def test_rendered_quadlets_are_owner_only():
     script = (ROOT / "start-stack.sh").read_text()
     assert 'chmod 700 "$QUADLET_DIR"' in script
     assert "os.chmod(staged_path, 0o600)" in script
-    assert 'LLM_ROUTING_POD_UNIT="llm-routing-pod.service"' in script
+    assert 'LLM_ROUTING_POD_UNIT="${QUADLET_NAMESPACE}-pod.service"' in script
+    assert 'QUADLET_DIR="${HOME}/.config/containers/systemd/${QUADLET_NAMESPACE}"' in script
     assert "systemctl --user daemon-reload" in script
     assert "stack_ownership()" in script
     assert "PODMAN_SYSTEMD_UNIT" in script
@@ -87,3 +88,14 @@ def test_quadlet_deployment_enforces_prerequisite_and_restart_failures():
     assert "require_user_systemd || exit 1" in script
     assert "failed to derive external service URLs for Quadlet rendering" in script
     assert 'if ! podman pod restart "${POD_NAME}"; then' in script
+
+
+def test_quadlet_namespace_is_environment_specific():
+    dev_env = (ROOT / ".env.dev").read_text()
+    prod_env = (ROOT / ".env").read_text()
+    assert 'QUADLET_NAMESPACE="llm-routing-dev"' in dev_env
+    assert 'QUADLET_NAMESPACE="llm-routing-prod"' in prod_env
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))"' in script
+    assert 'text = text.replace("llm-routing.pod", namespace + ".pod")' in script
+    assert 'rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)' in script

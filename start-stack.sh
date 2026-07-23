@@ -77,6 +77,11 @@ if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
     set +a
 fi
 
+# Quadlet namespace is environment-specific. This prevents dev and prod from
+# sharing rendered files or generated systemd unit names.
+QUADLET_NAMESPACE="${QUADLET_NAMESPACE:-llm-routing-prod}"
+export QUADLET_NAMESPACE
+
 # Port assignments — read from env (set by .env or .env.dev) with prod defaults
 POD_NAME="${POD_NAME:-prod-router-pod}"
 ROUTER_PORT="${ROUTER_PORT:-5000}"
@@ -533,7 +538,9 @@ verify_stack_health() {
 # ── Stack ownership and teardown ──
 # Keep the generated Quadlet unit name in one place: it is used for ownership
 # detection, lifecycle operations, and user-facing diagnostics.
-LLM_ROUTING_POD_UNIT="llm-routing-pod.service"
+LLM_ROUTING_POD_UNIT="${QUADLET_NAMESPACE}-pod.service"
+LEGACY_LLM_ROUTING_POD_UNIT="llm-routing-pod.service"
+QUADLET_DIR="${HOME}/.config/containers/systemd/${QUADLET_NAMESPACE}"
 # Quadlet-managed pods carry PODMAN_SYSTEMD_UNIT on their infra container.
 # Consult that metadata rather than inferring ownership from active state: a
 # stopped or failed generated unit is still Quadlet-owned and must be reconciled
@@ -542,7 +549,7 @@ stack_ownership() {
     local infra_unit
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
         infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
-        if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" ]]; then
+        if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" || "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
             printf 'quadlet\n'
         else
             printf 'legacy\n'
@@ -551,6 +558,20 @@ stack_ownership() {
         printf 'quadlet\n'
     else
         printf 'absent\n'
+    fi
+}
+
+stop_quadlet_units() {
+    systemctl --user stop "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+    if [[ "$LLM_ROUTING_POD_UNIT" != "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
+        systemctl --user stop "$LEGACY_LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+    fi
+}
+
+reset_quadlet_units() {
+    systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+    if [[ "$LLM_ROUTING_POD_UNIT" != "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
+        systemctl --user reset-failed "$LEGACY_LLM_ROUTING_POD_UNIT" 2>/dev/null || true
     fi
 }
 
@@ -569,8 +590,8 @@ safe_pod_teardown() {
     ownership=$(stack_ownership)
     if [[ "$ownership" == "quadlet" ]]; then
         echo "🛑 Reconciling Quadlet-owned stack (unit may be active, inactive, or failed)..."
-        systemctl --user stop "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
-        systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+        stop_quadlet_units
+        reset_quadlet_units
         podman pod rm -f "${POD_NAME}" 2>/dev/null || true
         cleanup_zombie_ports
         echo "✓ Quadlet stack stopped, state reconciled, ports cleaned"
@@ -680,8 +701,6 @@ render_router_config() {
 # convention as pod.yaml) into ~/.config/containers/systemd/llm-routing/ and
 # lets systemd's podman-user-generator turn them into real units.
 # Quadlet values are bare scalars (not YAML) so plain string replacement is used.
-QUADLET_DIR="${HOME}/.config/containers/systemd/llm-routing"
-
 render_quadlets() {
     export WORKDIR HOME LITELLM_MASTER_KEY UI_USERNAME UI_PASSWORD
     export POSTGRES_PASSWORD NEXTAUTH_SECRET SALT ENCRYPTION_KEY
@@ -705,6 +724,7 @@ render_quadlets() {
 import os, sys, urllib.parse, re, glob, shutil, tempfile
 uid = os.getuid()
 src_dir, out_dir = sys.argv[1], sys.argv[2]
+namespace = os.environ["QUADLET_NAMESPACE"]
 
 encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 # Derived by derive_external_service_urls(), shared with render_pod_yaml.
@@ -766,6 +786,17 @@ try:
             text = f.read()
         for ph, val in repl.items():
             text = text.replace(ph, str(val))
+        # Quadlet generated unit names are global in the user systemd manager.
+        # Namespace both filenames and internal dependencies to isolate dev/prod.
+        # Namespace Quadlet identifiers only. Do not rewrite image names, URL
+        # paths, or other configuration values containing "llm-routing".
+        text = re.sub(
+            r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))",
+            namespace + "-",
+            text,
+        )
+        text = text.replace("llm-routing.pod", namespace + ".pod")
+        text = text.replace("llm-routing-pod.service", namespace + "-pod.service")
         unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
         if unresolved:
             sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
@@ -777,7 +808,8 @@ try:
             value = match.group(1).replace("\\", "\\\\").replace('"', '\\"')
             return f'Environment="{value}"'
         text = re.sub(r"(?m)^Environment=(.*)$", quote_environment, text)
-        staged_path = os.path.join(staging_dir, os.path.basename(tpl))
+        rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)
+        staged_path = os.path.join(staging_dir, rendered_name)
         with open(staged_path, "w", encoding="utf-8") as f:
             f.write(text)
         # Rendered units include credentials; systemd user generator can read owner-only files.
@@ -785,7 +817,7 @@ try:
 
     # All templates are now valid. Replace individual files atomically, then
     # remove stale units; a failed render above leaves the prior unit set intact.
-    rendered_names = {os.path.basename(tpl) for tpl in templates}
+    rendered_names = {os.path.basename(tpl).replace("llm-routing", namespace) for tpl in templates}
     for name in rendered_names:
         os.replace(os.path.join(staging_dir, name), os.path.join(out_dir, name))
     for stale in glob.glob(os.path.join(out_dir, "*.pod")) + glob.glob(os.path.join(out_dir, "*.container")):
@@ -857,7 +889,7 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
         if [[ "$STACK_OWNERSHIP" == "quadlet" ]]; then
             require_user_systemd || exit 1
             echo "🔄 Restarting Quadlet-owned stack via systemd..."
-            systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
+            reset_quadlet_units
             if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then
                 echo "❌ Error: failed to restart ${LLM_ROUTING_POD_UNIT}" >&2
                 echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2

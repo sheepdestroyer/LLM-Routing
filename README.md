@@ -855,6 +855,16 @@ Tests cover:
 
 Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` already has it; prod `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
 
+## Environment-isolated Quadlet deployment
+
+Dev and production use distinct Quadlet namespaces because generated systemd
+unit names are global within the user manager. Dev renders units under
+`~/.config/containers/systemd/llm-routing-dev/` and uses
+`llm-routing-dev-pod.service`; production uses
+`~/.config/containers/systemd/llm-routing-prod/` and
+`llm-routing-prod-pod.service`. Their pod/container names, ports, data roots,
+and rendered configuration remain separate.
+
 ## 10. Performance Benchmarks
 
 Through our local benchmarks, the following performance characteristics have been achieved:
