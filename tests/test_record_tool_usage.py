@@ -115,11 +115,10 @@ def test_record_tool_usage_custom_route():
 @pytest.mark.asyncio
 async def test_record_tool_usage_async_paths():
     """Test the asynchronous and background task execution paths."""
-    # Ensure stats has basic structure
-    router.main.stats = {"tool_tokens": {}, "timeline": []}
+    loop = asyncio.get_running_loop()
 
     with patch("router.main.save_persisted_stats", new_callable=AsyncMock) as mock_save, \
-         patch.object(asyncio.get_running_loop(), "run_in_executor") as mock_executor, \
+         patch.object(loop, "run_in_executor") as mock_executor, \
          patch("time.monotonic", return_value=100.0):
 
         # We need a mock future so we can inspect add_done_callback for the executor task
@@ -178,23 +177,10 @@ def test_record_tool_usage_runtime_error_stats_sync_write():
 
 def test_record_tool_usage_runtime_error_timeline_sync_write():
     """Test the fallback sync path when no event loop is running (timeline)."""
-    # ensure clean state
-    router.main.stats = {"tool_tokens": {}, "timeline": []}
+    mock_loop = MagicMock()
+    mock_loop.create_task = MagicMock()
 
-    # We want create_task to succeed (simulating early phase where stats writes asynchronously,
-    # but let's actually just raise RuntimeError for the second call to get_running_loop)
-    def mock_get_running_loop():
-        # First time (stats) we succeed, second time (timeline) we fail
-        if mock_get_running_loop.calls == 0:
-            mock_get_running_loop.calls += 1
-            loop = MagicMock()
-            loop.create_task = MagicMock()
-            return loop
-        raise RuntimeError("no loop")
-
-    mock_get_running_loop.calls = 0
-
-    with patch("asyncio.get_running_loop", side_effect=mock_get_running_loop), \
+    with patch("asyncio.get_running_loop", side_effect=[mock_loop, RuntimeError("no loop")]), \
          patch("router.main._atomic_write_json_sync") as mock_sync_write, \
          patch("time.monotonic", return_value=100.0):
 
@@ -235,23 +221,12 @@ def test_record_tool_usage_stats_sync_write_exception():
         mock_error.assert_called_with("Failed to persist stats to disk: sync stats error")
 
 
-
-
 def test_record_tool_usage_timeline_sync_write_exception():
     """Test the exception handling in fallback sync path (timeline)."""
-    router.main.stats = {"tool_tokens": {}, "timeline": []}
+    mock_loop = MagicMock()
+    mock_loop.create_task = MagicMock()
 
-    def mock_get_running_loop():
-        if mock_get_running_loop.calls == 0:
-            mock_get_running_loop.calls += 1
-            loop = MagicMock()
-            loop.create_task = MagicMock()
-            return loop
-        raise RuntimeError("no loop")
-
-    mock_get_running_loop.calls = 0
-
-    with patch("asyncio.get_running_loop", side_effect=mock_get_running_loop), \
+    with patch("asyncio.get_running_loop", side_effect=[mock_loop, RuntimeError("no loop")]), \
          patch("router.main._atomic_write_json_sync", side_effect=Exception("sync timeline error")), \
          patch("router.main.logger.warning") as mock_warning, \
          patch("time.monotonic", return_value=100.0):
@@ -268,3 +243,4 @@ def test_record_tool_usage_timeline_sync_write_exception():
         ))
 
         mock_warning.assert_called_with("Failed to persist timeline: sync timeline error")
+
