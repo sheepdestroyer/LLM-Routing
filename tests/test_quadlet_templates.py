@@ -160,3 +160,12 @@ def test_documentation_uses_environment_specific_units():
     assert "llm-routing-dev-pod.service" in readme
     assert "llm-routing-pod.service" not in scripts_readme
     assert "llm-routing-{dev,prod}" not in readme
+
+
+def test_data_root_is_worktree_scoped_by_default():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"' in script
+    dev_root = ROOT.resolve()
+    prod_root = (ROOT.parent.parent / "prod" / "LLM-Routing").resolve()
+    assert dev_root != prod_root
+    assert dev_root / "data" != prod_root / "data"

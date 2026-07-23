@@ -863,7 +863,10 @@ unit names are global within the user manager. Dev renders units under
 `llm-routing-dev-pod.service`; production uses
 `~/.config/containers/systemd/llm-routing-prod/` and
 `llm-routing-prod-pod.service`. Their pod/container names, ports, data roots,
-and rendered configuration remain separate.
+and rendered configuration remain separate. Unless overridden explicitly,
+`DATA_ROOT` is `${WORKDIR}/data`; because dev and production run from separate
+`~/dev/` and `~/prod/` worktrees, their persistent data and rendered configs are
+also physically separate.
 
 ## 10. Performance Benchmarks
 
