@@ -193,12 +193,50 @@ if [ -z "$ACTIVE_OAUTH" ]; then
     echo "Gemini models may fail. Please ensure you are logged into Antigravity."
 fi
 
-# Check host agy daemon
+# Ensure host agy daemon systemd service is installed and updated
+AGY_SERVICE_FILE="${HOME}/.config/systemd/user/agy-daemon.service"
+AGY_DAEMON_SCRIPT="${WORKDIR}/scripts/host_agy_daemon.py"
+
+DESIRED_AGY_SERVICE="[Unit]
+Description=Host agy Daemon for LLM-Routing Gateway
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 "${AGY_DAEMON_SCRIPT}"
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agy-daemon
+
+[Install]
+WantedBy=default.target"
+
+mkdir -p "$(dirname "$AGY_SERVICE_FILE")"
+
+EXISTING_AGY_SERVICE=""
+if [ -f "$AGY_SERVICE_FILE" ]; then
+    EXISTING_AGY_SERVICE="$(cat "$AGY_SERVICE_FILE")"
+fi
+
+if [ "$EXISTING_AGY_SERVICE" != "$DESIRED_AGY_SERVICE" ]; then
+    echo "📋 Installing/updating agy-daemon.service systemd unit..."
+    echo "$DESIRED_AGY_SERVICE" > "$AGY_SERVICE_FILE"
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable agy-daemon.service --no-pager 2>/dev/null || true
+    if systemctl --user is-active --quiet agy-daemon.service 2>/dev/null; then
+        systemctl --user restart agy-daemon.service --no-pager 2>/dev/null || true
+    fi
+fi
+
+# Check host agy daemon status
 if systemctl --user is-active --quiet agy-daemon.service 2>/dev/null; then
     echo "✓ Host agy daemon is running"
 else
     echo "⚠️  Warning: Host agy daemon is not running. Starting it..."
-    systemctl --user start agy-daemon.service || echo "⚠️  Failed to start agy daemon"
+    systemctl --user start agy-daemon.service --no-pager 2>/dev/null || echo "⚠️  Failed to start agy daemon"
 fi
 
 # Verify daemon is responsive
