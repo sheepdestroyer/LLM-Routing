@@ -92,9 +92,10 @@ def test_quadlet_deployment_enforces_prerequisite_and_restart_failures():
 
 def test_quadlet_namespace_is_environment_specific():
     dev_env = (ROOT / ".env.dev").read_text()
-    prod_env = (ROOT / ".env").read_text()
+    prod_namespace = "llm-routing-prod"
     assert 'QUADLET_NAMESPACE="llm-routing-dev"' in dev_env
-    assert 'QUADLET_NAMESPACE="llm-routing-prod"' in prod_env
+    assert 'QUADLET_NAMESPACE="${QUADLET_NAMESPACE:-llm-routing-prod}"' in (ROOT / "start-stack.sh").read_text()
+    assert prod_namespace in (ROOT / "start-stack.sh").read_text()
     script = (ROOT / "start-stack.sh").read_text()
     assert 'r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))"' in script
     assert 'text = text.replace("llm-routing.pod", namespace + ".pod")' in script
