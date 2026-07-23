@@ -567,20 +567,6 @@ stack_ownership() {
     fi
 }
 
-stop_quadlet_units() {
-    systemctl --user stop "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
-    if [[ "$LLM_ROUTING_POD_UNIT" != "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
-        systemctl --user stop "$LEGACY_LLM_ROUTING_POD_UNIT" 2>/dev/null || true
-    fi
-}
-
-reset_quadlet_units() {
-    systemctl --user reset-failed "$LLM_ROUTING_POD_UNIT" 2>/dev/null || true
-    if [[ "$LLM_ROUTING_POD_UNIT" != "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
-        systemctl --user reset-failed "$LEGACY_LLM_ROUTING_POD_UNIT" 2>/dev/null || true
-    fi
-}
-
 require_user_systemd() {
     if ! systemctl --user show-environment >/dev/null 2>&1; then
         echo "❌ Error: the Quadlet deployment requires a reachable systemd --user manager." >&2
@@ -732,6 +718,10 @@ import os, sys, urllib.parse, re, glob, shutil, tempfile
 uid = os.getuid()
 src_dir, out_dir = sys.argv[1], sys.argv[2]
 namespace = os.environ["QUADLET_NAMESPACE"]
+identifier_suffixes = (
+    "pod", "clickhouse", "langfuse", "litellm", "minio", "postgres", "router", "valkey"
+)
+identifier_prefix = re.compile(r"\bllm-routing-(?=(?:" + "|".join(identifier_suffixes) + r"))")
 
 encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 # Derived by derive_external_service_urls(), shared with render_pod_yaml.
@@ -802,11 +792,7 @@ try:
         def namespace_identifier(match):
             field, value = match.group(1), match.group(2)
             if field in {"Pod", "After", "Wants", "BindsTo", "Requires", "PartOf"}:
-                value = re.sub(
-                    r"\bllm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))",
-                    namespace + "-",
-                    value,
-                )
+                value = identifier_prefix.sub(namespace + "-", value)
                 value = value.replace("llm-routing.pod", namespace + ".pod")
                 value = value.replace("llm-routing-pod.service", namespace + "-pod.service")
             elif field == "Pod":
@@ -907,8 +893,8 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
             owner_unit="${STACK_OWNERSHIP#quadlet:}"
             echo "🔄 Restarting Quadlet-owned stack via systemd..."
             if ! systemctl --user restart "$owner_unit"; then
-                echo "❌ Error: failed to restart ${LLM_ROUTING_POD_UNIT}" >&2
-                echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2
+                echo "❌ Error: failed to restart ${owner_unit}" >&2
+                echo "   Hint: run 'systemctl --user status ${owner_unit} --no-pager' to inspect the failure" >&2
                 exit 1
             fi
         else

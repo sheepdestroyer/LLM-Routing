@@ -9,7 +9,7 @@ This directory and the repository root contain various scripts used for stack or
 ### `start-stack.sh` (Root Directory)
 Unified startup and credential extraction script for the systemd Quadlet-managed Podman stack.
 - **Usage**:
-  - `./start-stack.sh` (Restart the generated `llm-routing-pod.service`)
+  - `./start-stack.sh` (Restart the generated environment-specific pod service)
   - `./start-stack.sh --replace` (Stop + clean ports + render/install Quadlets + daemon-reload + recreate stack)
   - `./start-stack.sh --full-rebuild` (Same as `--replace` + rebuild the triage router image; required for code changes in `router/`)
 - Quadlet templates live in `quadlets/`; rendered owner-only units use environment-specific namespaces: dev under `~/.config/containers/systemd/llm-routing-dev/` and prod under `~/.config/containers/systemd/llm-routing-prod/`. Dev uses `llm-routing-dev-pod.service`; prod uses `llm-routing-prod-pod.service`. Use the matching `systemctl --user status <namespace>-pod.service --no-pager` and `journalctl --user -u <namespace>-router.service --no-pager` for lifecycle diagnostics.

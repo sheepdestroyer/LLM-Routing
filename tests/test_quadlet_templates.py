@@ -1,6 +1,9 @@
 """Static deployment-contract tests for the systemd Quadlet templates."""
 from pathlib import Path
+import os
 import re
+import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -98,12 +101,61 @@ def test_quadlet_namespace_is_environment_specific():
     assert prod_namespace in (ROOT / "start-stack.sh").read_text()
     script = (ROOT / "start-stack.sh").read_text()
     assert 'def namespace_identifier(match):' in script
-    assert 'namespace + "-"' in script
+    assert 'identifier_suffixes = (' in script
+    assert 'identifier_prefix.sub(namespace + "-", value)' in script
     assert 'rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)' in script
+
+
+def test_namespace_rendering_preserves_non_identifiers():
+    script = (ROOT / "start-stack.sh").read_text()
+    embedded = script.split("python3 - \"$src_dir\" \"$QUADLET_DIR\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    env = os.environ.copy()
+    values = {
+        "POSTGRES_PASSWORD": "pg", "WORKDIR": str(ROOT), "HOME": str(ROOT),
+        "LITELLM_MASTER_KEY": "master", "NEXTAUTH_SECRET": "next", "SALT": "salt",
+        "ENCRYPTION_KEY": "encrypt", "OLLAMA_API_KEY": "ollama", "OPENROUTER_API_KEY": "openrouter",
+        "LANGFUSE_PUBLIC_KEY": "public", "LANGFUSE_SECRET_KEY": "secret", "MINIO_ROOT_USER": "minio",
+        "MINIO_ROOT_PASSWORD": "minio-pass", "LANGFUSE_INIT_USER_PASSWORD": "lf-pass",
+        "REDIS_AUTH": "redis", "CLICKHOUSE_PASSWORD": "click", "PROXY_BASE_URL_DERIVED": "https://proxy",
+        "NEXTAUTH_URL_DERIVED": "https://next", "PUBLIC_BASE_URL": "https://host/llm-routing",
+        "ROUTING_DOMAIN": "vendeuvre.lan", "LLAMA_CLASSIFIER_URL": "http://127.0.0.1:8083/v1",
+        "LLAMA_SERVER_URL": "http://127.0.0.1:8083", "POD_NAME": "dev-router-pod",
+        "DATA_ROOT": str(ROOT / "data"), "ROUTER_IMAGE": "registry/llm-routing-router:latest",
+        "ROUTER_PORT": "5010", "LITELLM_PORT": "4010", "LANGFUSE_WEB_PORT": "3011",
+        "LANGFUSE_WORKER_PORT": "3030", "POSTGRES_PORT": "5442", "VALKEY_CACHE_PORT": "6389",
+        "VALKEY_LF_PORT": "6390", "CLICKHOUSE_HTTP_PORT": "8123", "CLICKHOUSE_TCP_PORT": "9003",
+        "MINIO_S3_PORT": "9002", "MINIO_CONSOLE_PORT": "9001", "QUADLET_NAMESPACE": "llm-routing-dev",
+    }
+    env.update(values)
+    with tempfile.TemporaryDirectory() as tmp:
+        src, out = Path(tmp) / "src", Path(tmp) / "out"
+        src.mkdir(); out.mkdir()
+        (src / "llm-routing.pod").write_text("[Pod]\nPodName=llm-routing.pod\n")
+        (src / "llm-routing-router.container").write_text(
+            "[Unit]\nAfter=llm-routing-litellm.service\n[Container]\n"
+            "Image=registry/llm-routing-router:latest\n"
+            "Environment=PUBLIC_BASE_URL=https://host/llm-routing-router\nPod=llm-routing.pod\n"
+        )
+        subprocess.run(["python3", "-c", embedded, str(src), str(out)], env=env, check=True, capture_output=True, text=True)
+        rendered = (out / "llm-routing-dev-router.container").read_text()
+        assert "After=llm-routing-dev-litellm.service" in rendered
+        assert "Image=registry/llm-routing-router:latest" in rendered
+        assert "PUBLIC_BASE_URL=https://host/llm-routing-router" in rendered
+        assert "Pod=llm-routing-dev.pod" in rendered
 
 
 def test_namespace_is_validated_and_ownership_preserves_exact_unit():
     script = (ROOT / "start-stack.sh").read_text()
-    assert 'QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$' in script
+    assert '[[ ! "$QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$ ]]' in script
     assert "printf 'quadlet:%s\\n' \"$infra_unit\"" in script
     assert 'owner_unit="${STACK_OWNERSHIP#quadlet:}"' in script
+    assert 'failed to restart ${owner_unit}' in script
+    assert 'status ${owner_unit} --no-pager' in script
+
+
+def test_documentation_uses_environment_specific_units():
+    readme = (ROOT / "README.md").read_text()
+    scripts_readme = (ROOT / "scripts" / "README.md").read_text()
+    assert "systemctl --user status llm-routing-prod-pod.service" in readme
+    assert "llm-routing-dev-pod.service" in readme
+    assert "llm-routing-pod.service" not in scripts_readme
