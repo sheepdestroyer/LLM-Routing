@@ -801,9 +801,7 @@ try:
             text = text.replace(ph, str(val))
         # Quadlet generated unit names are global in the user systemd manager.
         # Namespace both filenames and internal dependencies to isolate dev/prod.
-        # Namespace Quadlet identifiers only. Do not rewrite image names, URL
-        # paths, or other configuration values containing "llm-routing".
-        # Namespace only Quadlet identifier lines and values. This preserves
+        # Namespace Quadlet identifier lines and values only. This preserves
         # arbitrary image names, URLs, and credentials containing llm-routing.
         def namespace_identifier(match):
             field, value = match.group(1), match.group(2)
@@ -811,8 +809,6 @@ try:
                 value = identifier_prefix.sub(namespace + "-", value)
                 value = value.replace("llm-routing.pod", namespace + ".pod")
                 value = value.replace("llm-routing-pod.service", namespace + "-pod.service")
-            elif field == "Pod":
-                value = value.replace("llm-routing.pod", namespace + ".pod")
             return f"{field}={value}"
         text = re.sub(r"(?m)^(Pod|After|Wants|BindsTo|Requires|PartOf)=(.*)$", namespace_identifier, text)
         unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
