@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import time
+from unittest.mock import patch, AsyncMock
 import router.main as main
 
 @pytest.fixture(autouse=True)
@@ -103,3 +102,14 @@ async def test_save_cooldowns_exception(mock_monotonic, mock_get_redis):
     # Exception handler resets redis client
     assert main._redis_client is None
     assert main._redis_last_init_attempt == 100.0
+
+
+@pytest.mark.asyncio
+@patch("router.main.save_cooldowns_to_valkey", new_callable=AsyncMock)
+@patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock)
+async def test_valkey_cooldown_persistence_wrapper(mock_sync, mock_save):
+    persistence = main.ValkeyCooldownPersistence()
+    await persistence.sync()
+    mock_sync.assert_called_once()
+    await persistence.save()
+    mock_save.assert_called_once()
