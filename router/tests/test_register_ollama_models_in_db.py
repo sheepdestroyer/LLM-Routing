@@ -67,7 +67,7 @@ async def test_register_ollama_models_from_config(mock_purge, mock_get_client, m
         ]
     }
 
-    with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+    with patch("router.main.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         mock_to_thread.return_value = mock_config
         await _register_ollama_models_in_db("test_master_key")
 
@@ -144,7 +144,7 @@ async def test_register_ollama_models_db_purge_error(mock_open, mock_purge, mock
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
 @patch("router.main._purge_stale_deployments")
-@patch("asyncio.to_thread")
+@patch("router.main.asyncio.to_thread")
 async def test_register_ollama_models_config_load_exception(mock_to_thread, mock_purge, mock_get_client, mock_env, caplog):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
