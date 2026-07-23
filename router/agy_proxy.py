@@ -40,8 +40,12 @@ class CooldownPersistence(Protocol):
 
 try:
     from router.circuit_breaker import get_google_breaker, get_vendor_breaker
-except ImportError:
-    from circuit_breaker import get_google_breaker, get_vendor_breaker
+except ModuleNotFoundError as e:
+    if e.name == "router":
+        from circuit_breaker import get_google_breaker, get_vendor_breaker
+    else:
+        raise
+
 
 
 logger = logging.getLogger("agy-proxy")

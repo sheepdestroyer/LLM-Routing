@@ -204,7 +204,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 ${AGY_DAEMON_SCRIPT}
+ExecStart=/usr/bin/python3 "${AGY_DAEMON_SCRIPT}"
 Restart=always
 RestartSec=5
 StandardOutput=journal
