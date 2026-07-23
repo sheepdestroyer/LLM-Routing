@@ -128,7 +128,7 @@ async def test_classify_request_value_error_max_chars():
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch.dict(os.environ, {"CLASSIFIER_INPUT_MAX_CHARS": "invalid_int"}):
         decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True)
         assert decision == "agent-medium-core"
@@ -147,7 +147,7 @@ async def test_classify_request_langfuse_exceptions():
     mock_lf = MagicMock()
     mock_lf.start_observation.side_effect = Exception("Langfuse start error")
 
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch("router.main.get_langfuse", return_value=mock_lf):
         decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
         assert decision == "agent-medium-core"
@@ -157,7 +157,7 @@ async def test_classify_request_langfuse_exceptions():
     mock_lf.start_observation.side_effect = None
     mock_lf.start_observation.return_value = mock_span
 
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch("router.main.get_langfuse", return_value=mock_lf):
         decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
         assert decision == "agent-medium-core"
@@ -166,7 +166,7 @@ async def test_classify_request_langfuse_exceptions():
     mock_response.status_code = 500
     mock_response.text = "Internal Server Error"
     mock_span.end.reset_mock()
-    with patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_classifier_client", return_value=mock_client), \
          patch("router.main.get_langfuse", return_value=mock_lf):
         decision, latency, was_cache_hit, raw_result = await classify_request("test prompt", bypass_cache=True, langfuse_trace_id="test_trace")
         assert decision == "agent-advanced-core"
