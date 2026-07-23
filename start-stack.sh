@@ -80,6 +80,10 @@ fi
 # Quadlet namespace is environment-specific. This prevents dev and prod from
 # sharing rendered files or generated systemd unit names.
 QUADLET_NAMESPACE="${QUADLET_NAMESPACE:-llm-routing-prod}"
+if [[ ! "$QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "❌ Error: QUADLET_NAMESPACE must contain only lowercase letters, digits, and hyphens" >&2
+    exit 1
+fi
 export QUADLET_NAMESPACE
 
 # Port assignments — read from env (set by .env or .env.dev) with prod defaults
@@ -550,12 +554,14 @@ stack_ownership() {
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
         infra_unit=$(podman pod inspect "${POD_NAME}" --format '{{.InfraContainerID}}' 2>/dev/null | xargs -r podman inspect --format '{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}' 2>/dev/null || true)
         if [[ "$infra_unit" == "$LLM_ROUTING_POD_UNIT" || "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then
-            printf 'quadlet\n'
+            printf 'quadlet:%s\n' "$infra_unit"
         else
             printf 'legacy\n'
         fi
     elif systemctl --user show "$LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
-        printf 'quadlet\n'
+        printf 'quadlet:%s\n' "$LLM_ROUTING_POD_UNIT"
+    elif systemctl --user show "$LEGACY_LLM_ROUTING_POD_UNIT" -p LoadState --value 2>/dev/null | grep -qxv 'not-found'; then
+        printf 'quadlet:%s\n' "$LEGACY_LLM_ROUTING_POD_UNIT"
     else
         printf 'absent\n'
     fi
@@ -588,10 +594,11 @@ require_user_systemd() {
 safe_pod_teardown() {
     local ownership
     ownership=$(stack_ownership)
-    if [[ "$ownership" == "quadlet" ]]; then
+    if [[ "$ownership" == quadlet:* ]]; then
+        local owner_unit="${ownership#quadlet:}"
         echo "🛑 Reconciling Quadlet-owned stack (unit may be active, inactive, or failed)..."
-        stop_quadlet_units
-        reset_quadlet_units
+        systemctl --user stop "$owner_unit" 2>/dev/null || true
+        systemctl --user reset-failed "$owner_unit" 2>/dev/null || true
         podman pod rm -f "${POD_NAME}" 2>/dev/null || true
         cleanup_zombie_ports
         echo "✓ Quadlet stack stopped, state reconciled, ports cleaned"
@@ -886,11 +893,11 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
         echo "🚀 Deploying replacement pod from YAML..."
         deploy_fresh_pod
     else
-        if [[ "$STACK_OWNERSHIP" == "quadlet" ]]; then
+        if [[ "$STACK_OWNERSHIP" == quadlet:* ]]; then
             require_user_systemd || exit 1
+            owner_unit="${STACK_OWNERSHIP#quadlet:}"
             echo "🔄 Restarting Quadlet-owned stack via systemd..."
-            reset_quadlet_units
-            if ! systemctl --user restart "$LLM_ROUTING_POD_UNIT"; then
+            if ! systemctl --user restart "$owner_unit"; then
                 echo "❌ Error: failed to restart ${LLM_ROUTING_POD_UNIT}" >&2
                 echo "   Hint: run 'systemctl --user status ${LLM_ROUTING_POD_UNIT} --no-pager' to inspect the failure" >&2
                 exit 1

@@ -100,3 +100,10 @@ def test_quadlet_namespace_is_environment_specific():
     assert 'r"llm-routing-(?=(?:pod|clickhouse|langfuse|litellm|minio|postgres|router|valkey))"' in script
     assert 'text = text.replace("llm-routing.pod", namespace + ".pod")' in script
     assert 'rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)' in script
+
+
+def test_namespace_is_validated_and_ownership_preserves_exact_unit():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$' in script
+    assert "printf 'quadlet:%s\\n' \"$infra_unit\"" in script
+    assert 'owner_unit="${STACK_OWNERSHIP#quadlet:}"' in script
