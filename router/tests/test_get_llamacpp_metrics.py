@@ -7,7 +7,7 @@ from router.main import get_llamacpp_metrics
 
 @pytest.fixture
 def mock_http_client():
-    with patch("router.main.get_http_client") as mock:
+    with patch("router.main.get_llama_client") as mock:
         client = AsyncMock()
         mock.return_value = client
         yield client
