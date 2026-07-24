@@ -35,6 +35,7 @@ def reset_breakers():
 
 def test_get_specific_breakers():
     """Verify get_google_breaker and get_vendor_breaker return the correct sub-breakers."""
+    reset_breakers()
     b = get_breaker()
 
     google_breaker = get_google_breaker()
