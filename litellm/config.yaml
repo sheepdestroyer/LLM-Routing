@@ -91,13 +91,24 @@ model_list:
     max_input_tokens: 524288
     is_public_model_group: true
 
-# Re-enabled 2026-07-08 — llama.cpp, canonical endpoint set via .env
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-3.6
-    request_timeout: 120
+    extra_body:
+      chat_template_kwargs:
+        preserve_thinking: true
+    request_timeout: 600
   model_name: local-qwen-3.6
+- litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6-hass
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    request_timeout: 600
+  model_name: local-qwen-3.6-hass
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
