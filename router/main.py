@@ -27,7 +27,7 @@ try:
 except ImportError:
     from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Dict, Optional, Union, Literal
+from typing import Any, Dict, Optional, Union, Literal
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -171,16 +171,17 @@ NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
 PUNC_RE = re.compile(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]')
 
 
-def _count_tokens_heuristic(text: str) -> float:
+def _count_tokens_heuristic(text: Any) -> float:
     """Heuristically estimate token count using weighted categories and optimized regex splitting.
 
     This replaces the naive character-count logic with a more granular approach that
     balances English words, technical identifiers, punctuation, and multi-byte characters.
 
+    Returns 0.0 if text is empty, None, or a non-string type.
     Returns a float to prevent intermediate rounding errors when summing across multiple
     message blocks. Callers should round the total sum to convert it to an integer.
     """
-    if not text:
+    if not isinstance(text, str) or not text:
         return 0.0
 
     # 1. Alphanumeric runs (Words/Identifiers/Hashes/Base64)
