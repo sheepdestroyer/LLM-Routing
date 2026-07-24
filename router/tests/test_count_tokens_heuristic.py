@@ -5,6 +5,8 @@ from router.main import _count_tokens_heuristic
     (None, 0.0),
     ("", 0.0),
     (123, 0.0),
+    ([], 0.0),
+    ({}, 0.0),
     ("hello world", 2.4),
     ("word", 1.2),
     ("hellooooooooo", 13 / 4.0),
