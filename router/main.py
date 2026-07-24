@@ -2197,7 +2197,7 @@ async def chat_completions(request: Request):
         if should_try_agy:
             agy_span_obj = None
             try:
-                from agy_proxy import try_agy_proxy
+                from agy_proxy import try_agy_proxy, AgyProxyRequest
 
                 last_prompt = ""
                 for msg in reversed(messages):
@@ -2239,7 +2239,7 @@ async def chat_completions(request: Request):
                                 pass
 
                     is_stream_requested = body.get("stream", False)
-                    agy_response = await try_agy_proxy(
+                    agy_request = AgyProxyRequest(
                         prompt=last_prompt,
                         messages=messages,
                         session_id=session_id,
@@ -2249,6 +2249,7 @@ async def chat_completions(request: Request):
                         client=get_http_client(),
                         cooldown_persistence=ValkeyCooldownPersistence(),
                     )
+                    agy_response = await try_agy_proxy(agy_request)
                     if agy_response:
                         model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
 
