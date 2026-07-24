@@ -19,7 +19,7 @@ import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from router.circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
+from router.circuit_breaker import get_breaker, get_google_breaker, get_vendor_breaker, TIER_COOLDOWNS, MAX_TIER
 
 
 def reset_breakers():
@@ -30,6 +30,20 @@ def reset_breakers():
         sub.probe_granted = False
         sub.total_trips = 0
         sub.last_trip_time = 0.0
+
+
+
+def test_get_specific_breakers():
+    """Verify get_google_breaker and get_vendor_breaker return the correct sub-breakers."""
+    reset_breakers()
+    b = get_breaker()
+
+    google_breaker = get_google_breaker()
+    vendor_breaker = get_vendor_breaker()
+
+    assert google_breaker is b.google
+    assert vendor_breaker is b.vendor
+    print("✓ get_google_breaker and get_vendor_breaker return correct singletons")
 
 
 def test_initial_state():
@@ -268,6 +282,7 @@ async def test_save_to_valkey_exception_handling():
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
 if __name__ == "__main__":
+    test_get_specific_breakers()
     test_initial_state()
     test_first_failure_trips_to_tier1()
     test_probe_granted_after_cooldown()
