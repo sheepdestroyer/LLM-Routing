@@ -2,11 +2,17 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from router.agy_proxy import _wrap_response, _is_quota_exhausted
 
-def test_wrap_response_basic():
-    text = "Hello, world!"
-    model_name = "test-model"
-    prompt = "Say hello"
-
+@pytest.mark.parametrize(
+    "text, model_name, prompt, expected_prompt_tokens, expected_completion_tokens",
+    [
+        ("Hello, world!", "test-model", "Say hello", 2, 3),
+        ("", "", "", 0, 0),
+        ("a" * 1000, "super-long-model-name-" * 10, "b" * 500, 125, 250),
+        ("Special chars!@#$%^&*()", "model-with-special-chars", "prompt with \n newlines", 5, 5),
+    ],
+    ids=["basic", "empty_strings", "long_strings", "special_chars"],
+)
+def test_wrap_response(text, model_name, prompt, expected_prompt_tokens, expected_completion_tokens):
     mock_time = 1620000000
     with patch("time.time", return_value=mock_time):
         result = _wrap_response(text, model_name, prompt)
@@ -14,7 +20,7 @@ def test_wrap_response_basic():
     assert result["id"] == "chatcmpl-agy-proxy"
     assert result["object"] == "chat.completion"
     assert result["created"] == mock_time
-    assert result["model"] == "test-model (via agy)"
+    assert result["model"] == f"{model_name} (via agy)"
 
     assert len(result["choices"]) == 1
     choice = result["choices"][0]
@@ -23,41 +29,9 @@ def test_wrap_response_basic():
     assert choice["message"]["content"] == text
     assert choice["finish_reason"] == "stop"
 
-    prompt_tokens = len(prompt) // 4
-    completion_tokens = len(text) // 4
-    assert result["usage"]["prompt_tokens"] == prompt_tokens
-    assert result["usage"]["completion_tokens"] == completion_tokens
-    assert result["usage"]["total_tokens"] == prompt_tokens + completion_tokens
-
-def test_wrap_response_empty_strings():
-    text = ""
-    model_name = ""
-    prompt = ""
-
-    mock_time = 1620000000
-    with patch("time.time", return_value=mock_time):
-        result = _wrap_response(text, model_name, prompt)
-
-    assert result["model"] == " (via agy)"
-    assert result["choices"][0]["message"]["content"] == ""
-    assert result["usage"]["prompt_tokens"] == 0
-    assert result["usage"]["completion_tokens"] == 0
-    assert result["usage"]["total_tokens"] == 0
-
-def test_wrap_response_long_strings():
-    text = "a" * 1000
-    model_name = "super-long-model-name-" * 10
-    prompt = "b" * 500
-
-    mock_time = 1620000000
-    with patch("time.time", return_value=mock_time):
-        result = _wrap_response(text, model_name, prompt)
-
-    assert result["model"] == f"{model_name} (via agy)"
-    assert result["choices"][0]["message"]["content"] == text
-    assert result["usage"]["prompt_tokens"] == 125
-    assert result["usage"]["completion_tokens"] == 250
-    assert result["usage"]["total_tokens"] == 375
+    assert result["usage"]["prompt_tokens"] == expected_prompt_tokens
+    assert result["usage"]["completion_tokens"] == expected_completion_tokens
+    assert result["usage"]["total_tokens"] == expected_prompt_tokens + expected_completion_tokens
 
 @pytest.mark.asyncio
 async def test_is_quota_exhausted_stderr_markers():
