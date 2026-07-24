@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import patch
 from router.main import _resolve_verify
+
 
 @pytest.mark.parametrize(
     "env_val, expected",
@@ -25,8 +25,15 @@ from router.main import _resolve_verify
         ("On", True),
         ("/etc/ssl/certs/ca-bundle.crt", "/etc/ssl/certs/ca-bundle.crt"),
         ("  /path/to/cert.pem  ", "/path/to/cert.pem"),
-    ]
+    ],
 )
-def test_resolve_verify(env_val, expected):
-    with patch("os.getenv", return_value=env_val):
-        assert _resolve_verify("TEST_ENV_VAR") == expected
+def test_resolve_verify(monkeypatch, env_val, expected):
+    env_name = "TEST_CA_BUNDLE_ENV"
+    if env_val is None:
+        monkeypatch.delenv(env_name, raising=False)
+    else:
+        monkeypatch.setenv(env_name, env_val)
+
+    result = _resolve_verify(env_name)
+    assert result == expected
+    assert type(result) is type(expected)
