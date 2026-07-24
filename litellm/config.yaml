@@ -32,6 +32,7 @@ litellm_settings:
     - agent-medium-core
     - agent-simple-core
     - whisper-1
+    - gpt-4o-mini-transcribe
     - gpt-4o-mini-tts
     - tts-1
   fallbacks:
