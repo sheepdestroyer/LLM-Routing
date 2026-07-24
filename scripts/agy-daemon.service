@@ -1,0 +1,25 @@
+[Unit]
+Description=Host agy Daemon for LLM-Routing Gateway
+Documentation=https://github.com/gpav/LLM-Routing
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/sheepdestroyer/LAB/IA/LLM-Routing/scripts/host_agy_daemon.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agy-daemon
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/sheepdestroyer/.gemini /tmp
+ReadOnlyPaths=/home/sheepdestroyer/.local/bin/agy
+
+[Install]
+WantedBy=default.target
