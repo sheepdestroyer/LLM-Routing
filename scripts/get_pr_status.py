@@ -16,10 +16,12 @@ def get_pr_status(pr_id: str = "") -> None:
     """Fetches and prints the status of a PR using gh CLI."""
     cmd = ["gh", "pr", "view"]
     if pr_id:
-        if not str(pr_id).isdigit():
-            print("Error: Invalid PR ID format. Must be numeric.", file=sys.stderr)
-            sys.exit(1)
-        cmd.append(str(pr_id))
+        pr_str = str(pr_id).strip()
+        if pr_str:
+            if not pr_str.isdigit():
+                print("Error: Invalid PR ID format. Must be numeric.", file=sys.stderr)
+                sys.exit(1)
+            cmd.append(pr_str)
     cmd.extend(["--json", "state,reviewDecision,statusCheckRollup"])
 
     try:

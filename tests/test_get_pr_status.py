@@ -106,3 +106,18 @@ def test_get_pr_status_invalid_pr_id(capsys):
     assert e.value.code == 1
     captured = capsys.readouterr()
     assert "Error: Invalid PR ID format. Must be numeric." in captured.err
+
+@patch("scripts.get_pr_status.run_cmd")
+def test_get_pr_status_numeric_int_and_padded_string(mock_run_cmd, capsys):
+    mock_data = {
+        "state": "OPEN",
+        "reviewDecision": "APPROVED",
+        "statusCheckRollup": []
+    }
+    mock_run_cmd.return_value = json.dumps(mock_data)
+
+    get_pr_status(123)
+    mock_run_cmd.assert_called_with(["gh", "pr", "view", "123", "--json", "state,reviewDecision,statusCheckRollup"])
+
+    get_pr_status("  456  ")
+    mock_run_cmd.assert_called_with(["gh", "pr", "view", "456", "--json", "state,reviewDecision,statusCheckRollup"])
