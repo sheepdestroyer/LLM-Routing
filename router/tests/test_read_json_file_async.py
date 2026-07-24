@@ -1,14 +1,18 @@
 import json
-from unittest.mock import mock_open, patch
+from unittest.mock import patch, AsyncMock
 import pytest
 
 from router import main
 
 
-def test_read_json_file_sync_success():
+@pytest.mark.asyncio
+async def test_read_json_file_async_success():
     mock_data = '{"key": "value"}'
-    with patch("builtins.open", mock_open(read_data=mock_data)):
-        result = main._read_json_file_sync("dummy_path.json")
+    mock_file = AsyncMock()
+    mock_file.read.return_value = mock_data
+    mock_file.__aenter__.return_value = mock_file
+    with patch("aiofiles.open", return_value=mock_file):
+        result = await main._read_json_file_async("dummy_path.json")
         assert result == {"key": "value"}
 
 
@@ -16,7 +20,7 @@ def test_read_json_file_sync_success():
     "mock_kwargs, expected_exc, match_msg",
     [
         (
-            {"new": mock_open(read_data='{"key": "value"')},
+            {"return_value": AsyncMock(__aenter__=AsyncMock(return_value=AsyncMock(read=AsyncMock(return_value='{"key": "value"'))))},
             json.JSONDecodeError,
             r"Unterminated string starting at|Expecting",
         ),
@@ -32,7 +36,8 @@ def test_read_json_file_sync_success():
         ),
     ],
 )
-def test_read_json_file_sync_errors(mock_kwargs, expected_exc, match_msg):
-    with patch("builtins.open", **mock_kwargs):
+@pytest.mark.asyncio
+async def test_read_json_file_async_errors(mock_kwargs, expected_exc, match_msg):
+    with patch("aiofiles.open", **mock_kwargs):
         with pytest.raises(expected_exc, match=match_msg):
-            main._read_json_file_sync("dummy_path.json")
+            await main._read_json_file_async("dummy_path.json")

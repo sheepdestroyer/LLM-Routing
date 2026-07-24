@@ -1291,10 +1291,11 @@ async def classify_request(
             return "agent-advanced-core", latency, False, "advanced (exception)"
 
 
-def _read_json_file_sync(file_path: str) -> dict:
-    """Helper to read JSON files synchronously."""
-    with open(file_path, "r") as f:
-        return json.load(f)
+async def _read_json_file_async(file_path: str) -> dict:
+    """Helper to read JSON files asynchronously."""
+    async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+        content = await f.read()
+        return json.loads(content)
 
 
 
@@ -1307,7 +1308,7 @@ async def get_gemini_oauth_status() -> dict:
                 "detail": "No oauth_creds.json found",
                 "expiry_ms": 0,
             }
-        data = await asyncio.to_thread(_read_json_file_sync, GEMINI_OAUTH_CREDS_PATH)
+        data = await _read_json_file_async(GEMINI_OAUTH_CREDS_PATH)
         access_token = data.get("access_token")
         expiry_ms = data.get("expiry_date", 0)
         current_ms = int(time.time() * 1000)
