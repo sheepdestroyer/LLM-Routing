@@ -624,22 +624,24 @@ def _atomic_write_json_sync(path: str, data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    written = False
     try:
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
-        except OSError:
+        except Exception:
             os.close(fd)
             raise
 
         with f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, path)
-    except (OSError, TypeError, ValueError):
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+        written = True
+    finally:
+        if not written:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 async def _atomic_write_json_async(path: str, data) -> None:
