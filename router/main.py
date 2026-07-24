@@ -627,17 +627,17 @@ def _atomic_write_json_sync(path: str, data) -> None:
     try:
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
-        except Exception:
+        except OSError:
             os.close(fd)
             raise
 
         with f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, path)
-    except Exception:
+    except (OSError, TypeError, ValueError):
         try:
             os.unlink(tmp_path)
-        except Exception:
+        except OSError:
             pass
         raise
 
