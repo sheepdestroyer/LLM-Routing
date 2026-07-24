@@ -35,12 +35,14 @@ def reset_breakers():
 
 def test_get_google_breaker():
     """Test get_google_breaker returns the google breaker."""
+    reset_breakers()
     b = get_breaker()
     assert get_google_breaker() is b.google
 
 
 def test_get_vendor_breaker():
     """Test get_vendor_breaker returns the vendor breaker."""
+    reset_breakers()
     b = get_breaker()
     assert get_vendor_breaker() is b.vendor
 
@@ -281,6 +283,8 @@ async def test_save_to_valkey_exception_handling():
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
 if __name__ == "__main__":
+    test_get_google_breaker()
+    test_get_vendor_breaker()
     test_initial_state()
     test_first_failure_trips_to_tier1()
     test_probe_granted_after_cooldown()
