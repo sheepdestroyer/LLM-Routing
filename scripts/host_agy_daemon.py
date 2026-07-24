@@ -180,18 +180,17 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 except Exception:
                     returncode = -1
                 
-                # Read output from the temporary files
-                try:
-                    with open(stdout_path, "r", encoding="utf-8", errors="replace") as f:
-                        stdout = f.read().strip()
-                except Exception:
-                    stdout = ""
-                    
-                try:
-                    with open(stderr_path, "r", encoding="utf-8", errors="replace") as f:
-                        stderr = f.read().strip()
-                except Exception:
-                    stderr = ""
+                # Read output from the temporary files without blocking the event loop
+                def read_file_sync(path):
+                    try:
+                        with open(path, "r", encoding="utf-8", errors="replace") as f:
+                            return f.read().strip()
+                    except Exception:
+                        return ""
+
+                loop_ref = asyncio.get_running_loop()
+                stdout = await loop_ref.run_in_executor(None, read_file_sync, stdout_path)
+                stderr = await loop_ref.run_in_executor(None, read_file_sync, stderr_path)
                     
                 # Clean up temporary files
                 for path in [stdout_path, stderr_path]:
