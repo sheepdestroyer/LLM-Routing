@@ -6,7 +6,7 @@ from router import main
 
 
 @pytest.mark.asyncio
-async def test_read_json_file_sync_success():
+async def test_read_json_file_async_success():
     mock_data = '{"key": "value"}'
     mock_file = AsyncMock()
     mock_file.read.return_value = mock_data
@@ -37,7 +37,7 @@ async def test_read_json_file_sync_success():
     ],
 )
 @pytest.mark.asyncio
-async def test_read_json_file_sync_errors(mock_kwargs, expected_exc, match_msg):
+async def test_read_json_file_async_errors(mock_kwargs, expected_exc, match_msg):
     with patch("aiofiles.open", **mock_kwargs):
         with pytest.raises(expected_exc, match=match_msg):
             await main._read_json_file_async("dummy_path.json")
