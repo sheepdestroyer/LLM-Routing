@@ -26,8 +26,8 @@ try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Any, Dict, Optional, Union, Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
+from typing import Any, Dict, Optional, Literal
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
