@@ -102,3 +102,73 @@ def test_detect_active_tool_precedence():
     }
     # It starts from the end, so it sees "cat_file" first, which maps to "view"
     assert detect_active_tool(body) == "view"
+
+def test_detect_active_tool_role_tool_without_name_prev_msg_not_dict():
+    body = {
+        "messages": [
+            "not a dict",
+            {"role": "tool", "tool_call_id": "call_123", "content": "success"}
+        ]
+    }
+    assert detect_active_tool(body) == "other"
+
+def test_detect_active_tool_role_tool_without_name_prev_msg_tool_calls_not_list():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": "not a list"},
+            {"role": "tool", "tool_call_id": "call_123", "content": "success"}
+        ]
+    }
+    assert detect_active_tool(body) == "other"
+
+def test_detect_active_tool_role_tool_without_name_tc_not_dict():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": ["not a dict"]},
+            {"role": "tool", "tool_call_id": "call_123", "content": "success"}
+        ]
+    }
+    assert detect_active_tool(body) == "other"
+
+def test_detect_active_tool_role_tool_without_name_fn_not_dict():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"id": "call_123", "function": "not a dict"}]},
+            {"role": "tool", "tool_call_id": "call_123", "content": "success"}
+        ]
+    }
+    assert detect_active_tool(body) == "other"
+
+def test_detect_active_tool_role_assistant_tc_not_dict():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": ["not a dict", {"function": {"name": "read_file"}}]}
+        ]
+    }
+    assert detect_active_tool(body) == "view"
+
+def test_detect_active_tool_role_assistant_fn_not_dict():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"function": "not a dict"}]}
+        ]
+    }
+    assert detect_active_tool(body) == "other"
+
+def test_detect_active_tool_role_assistant_tool_calls_not_list():
+    body = {
+        "messages": [
+            {"role": "assistant", "tool_calls": "not a list"}
+        ]
+    }
+    assert detect_active_tool(body) == "none"
+
+def test_detect_active_tool_fallback_user_not_dict():
+    # Test for line 1439
+    body = {
+        "messages": [
+            {"role": "user", "content": "read this"},
+            "not a dict"
+        ]
+    }
+    assert detect_active_tool(body) == "view"
