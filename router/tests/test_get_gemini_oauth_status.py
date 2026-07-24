@@ -1,6 +1,6 @@
 import pytest
 import json
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, AsyncMock
 
 from router import main
 
@@ -13,8 +13,11 @@ async def test_get_gemini_oauth_status_missing_file():
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_no_access_token():
     mock_data = {"expiry_date": 1234567890000}
+    mock_file = AsyncMock()
+    mock_file.read.return_value = json.dumps(mock_data)
+    mock_file.__aenter__.return_value = mock_file
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))):
+         patch("aiofiles.open", return_value=mock_file):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "missing", "detail": "No access token in file", "expiry_ms": 0}
 
@@ -31,8 +34,11 @@ async def test_get_gemini_oauth_status_scenarios(delta, expected_status, expecte
     current_time_ms = 1000000000000
     expiry_ms = current_time_ms + delta
     mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
+    mock_file = AsyncMock()
+    mock_file.read.return_value = json.dumps(mock_data)
+    mock_file.__aenter__.return_value = mock_file
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(mock_data))), \
+         patch("aiofiles.open", return_value=mock_file), \
          patch("time.time", return_value=current_time_ms / 1000.0):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": expected_status, "detail": expected_detail, "expiry_ms": expiry_ms}
@@ -40,6 +46,6 @@ async def test_get_gemini_oauth_status_scenarios(delta, expected_status, expecte
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_exception():
     with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", side_effect=Exception("Test error")):
+         patch("aiofiles.open", side_effect=Exception("Test error")):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "error", "detail": "Test error", "expiry_ms": 0}
