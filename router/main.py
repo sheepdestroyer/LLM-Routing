@@ -180,6 +180,9 @@ def _count_tokens_heuristic(text: str) -> float:
     Returns a float to prevent intermediate rounding errors when summing across multiple
     message blocks. Callers should round the total sum to convert it to an integer.
     """
+    if not isinstance(text, str):
+        return 0.0
+
     if not text:
         return 0.0
 
