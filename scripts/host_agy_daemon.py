@@ -23,6 +23,14 @@ def get_last_conversation_id():
         pass
     return None
 
+def read_file_sync(path):
+    """Synchronously read and return content from a file, returning empty string on error."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except Exception:
+        return "" 
+
 class AgyDaemonHandler(BaseHTTPRequestHandler):
     """HTTP request handler for agy execution requests."""
     def do_POST(self):
@@ -180,17 +188,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 except Exception:
                     returncode = -1
                 
-                # Read output from the temporary files without blocking the event loop
-                def read_file_sync(path):
-                    try:
-                        with open(path, "r", encoding="utf-8", errors="replace") as f:
-                            return f.read().strip()
-                    except Exception:
-                        return ""
-
+                # Read output from the temporary files without blocking the event loop concurrently
                 loop_ref = asyncio.get_running_loop()
-                stdout = await loop_ref.run_in_executor(None, read_file_sync, stdout_path)
-                stderr = await loop_ref.run_in_executor(None, read_file_sync, stderr_path)
+                stdout, stderr = await asyncio.gather(
+                    loop_ref.run_in_executor(None, read_file_sync, stdout_path),
+                    loop_ref.run_in_executor(None, read_file_sync, stderr_path),
+                )
                     
                 # Clean up temporary files
                 for path in [stdout_path, stderr_path]:
