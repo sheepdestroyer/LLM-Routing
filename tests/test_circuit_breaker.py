@@ -19,7 +19,7 @@ import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from router.circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
+from router.circuit_breaker import get_breaker, get_google_breaker, get_vendor_breaker, TIER_COOLDOWNS, MAX_TIER
 
 
 def reset_breakers():
@@ -30,6 +30,19 @@ def reset_breakers():
         sub.probe_granted = False
         sub.total_trips = 0
         sub.last_trip_time = 0.0
+
+
+
+def test_get_google_breaker():
+    """Test get_google_breaker returns the google breaker."""
+    b = get_breaker()
+    assert get_google_breaker() is b.google
+
+
+def test_get_vendor_breaker():
+    """Test get_vendor_breaker returns the vendor breaker."""
+    b = get_breaker()
+    assert get_vendor_breaker() is b.vendor
 
 
 def test_initial_state():
