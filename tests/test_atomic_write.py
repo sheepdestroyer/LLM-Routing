@@ -229,3 +229,35 @@ def test_atomic_write_json_sync_unlink_error(mock_unlink, mock_replace, tmp_path
 
     # Verify target file wasn't created
     assert not target_file.exists()
+
+
+@patch("router.main.os.close")
+@patch("router.main.os.fdopen")
+def test_atomic_write_json_sync_fdopen_non_os_error(mock_fdopen, mock_close, tmp_path):
+    """Test that non-OSError in fdopen closes fd and unlinks temp file without leaking."""
+    target_file = tmp_path / "data.json"
+    data = {"key": "value"}
+
+    mock_fdopen.side_effect = RuntimeError("Mocked fdopen runtime error")
+
+    with pytest.raises(RuntimeError, match="Mocked fdopen runtime error"):
+        _atomic_write_json_sync(str(target_file), data)
+
+    assert mock_close.called
+    assert not target_file.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+@patch("router.main.json.dump")
+def test_atomic_write_json_sync_unexpected_exception_cleanup(mock_dump, tmp_path):
+    """Test cleanup on unexpected exception types (e.g. RecursionError)."""
+    target_file = tmp_path / "data.json"
+    data = {"key": "value"}
+
+    mock_dump.side_effect = RecursionError("Mocked recursion limit")
+
+    with pytest.raises(RecursionError, match="Mocked recursion limit"):
+        _atomic_write_json_sync(str(target_file), data)
+
+    assert not target_file.exists()
+    assert list(tmp_path.iterdir()) == []
