@@ -31,6 +31,10 @@ litellm_settings:
     - agent-complex-core
     - agent-medium-core
     - agent-simple-core
+    - whisper-1
+    - gpt-4o-mini-transcribe
+    - gpt-4o-mini-tts
+    - tts-1
   fallbacks:
   - agent-simple-core:
     - agent-medium-core
@@ -218,6 +222,42 @@ model_list:
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
+    is_public_model_group: true
+
+# ================================================================================
+# AUDIO STT / TTS COMPATIBILITY ALIASES
+# ================================================================================
+- model_name: whisper-1
+  litellm_params:
+    model: openai/whisper-1
+    api_base: http://127.0.0.1:8084
+    api_key: local-token
+    request_timeout: 60
+  model_info:
+    mode: audio_transcription
+    is_public_model_group: true
+- model_name: gpt-4o-mini-transcribe
+  litellm_params:
+    model: openai/whisper-1
+    api_base: http://127.0.0.1:8084
+    api_key: local-token
+    request_timeout: 60
+  model_info:
+    mode: audio_transcription
+    is_public_model_group: true
+- model_name: gpt-4o-mini-tts
+  litellm_params:
+    model: openrouter/openai/tts-1
+    request_timeout: 60
+  model_info:
+    mode: audio_speech
+    is_public_model_group: true
+- model_name: tts-1
+  litellm_params:
+    model: openrouter/openai/tts-1
+    request_timeout: 60
+  model_info:
+    mode: audio_speech
     is_public_model_group: true
 
 redis_settings:
