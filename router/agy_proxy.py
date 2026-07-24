@@ -57,12 +57,6 @@ if not os.path.exists(AGY_BINARY):
 if not os.path.exists(AGY_BINARY):
     AGY_BINARY = "agy"
 
-# Cache file for conversation IDs (mapping workspace → conversation ID)
-LAST_CONVERSATIONS_PATH = os.path.expanduser(
-    "~/.gemini/antigravity-cli/cache/last_conversations.json"
-)
-AGY_WORKSPACE = os.environ.get("AGY_WORKSPACE", os.getcwd())
-
 # Ordered fallback tiers
 AGY_FALLBACK_TIERS = [
     {"model_name": "gemini-3.5-flash",  "env_override": ""},                             # Tier 1: default
@@ -77,21 +71,6 @@ AGY_TOTAL_TIMEOUT_SECS = 300
 _session_store: dict = {}
 
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
-
-
-def _get_last_conversation_id() -> Optional[str]:
-    """Read the last conversation ID for our workspace from agy's cache file."""
-    try:
-        if os.path.exists(LAST_CONVERSATIONS_PATH):
-            with open(LAST_CONVERSATIONS_PATH, "r") as f:
-                data = json.load(f)
-            conv_id = data.get(AGY_WORKSPACE)
-            if conv_id:
-                logger.debug(f"agy session: last conversation for workspace = {conv_id}")
-                return conv_id
-    except Exception as e:
-        logger.debug(f"agy session: failed to read last_conversations.json: {e}")
-    return None
 
 
 async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override: str = "",
