@@ -19,7 +19,7 @@ import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from router.circuit_breaker import get_breaker, TIER_COOLDOWNS, MAX_TIER
+from router.circuit_breaker import get_breaker, get_google_breaker, TIER_COOLDOWNS, MAX_TIER
 
 
 def reset_breakers():
@@ -267,7 +267,15 @@ async def test_save_to_valkey_exception_handling():
     with patch('router.circuit_breaker.logger') as mock_logger:
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
+
+def test_get_google_breaker():
+    """Verify get_google_breaker returns the correct google breaker instance."""
+    b = get_breaker()
+    assert get_google_breaker() is b.google
+    print("✓ get_google_breaker returns the google breaker")
+
 if __name__ == "__main__":
+    test_get_google_breaker()
     test_initial_state()
     test_first_failure_trips_to_tier1()
     test_probe_granted_after_cooldown()
