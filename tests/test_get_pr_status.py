@@ -99,3 +99,10 @@ def test_get_pr_status_null_checks(mock_run_cmd, capsys):
     assert "PR Status: OPEN" in captured.out
     assert "Review Decision: REVIEW_REQUIRED" in captured.out
     assert "Checks: 0/0 passed" in captured.out
+
+def test_get_pr_status_invalid_pr_id(capsys):
+    with pytest.raises(SystemExit) as e:
+        get_pr_status("invalid_id")
+    assert e.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error: Invalid PR ID format. Must be numeric." in captured.err
