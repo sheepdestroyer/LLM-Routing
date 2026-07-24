@@ -19,7 +19,14 @@ import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from router.circuit_breaker import get_breaker, get_google_breaker, TIER_COOLDOWNS, MAX_TIER
+from router.circuit_breaker import (
+    get_breaker,
+    get_google_breaker,
+    get_vendor_breaker,
+    PerModelBreaker,
+    TIER_COOLDOWNS,
+    MAX_TIER,
+)
 
 
 def reset_breakers():
@@ -270,26 +277,19 @@ async def test_save_to_valkey_exception_handling():
 
 def test_get_google_breaker():
     """Verify get_google_breaker returns the correct google breaker instance."""
-    b = get_breaker()
-    assert get_google_breaker() is b.google
-    print("✓ get_google_breaker returns the google breaker")
+    breaker = get_google_breaker()
+    assert isinstance(breaker, PerModelBreaker)
+    assert breaker.name == "google"
+    assert breaker is get_breaker().google
+
+
+def test_get_vendor_breaker():
+    """Verify get_vendor_breaker returns the correct vendor breaker instance."""
+    breaker = get_vendor_breaker()
+    assert isinstance(breaker, PerModelBreaker)
+    assert breaker.name == "vendor"
+    assert breaker is get_breaker().vendor
+
 
 if __name__ == "__main__":
-    test_get_google_breaker()
-    test_initial_state()
-    test_first_failure_trips_to_tier1()
-    test_probe_granted_after_cooldown()
-    test_probe_failure_advances_tier()
-    test_tier3_stays_at_tier3()
-    test_success_resets()
-    test_backward_compatibility()
-    test_full_cycle()
-    test_dual_breaker_tier_max_logic()
-    test_sync_from_valkey_exception_handling()
-    asyncio.run(test_save_to_valkey_success())
-    asyncio.run(test_save_to_valkey_no_client())
-    asyncio.run(test_save_to_valkey_exception_handling())
-
-    print("\n" + "=" * 60)
-    print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
-    print("=" * 60)
+    pytest.main([__file__])
