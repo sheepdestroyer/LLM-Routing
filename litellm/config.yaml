@@ -35,6 +35,10 @@ litellm_settings:
     - gpt-4o-mini-transcribe
     - gpt-4o-mini-tts
     - tts-1
+    - local-qwen-3.6
+    - local-qwen-3.6-hass
+    - gpt-4o-mini
+    - gpt-4o
   fallbacks:
   - agent-simple-core:
     - agent-medium-core
@@ -100,6 +104,14 @@ model_list:
         preserve_thinking: true
     request_timeout: 600
   model_name: local-qwen-3.6
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
@@ -109,6 +121,48 @@ model_list:
         enable_thinking: false
     request_timeout: 600
   model_name: local-qwen-3.6-hass
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
+- litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6-hass
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    request_timeout: 600
+  model_name: gpt-4o-mini
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
+- litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-3.6-hass
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    request_timeout: 600
+  model_name: gpt-4o
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 524288
+    max_input_tokens: 524288
+    is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token

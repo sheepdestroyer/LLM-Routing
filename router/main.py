@@ -1971,6 +1971,131 @@ async def proxy_models():
         raise HTTPException(status_code=502, detail="Model proxy failed")
 
 
+@app.api_route("/v1/responses", methods=["POST"])
+@app.api_route("/responses", methods=["POST"])
+async def responses_api(request: Request):
+    """Handle incoming OpenAI Responses API requests (/v1/responses and /responses).
+
+    Proxies requests to LiteLLM's /v1/responses endpoint, performing triage classification
+    when an auto model (e.g. llm-routing-auto-free) is requested, while supporting model aliases
+    (such as gpt-4o-mini, local-qwen-3.6-hass) and tool/streaming executions.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    await sync_cooldowns_from_valkey()
+
+    client_model = body.get("model", "llm-routing-auto-free")
+
+    AUTO_MODELS = {
+        "llm-routing-auto-free",
+        "llm-routing-auto-agy",
+        "llm-routing-auto-ollama",
+        "llm-routing-auto-agy-ollama",
+    }
+
+    last_user_message = ""
+    input_field = body.get("input")
+    if isinstance(input_field, str):
+        last_user_message = input_field
+    elif isinstance(input_field, list):
+        for item in input_field:
+            if isinstance(item, str):
+                last_user_message += item
+            elif isinstance(item, dict):
+                if item.get("type") == "text":
+                    last_user_message += item.get("text", "")
+                elif item.get("role") == "user":
+                    content = item.get("content") or ""
+                    if isinstance(content, str):
+                        last_user_message += content
+                    elif isinstance(content, list):
+                        last_user_message += "".join(
+                            b.get("text", "")
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+
+    if not last_user_message:
+        instructions = body.get("instructions")
+        if isinstance(instructions, str):
+            last_user_message = instructions
+
+    target_model = client_model
+    if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
+        bypass_cache = request.headers.get("x-bypass-cache") == "true"
+        (
+            target_model,
+            triage_latency,
+            was_cache_hit,
+            raw_classification,
+        ) = await classify_request(last_user_message, bypass_cache=bypass_cache)
+        logger.info(f"Responses API Triage decision: Routing to -> '{target_model}'")
+
+    body_to_send = body.copy()
+    body_to_send["model"] = target_model
+
+    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = f"Bearer {litellm_key}"
+
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": request.headers.get("content-type", "application/json"),
+    }
+
+    is_streaming = body_to_send.get("stream", False)
+    client = get_http_client()
+    url = f"{LITELLM_URL}/v1/responses"
+
+    logger.info(f"Proxying Responses API request for model={target_model} to {url}")
+
+    if is_streaming:
+        async def response_streamer():
+            try:
+                async with client.stream(
+                    "POST",
+                    url,
+                    json=body_to_send,
+                    headers=headers,
+                    timeout=600.0,
+                ) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+            except Exception as stream_err:
+                logger.error(f"Error during Responses API streaming proxy: {stream_err}")
+                raise
+
+        return StreamingResponse(response_streamer(), media_type="text/event-stream")
+    else:
+        try:
+            r = await client.post(
+                url,
+                json=body_to_send,
+                headers=headers,
+                timeout=600.0,
+            )
+            response_headers = dict(r.headers)
+            for h in [
+                "content-encoding",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+            ]:
+                response_headers.pop(h, None)
+            return Response(
+                content=r.content,
+                status_code=r.status_code,
+                headers=response_headers,
+            )
+        except Exception as e:
+            logger.error(f"Failed to proxy Responses API request: {e}")
+            raise HTTPException(status_code=502, detail="Responses proxy failed")
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """Handle incoming OpenAI-compatible chat completions requests.
@@ -2025,6 +2150,10 @@ async def chat_completions(request: Request):
         "agent-reasoning-core",
         "agent-advanced-core",
         "llm-routing-agy",
+        "local-qwen-3.6",
+        "local-qwen-3.6-hass",
+        "gpt-4o-mini",
+        "gpt-4o",
     }
 
     AUTO_MODELS = {
