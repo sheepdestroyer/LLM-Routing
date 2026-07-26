@@ -2125,12 +2125,8 @@ async def responses_api(request: Request):
     body_to_send["model"] = target_model
 
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        auth_header = f"Bearer {litellm_key}"
-
     headers = {
-        "Authorization": auth_header,
+        "Authorization": f"Bearer {litellm_key}",
         "Content-Type": request.headers.get("content-type", "application/json"),
     }
 
@@ -2827,10 +2823,11 @@ async def chat_completions(request: Request):
             # Resolve backend connection parameters
             backend_conf = backends.get(model_name)
             if not backend_conf:
-                logger.error(f"Backend '{model_name}' not found in configuration backends.")
-                raise HTTPException(
-                    status_code=500, detail=f"Backend {model_name} misconfigured"
-                )
+                logger.info(f"Backend '{model_name}' not found in backends mapping, defaulting to LiteLLM proxy")
+                backend_conf = {
+                    "api_base": f"{LITELLM_URL}/v1",
+                    "api_key": "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER",
+                }
 
             backend_api_base = backend_conf["api_base"]
             backend_api_key = backend_conf["api_key"]
