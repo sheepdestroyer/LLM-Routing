@@ -295,7 +295,7 @@ model_list:
 - model_name: whisper-1
   litellm_params:
     model: openai/whisper-1
-    api_base: http://127.0.0.1:8084
+    api_base: http://127.0.0.1:8084/v1
     api_key: local-token
     request_timeout: 60
   model_info:
@@ -304,7 +304,7 @@ model_list:
 - model_name: gpt-4o-mini-transcribe
   litellm_params:
     model: openai/whisper-1
-    api_base: http://127.0.0.1:8084
+    api_base: http://127.0.0.1:8084/v1
     api_key: local-token
     request_timeout: 60
   model_info:
