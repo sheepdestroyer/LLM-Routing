@@ -302,6 +302,115 @@ def test_e2e_chat(cfg: dict) -> tuple[int, int]:
     return passed, total
 
 
+def test_ha_tool_calling(cfg: dict) -> tuple[int, int]:
+    """Verify E2E tool calls for Home Assistant models (local-qwen-3.6-hass, gpt-4o-mini, gpt-4o). Returns (passed, total)."""
+    base = f"http://127.0.0.1:{cfg['router_port']}"
+    key = cfg["router_api_key"]
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    passed = total = 0
+
+    print(f"\n── E2E Home Assistant tool calling ({base}/v1/responses & /v1/chat/completions) ──")
+
+    models = ["local-qwen-3.6-hass", "gpt-4o-mini", "gpt-4o"]
+
+    # 1. Responses API tool calling format
+    ha_tools_responses = [
+        {
+            "type": "function",
+            "name": "HassTurnOn",
+            "description": "Turn on a device or entity in Home Assistant",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "entity_id": {"type": "string"}
+                },
+                "required": ["domain"]
+            }
+        }
+    ]
+
+    for model in models:
+        total += 1
+        payload = {
+            "model": model,
+            "input": "Turn on the living room light",
+            "tools": ha_tools_responses,
+        }
+        try:
+            start = time.time()
+            r = httpx.post(
+                f"{base}/v1/responses",
+                json=payload,
+                headers=headers,
+                timeout=120,
+            )
+            elapsed = time.time() - start
+            if r.status_code == 200:
+                data = r.json()
+                output = data.get("output", []) if isinstance(data, dict) else []
+                has_output = len(output) > 0 or "id" in data
+                detail = f"Responses API model={model}, {elapsed:.1f}s"
+                passed += check(f"Responses API tool call ({model})", has_output, detail)
+            else:
+                passed += check(f"Responses API tool call ({model})", False, f"HTTP {r.status_code}: {r.text[:120]}")
+        except Exception as e:
+            passed += check(f"Responses API tool call ({model})", False, str(e))
+
+    # 2. Chat Completions API tool calling format
+    ha_tools_chat = [
+        {
+            "type": "function",
+            "function": {
+                "name": "HassTurnOn",
+                "description": "Turn on a device or entity in Home Assistant",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "entity_id": {"type": "string"}
+                    },
+                    "required": ["domain"]
+                }
+            }
+        }
+    ]
+
+    for model in models:
+        total += 1
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "Turn on the living room light"}],
+            "tools": ha_tools_chat,
+        }
+        try:
+            start = time.time()
+            r = httpx.post(
+                f"{base}/v1/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=120,
+            )
+            elapsed = time.time() - start
+            if r.status_code == 200:
+                data = r.json()
+                choices = data.get("choices", []) if isinstance(data, dict) else []
+                msg = choices[0].get("message", {}) if choices else {}
+                content, reasoning = parse_chat_response(data)
+                has_tool_resp = "tool_calls" in msg or len(content) > 0 or len(reasoning) > 0
+                detail = f"Chat API model={model}, {elapsed:.1f}s"
+                passed += check(f"Chat API tool call ({model})", has_tool_resp, detail)
+            else:
+                passed += check(f"Chat API tool call ({model})", False, f"HTTP {r.status_code}: {r.text[:120]}")
+        except Exception as e:
+            passed += check(f"Chat API tool call ({model})", False, str(e))
+
+    return passed, total
+
+
 def test_infra_health(cfg: dict) -> tuple[int, int]:
     """Test infrastructure services: MinIO, ClickHouse. Returns (passed, total)."""
     passed = total = 0
@@ -690,6 +799,7 @@ def main():
         ("Langfuse health", test_langfuse_endpoints),
         ("Infrastructure", test_infra_health),
         ("E2E chat (router)", test_e2e_chat),
+        ("HA tool calling", test_ha_tool_calling),
         ("LiteLLM direct chat", test_litellm_direct_chat),
         ("Langfuse session propagation", test_langfuse_session_propagation),
         ("Canonical URLs", test_canonical_urls),

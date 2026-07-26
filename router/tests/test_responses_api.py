@@ -86,11 +86,16 @@ async def test_responses_api_auto_model_triage():
 
 
 @pytest.mark.anyio
-async def test_responses_api_with_tools():
-    """Test POST /v1/responses with Home Assistant style tool definitions."""
+@pytest.mark.parametrize("model_alias", [
+    "local-qwen-3.6-hass",
+    "gpt-4o-mini",
+    "gpt-4o",
+])
+async def test_responses_api_with_tools(model_alias):
+    """Test POST /v1/responses with Home Assistant style tool definitions for all HA model aliases."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(return_value={
-        "model": "local-qwen-3.6-hass",
+        "model": model_alias,
         "input": "Turn on living room light",
         "tools": [
             {
@@ -109,7 +114,7 @@ async def test_responses_api_with_tools():
     mock_lite_resp.content = json.dumps({
         "id": "resp_tool123",
         "object": "response",
-        "model": "local-qwen-3.6-hass",
+        "model": model_alias,
         "status": "completed",
         "output": [
             {
@@ -134,6 +139,71 @@ async def test_responses_api_with_tools():
         data = json.loads(response.body)
         assert data["output"][0]["type"] == "function_call"
         assert data["output"][0]["name"] == "HassTurnOn"
+        assert data["model"] == model_alias
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("model_alias", [
+    "local-qwen-3.6-hass",
+    "gpt-4o-mini",
+    "gpt-4o",
+])
+async def test_responses_api_streaming_tool_calls(model_alias):
+    """Test POST /v1/responses streaming SSE tool call event conversion for HA models."""
+    mock_request = MagicMock()
+    mock_request.json = AsyncMock(return_value={
+        "model": model_alias,
+        "input": "Turn on kitchen light",
+        "stream": True,
+        "tools": [
+            {
+                "type": "function",
+                "name": "HassTurnOn",
+                "parameters": {"type": "object", "properties": {"domain": {"type": "string"}}}
+            }
+        ]
+    })
+    mock_request.headers = {"content-type": "application/json"}
+
+    sse_data = json.dumps({
+        "type": "response.output_item.done",
+        "item": {
+            "id": "fc_stream999",
+            "type": "function_call",
+            "name": "HassTurnOn",
+            "arguments": '{"domain": "light", "entity_id": "light.kitchen"}'
+        }
+    })
+
+    async def mock_aiter_bytes():
+        yield f"data: {sse_data}\n\n".encode("utf-8")
+        yield b'data: [DONE]\n\n'
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_bytes = mock_aiter_bytes
+    mock_resp.aclose = AsyncMock(return_value=None)
+
+    mock_client = MagicMock()
+    mock_client.build_request.return_value = MagicMock()
+    mock_client.send = AsyncMock(return_value=mock_resp)
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):
+        response = await responses_api(mock_request)
+        assert isinstance(response, StreamingResponse)
+
+        # Collect streamed bytes
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+        full_stream = "".join(chunks)
+
+        # Verify delta and done tool call events were generated for Home Assistant
+        assert "response.function_call_arguments.delta" in full_stream
+        assert "response.function_call_arguments.done" in full_stream
+        assert "fc_stream999" in full_stream
+        assert "HassTurnOn" in full_stream
 
 
 @pytest.mark.anyio
