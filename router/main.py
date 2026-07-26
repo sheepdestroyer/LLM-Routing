@@ -2076,22 +2076,34 @@ async def responses_api(request: Request):
     if isinstance(input_field, str):
         last_user_message = input_field
     elif isinstance(input_field, list):
-        for item in input_field:
+        for item in reversed(input_field):
             if isinstance(item, str):
-                last_user_message += item
+                last_user_message = item
+                if last_user_message.strip():
+                    break
             elif isinstance(item, dict):
-                if item.get("type") == "text":
-                    last_user_message += item.get("text", "")
-                elif item.get("role") == "user":
+                role = item.get("role")
+                item_type = item.get("type")
+                if role == "user" or item_type == "message":
                     content = item.get("content") or ""
                     if isinstance(content, str):
-                        last_user_message += content
+                        last_user_message = content
                     elif isinstance(content, list):
-                        last_user_message += "".join(
-                            b.get("text", "")
-                            for b in content
-                            if isinstance(b, dict) and b.get("type") == "text"
-                        )
+                        parts = []
+                        for b in content:
+                            if isinstance(b, str):
+                                parts.append(b)
+                            elif isinstance(b, dict) and b.get("type") in ("input_text", "text"):
+                                txt = b.get("text") or ""
+                                if txt:
+                                    parts.append(txt)
+                        last_user_message = " ".join(parts)
+                    if last_user_message.strip():
+                        break
+                elif item_type in ("input_text", "text"):
+                    last_user_message = item.get("text", "")
+                    if last_user_message.strip():
+                        break
 
     if not last_user_message:
         instructions = body.get("instructions")
@@ -2129,71 +2141,78 @@ async def responses_api(request: Request):
     logger.info(f"Proxying Responses API request for model={target_model} to {url}")
 
     if is_streaming:
+        req = client.build_request(
+            "POST", url, json=body_to_send, headers=headers, timeout=600.0
+        )
+        resp = await client.send(req, stream=True)
+        if resp.status_code != 200:
+            error_body = await resp.aread()
+            await resp.aclose()
+            logger.warning(
+                f"Responses API stream failed ({resp.status_code}): {error_body[:300].decode('utf-8', errors='replace')}"
+            )
+            raise HTTPException(status_code=resp.status_code, detail="Responses proxy failed")
+
         async def response_streamer():
             try:
-                async with client.stream(
-                    "POST",
-                    url,
-                    json=body_to_send,
-                    headers=headers,
-                    timeout=600.0,
-                ) as resp:
-                    buffer = ""
-                    seen_args_delta = set()
-                    seen_args_done = set()
-                    async for chunk in resp.aiter_bytes():
-                        buffer += chunk.decode("utf-8", errors="replace")
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            line_str = line.strip()
-                            if line_str.startswith("data:"):
-                                raw_data = line_str[5:].strip()
-                                if raw_data and raw_data != "[DONE]":
-                                    try:
-                                        data_obj = json.loads(raw_data)
-                                        event_type = data_obj.get("type")
-                                        if event_type == "response.function_call_arguments.delta":
-                                            item_id = data_obj.get("item_id")
-                                            if item_id:
+                buffer = ""
+                seen_args_delta = set()
+                seen_args_done = set()
+                async for chunk in resp.aiter_bytes():
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line_str = line.strip()
+                        if line_str.startswith("data:"):
+                            raw_data = line_str[5:].strip()
+                            if raw_data and raw_data != "[DONE]":
+                                try:
+                                    data_obj = json.loads(raw_data)
+                                    event_type = data_obj.get("type")
+                                    if event_type == "response.function_call_arguments.delta":
+                                        item_id = data_obj.get("item_id")
+                                        if item_id:
+                                            seen_args_delta.add(item_id)
+                                    elif event_type == "response.function_call_arguments.done":
+                                        item_id = data_obj.get("item_id")
+                                        if item_id:
+                                            seen_args_done.add(item_id)
+                                    elif event_type == "response.output_item.done":
+                                        item = data_obj.get("item", {})
+                                        if item.get("type") == "function_call":
+                                            item_id = item.get("id")
+                                            args_val = item.get("arguments", "{}") or "{}"
+                                            if item_id and item_id not in seen_args_delta:
                                                 seen_args_delta.add(item_id)
-                                        elif event_type == "response.function_call_arguments.done":
-                                            item_id = data_obj.get("item_id")
-                                            if item_id:
+                                                delta_evt = {
+                                                    "type": "response.function_call_arguments.delta",
+                                                    "item_id": item_id,
+                                                    "delta": args_val,
+                                                    "output_index": 0,
+                                                    "sequence_number": 0,
+                                                }
+                                                yield f"data: {json.dumps(delta_evt)}\n\n".encode("utf-8")
+                                            if item_id and item_id not in seen_args_done:
                                                 seen_args_done.add(item_id)
-                                        elif event_type == "response.output_item.done":
-                                            item = data_obj.get("item", {})
-                                            if item.get("type") == "function_call":
-                                                item_id = item.get("id")
-                                                args_val = item.get("arguments", "{}") or "{}"
-                                                if item_id and item_id not in seen_args_delta:
-                                                    seen_args_delta.add(item_id)
-                                                    delta_evt = {
-                                                        "type": "response.function_call_arguments.delta",
-                                                        "item_id": item_id,
-                                                        "delta": args_val,
-                                                        "output_index": 0,
-                                                        "sequence_number": 0,
-                                                    }
-                                                    yield f"data: {json.dumps(delta_evt)}\n\n".encode("utf-8")
-                                                if item_id and item_id not in seen_args_done:
-                                                    seen_args_done.add(item_id)
-                                                    done_evt = {
-                                                        "type": "response.function_call_arguments.done",
-                                                        "item_id": item_id,
-                                                        "name": item.get("name", ""),
-                                                        "arguments": args_val,
-                                                        "output_index": 0,
-                                                        "sequence_number": 0,
-                                                    }
-                                                    yield f"data: {json.dumps(done_evt)}\n\n".encode("utf-8")
-                                    except Exception as parse_err:
-                                        logger.warning(f"Failed to parse SSE line: {parse_err}")
-                            yield (line + "\n").encode("utf-8")
-                    if buffer:
-                        yield buffer.encode("utf-8")
+                                                done_evt = {
+                                                    "type": "response.function_call_arguments.done",
+                                                    "item_id": item_id,
+                                                    "name": item.get("name", ""),
+                                                    "arguments": args_val,
+                                                    "output_index": 0,
+                                                    "sequence_number": 0,
+                                                }
+                                                yield f"data: {json.dumps(done_evt)}\n\n".encode("utf-8")
+                                except Exception as parse_err:
+                                    logger.warning(f"Failed to parse SSE line: {parse_err}")
+                        yield (line + "\n").encode("utf-8")
+                if buffer:
+                    yield buffer.encode("utf-8")
             except Exception as stream_err:
                 logger.error(f"Error during Responses API streaming proxy: {stream_err}")
                 raise
+            finally:
+                await resp.aclose()
 
         return StreamingResponse(response_streamer(), media_type="text/event-stream")
     else:

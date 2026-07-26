@@ -163,15 +163,95 @@ async def test_responses_api_streaming():
         yield b'data: {"type":"response.created"}\n\n'
         yield b'data: [DONE]\n\n'
 
-    mock_stream_ctx = MagicMock()
-    mock_stream_ctx.__aenter__ = AsyncMock(return_value=MagicMock(aiter_bytes=mock_aiter_bytes))
-    mock_stream_ctx.__aexit__ = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_bytes = mock_aiter_bytes
+    mock_resp.aclose = AsyncMock()
 
     mock_client = AsyncMock()
-    mock_client.stream.return_value = mock_stream_ctx
+    mock_client.build_request.return_value = MagicMock()
+    mock_client.send.return_value = mock_resp
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):
         response = await responses_api(mock_request)
         assert isinstance(response, StreamingResponse)
         assert response.media_type == "text/event-stream"
+
+
+@pytest.mark.anyio
+async def test_responses_api_streaming_error():
+    """Test POST /v1/responses streaming when upstream returns non-200 error status."""
+    mock_request = MagicMock()
+    mock_request.json = AsyncMock(return_value={
+        "model": "gpt-4o-mini",
+        "input": "Stream error test",
+        "stream": True
+    })
+    mock_request.headers = {"content-type": "application/json"}
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+    mock_resp.aread = AsyncMock(return_value=b'{"error": "Internal Server Error"}')
+    mock_resp.aclose = AsyncMock(return_value=None)
+
+    mock_client = MagicMock()
+    mock_client.build_request.return_value = MagicMock()
+    mock_client.send = AsyncMock(return_value=mock_resp)
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):
+        with pytest.raises(HTTPException) as exc_info:
+            await responses_api(mock_request)
+        assert exc_info.value.status_code == 500
+        assert "Responses proxy failed" in exc_info.value.detail
+
+
+@pytest.mark.anyio
+async def test_responses_api_input_text_extraction():
+    """Test last user message extraction with input_text content parts and reverse traversal."""
+    mock_request = MagicMock()
+    mock_request.json = AsyncMock(return_value={
+        "model": "llm-routing-auto-free",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Old turn"}
+                ]
+            },
+            {
+                "role": "assistant",
+                "content": "Previous assistant answer"
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Part 1"},
+                    {"type": "text", "text": "Part 2"}
+                ]
+            }
+        ]
+    })
+    mock_request.headers = {"content-type": "application/json"}
+
+    mock_lite_resp = MagicMock()
+    mock_lite_resp.status_code = 200
+    mock_lite_resp.content = b'{}'
+    mock_lite_resp.headers = {"content-type": "application/json"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_lite_resp
+
+    classify_mock = AsyncMock(return_value=("agent-simple-core", 10.0, False, "simple"))
+
+    with patch("router.main.classify_request", classify_mock), \
+         patch("router.main.get_http_client", return_value=mock_client), \
+         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):
+        response = await responses_api(mock_request)
+        assert isinstance(response, Response)
+        # Verify classify_request was called with extracted last user turn: "Part 1 Part 2"
+        classify_mock.assert_called_once()
+        last_msg = classify_mock.call_args[0][0]
+        assert last_msg == "Part 1 Part 2"
+
