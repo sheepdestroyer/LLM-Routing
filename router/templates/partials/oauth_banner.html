@@ -1,0 +1,43 @@
+{% if data.oauth_status.status == "expired" %}
+    <div class="oauth-banner">
+        <div class="oauth-banner-inner oauth-banner-expired">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 22px;">⚠️</span>
+                <div>
+                    <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Token Expired</div>
+                    <div style="opacity: 0.8; font-size: 13px;">{{ data.oauth_status.detail }}. The agy proxy Tier 1 (Gemini) will timeout on every request, adding ~120s latency.</div>
+                </div>
+            </div>
+            <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })">
+                <span class="copied-tooltip">Copied!</span>
+                $ agy auth login
+            </div>
+        </div>
+    </div>
+    {% elif data.oauth_status.status in ["missing", "error"] %}
+    <div class="oauth-banner">
+        <div class="oauth-banner-inner oauth-banner-missing">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 22px;">🔑</span>
+                <div>
+                    <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Not Configured</div>
+                    <div style="opacity: 0.8; font-size: 13px;">{{ data.oauth_status.detail }}. Run the command to authenticate.</div>
+                </div>
+            </div>
+            <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })">
+                <span class="copied-tooltip">Copied!</span>
+                $ agy auth login
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="oauth-banner">
+        <div class="oauth-banner-inner oauth-banner-valid">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 18px;">✅</span>
+                <span style="font-weight: 600;">Gemini OAuth Active</span>
+                <span style="opacity: 0.7; font-size: 13px;">— {{ data.oauth_status.detail }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}

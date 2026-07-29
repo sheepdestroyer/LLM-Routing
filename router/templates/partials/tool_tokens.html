@@ -1,0 +1,11 @@
+{% for t in data.tool_tokens %}
+    <div style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
+            <span style="font-weight: 600; text-transform: capitalize;">🛠️ {{ t.name }}</span>
+            <span style="opacity: 0.8; font-weight: bold;">{{ "{:,}".format(t.count) }} tokens ({{ "%.1f"|format(t.overall_pct) }}%)</span>
+        </div>
+        <div style="height: 10px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden;">
+            <div style="width: {{ t.pct }}%; height: 100%; background: linear-gradient(90deg, {{ t.color }}, {{ t.color }}aa); border-radius: 10px; transition: width 0.5s ease;"></div>
+        </div>
+    </div>
+    {% endfor %}

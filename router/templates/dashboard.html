@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Triage Gateway - Control Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --slate-900: #0f172a;
+            --indigo-950: #1e1b4b;
+            --emerald-500: #10b981;
+            --rose-500: #f43f5e;
+            --text-main: #f8fafc;
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.08);
+        }
+
+        .oauth-banner {
+            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto -10px auto;
+            padding: 0 20px;
+        }
+
+        .oauth-banner-inner {
+            border-radius: 12px;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            font-size: 14px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            animation: bannerPulse 3s ease-in-out infinite;
+        }
+
+        .oauth-banner-expired {
+            background: rgba(244, 63, 94, 0.12);
+            border: 1px solid rgba(244, 63, 94, 0.35);
+            color: #fda4af;
+        }
+
+        .oauth-banner-valid {
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+            animation: none;
+        }
+
+        .oauth-banner-missing {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            color: #fde68a;
+        }
+
+        .oauth-banner-cmd {
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: background 0.2s;
+            position: relative;
+        }
+
+        .oauth-banner-cmd:hover {
+            background: rgba(0, 0, 0, 0.5);
+        }
+
+        .oauth-banner-cmd .copied-tooltip {
+            position: absolute;
+            top: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #10b981;
+            color: #fff;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .oauth-banner-cmd .copied-tooltip.show {
+            opacity: 1;
+        }
+
+        @keyframes bannerPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.85; }
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: linear-gradient(135deg, var(--slate-900), var(--indigo-950));
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            overflow-x: hidden;
+        }
+
+        header {
+            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo-dot {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #818cf8, #a78bfa);
+            box-shadow: 0 0 15px #818cf8;
+        }
+
+        .logo-text {
+            font-size: 24px;
+            font-weight: 800;
+            background: linear-gradient(45deg, #a5b4fc, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .dashboard-title {
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.6;
+        }
+
+        main {
+            width: 100%;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px 50px 20px;
+            flex-grow: 1;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 30px;
+        }
+
+        @media (max-width: 1000px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+            margin-bottom: 30px;
+        }
+
+        .glass-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .status-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 12px;
+        }
+
+        .service-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.01);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .service-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .service-name {
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        .service-port {
+            font-size: 12px;
+            opacity: 0.5;
+            font-family: monospace;
+        }
+
+        .badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 50px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .badge-online {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--emerald-500);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .badge-offline {
+            background: rgba(244, 63, 94, 0.1);
+            color: var(--rose-500);
+            border: 1px solid rgba(244, 63, 94, 0.2);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .badge-online .pulse-dot {
+            background: var(--emerald-500);
+            box-shadow: 0 0 10px var(--emerald-500);
+            animation: pulse 2s infinite;
+        }
+
+        .badge-offline .pulse-dot {
+            background: var(--rose-500);
+            box-shadow: 0 0 10px var(--rose-500);
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-box {
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .metric-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.5;
+        }
+
+        .ratio-container {
+            display: flex;
+            height: 10px;
+            border-radius: 50px;
+            overflow: hidden;
+            margin-top: 15px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .ratio-legend {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-top: 8px;
+            opacity: 0.7;
+        }
+
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 15px;
+        }
+
+        .btn {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(129, 140, 248, 0.3);
+            transform: translateX(4px);
+        }
+
+        .btn-arrow {
+            opacity: 0.5;
+            font-size: 16px;
+            transition: transform 0.3s ease;
+        }
+
+        .btn:hover .btn-arrow {
+            transform: translateX(3px);
+        }
+
+        .pie-chart {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: conic-gradient(rgba(255,255,255,0.05) 0% 100%);
+            box-shadow: 0 0 30px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.5);
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .pie-chart::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            background: var(--slate-900);
+            border-radius: 50%;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 13px;
+            opacity: 0.5;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .metrics-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+    </style>
+    <script>
+        // Fetch dashboard data asynchronously to prevent UI blocking
+        async function refreshDashboard() {
+            try {
+                // Handle relative paths when deployed under a subpath proxy
+                const basePath = window.location.pathname.endsWith('/') ? '../api/' : './api/';
+                const response = await fetch(basePath + "dashboard-stats");
+                if (!response.ok) return;
+                const data = await response.json();
+
+                // 1. Update status badges
+                const updateStatus = (id, isOnline) => {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.className = isOnline ? "badge badge-online" : "badge badge-offline";
+                        el.innerHTML = `<span class="pulse-dot"></span>${isOnline ? "Online" : "Offline"}`;
+                    }
+                };
+                updateStatus("litellm-status", data.litellm_status);
+                updateStatus("valkey-status", data.valkey_status);
+                updateStatus("llama-server-status", data.llama_server_status);
+                updateStatus("langfuse-status", data.langfuse_status);
+
+                // 2. Update metrics grid
+                document.getElementById("total-requests").textContent = data.total_requests;
+                document.getElementById("last-triage-decision").textContent = data.last_triage_decision;
+                document.getElementById("avg-triage-latency").textContent = data.avg_triage_latency_ms.toFixed(1) + " ms";
+                document.getElementById("avg-proxy-latency").textContent = data.avg_proxy_latency_ms.toFixed(1) + " ms";
+                document.getElementById("cache-hits").textContent = data.cache_hits;
+
+                // 3. Update token counts
+                document.getElementById("p-tokens").textContent = data.p_tokens.toLocaleString();
+                document.getElementById("c-tokens").textContent = data.c_tokens.toLocaleString();
+                document.getElementById("t-tokens").textContent = data.t_tokens.toLocaleString();
+
+                // 4. Update dynamic HTML blocks
+                document.getElementById("oauth-banner-container").innerHTML = data.oauth_banner_html;
+                document.getElementById("tier-table-container").innerHTML = data.tier_table_html;
+                document.getElementById("pie-legend-container").innerHTML = data.pie_legend_html;
+                document.getElementById("routing-legend-container").innerHTML = data.routing_legend_html || "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>";
+                document.getElementById("tool-tokens-container").innerHTML = data.tool_tokens_html;
+                document.getElementById("timeline-container").innerHTML = data.timeline_html;
+                document.getElementById("goose-sessions-container").innerHTML = data.goose_html;
+                document.getElementById("llamacpp-models-container").innerHTML = data.llamacpp_models_html;
+                document.getElementById("llamacpp-slots-container").innerHTML = data.llamacpp_slots_html;
+
+                // 5. Update Frontier Free Model widget
+                const bestFreeModelContainer = document.getElementById("best-free-model-container");
+                if (bestFreeModelContainer) {
+                    const m = data.best_free_model;
+                    const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
+                    bestFreeModelContainer.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: 800; font-size: 16px; color: #fff;">${m.name}</span>
+                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${m.score.toFixed(1)}</span>
+                        </div>
+                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
+                            ID: ${m.id}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
+                            <span>📐 context ${m.context_length.toLocaleString()} tok</span>
+                            <span style="color: #34d399; font-weight: bold;">${statusLabel}</span>
+                        </div>
+                    `;
+                }
+
+                // 6. Update Llama.cpp Build version
+                const llamacppBuild = document.getElementById("llamacpp-build");
+                if (llamacppBuild) {
+                    llamacppBuild.textContent = "build " + data.llamacpp_build;
+                }
+
+                // 7. Update pie chart gradients
+                const toolPie = document.getElementById("tool-token-pie-chart");
+                if (toolPie && data.pie_gradient) {
+                    // data.pie_gradient is like "background: conic-gradient(...)"
+                    toolPie.style.cssText += data.pie_gradient;
+                }
+                const routingPie = document.getElementById("routing-path-pie-chart");
+                if (routingPie && data.routing_pie_gradient) {
+                    routingPie.style.cssText += data.routing_pie_gradient;
+                }
+
+            } catch (e) {
+                console.error("Dashboard fetch failed: ", e);
+            }
+        }
+
+        // Initialize on load and set periodic polling
+        window.addEventListener("DOMContentLoaded", () => {
+            const basePath = window.location.pathname.endsWith('/') ? '../' : './';
+            const visLink = document.getElementById("visualizer-link");
+            if (visLink) {
+                visLink.href = basePath + "visualizer";
+            }
+            refreshDashboard();
+        });
+        setInterval(refreshDashboard, 3000);
+    </script>
+</head>
+<body>
+    <header>
+        <div class="logo-area">
+            <div class="logo-dot"></div>
+            <div class="logo-text">Antigravity Gateway</div>
+        </div>
+        <div class="dashboard-title">System Control Center</div>
+        <div style="margin-top:8px;font-size:12px;opacity:0.6;">
+            <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
+        </div>
+    </header>
+
+    <div id="oauth-banner-container">
+        {% include 'partials/oauth_banner.html' %}
+    </div>
+
+    <main>
+        <!-- LEFT COLUMN: LIVE TELEMETRY, METERS, PIES & TIMELINES -->
+        <div>
+            <!-- Analytics Card -->
+            <div class="glass-card">
+                <div class="section-title">
+                    <span>{{ src_badge("ROUTER", "#818cf8") | safe }} Gateway Performance Telemetry</span>
+                    <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Persistent telemetry</span>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-box">
+                        <span class="metric-value" id="total-requests">{{ data.total_requests }}</span>
+                        <span class="metric-label">Total API Calls</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-value" id="last-triage-decision" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ data.last_triage_decision }}</span>
+                        <span class="metric-label">Last Triage Split</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-value" id="avg-triage-latency">{{ "%.1f"|format(data.avg_triage_latency_ms) }} ms</span>
+                        <span class="metric-label">Avg Triage Time</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-value" id="avg-proxy-latency">{{ "%.1f"|format(data.avg_proxy_latency_ms) }} ms</span>
+                        <span class="metric-label">Avg Proxy Time</span>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-value" id="cache-hits" style="color: #34d399;">{{ data.cache_hits }}</span>
+                        <span class="metric-label">Triage Cache Hits</span>
+                    </div>
+                </div>
+
+                <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
+                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{{ src_badge("ROUTER", "#818cf8") | safe }} Triage Routing Split</div>
+                    <div id="tier-table-container">
+                        {% include 'partials/tier_table.html' %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Token Distribution & Circular Tool Pies Card -->
+            <div class="glass-card">
+                <div class="section-title">
+                    <span>{{ src_badge("ROUTER", "#818cf8") | safe }} Tool Token Distribution</span>
+                    <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Live conic-gradient pie</span>
+                </div>
+
+                <div style="display: flex; gap: 40px; align-items: center; margin-bottom: 30px; flex-wrap: wrap;">
+                    <div class="pie-chart" id="tool-token-pie-chart" style="{{ data.pie_gradient }}"></div>
+                    <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 200px;">
+                        <h4 style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; margin-bottom: 5px;">Active Tool Split %</h4>
+                        <div id="pie-legend-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            {% include 'partials/pie_legend.html' %}
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tool-tokens-container">
+                    {% include 'partials/tool_tokens.html' %}
+                </div>
+            </div>
+
+            <!-- Token Distribution & Circular Routing Path Pies Card -->
+            <div class="glass-card">
+                <div class="section-title">
+                    <span>{{ src_badge("ROUTER", "#818cf8") | safe }} Request Routing Network Split</span>
+                    <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Tier 1 paths vs Llama</span>
+                </div>
+
+                <div style="display: flex; gap: 40px; align-items: center; flex-wrap: wrap;">
+                    <div class="pie-chart" id="routing-path-pie-chart" style="{{ data.routing_pie_gradient }}"></div>
+                    <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 200px;">
+                        <h4 style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; margin-bottom: 5px;">Routing Path %</h4>
+                        <div id="routing-legend-container" style="display: flex; flex-direction: column; gap: 10px;">
+                            {% include 'partials/routing_legend.html' %}
+                        </div>
+                    </div>
+                </div>
+
+            <!-- Active Usage Timeline -->
+            <div class="glass-card">
+                <div class="section-title">
+                    <span>{{ src_badge("OBSERVE", "#e879f9") | safe }} Recent Triage Usage Timeline</span>
+                </div>
+                <div id="timeline-container" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
+                    {% include 'partials/timeline.html' %}
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: STATUS, RESOURCES & QUICK LINKS -->
+        <div>
+            <!-- Status overview card -->
+            <div class="glass-card status-container">
+                <div class="section-title" style="margin-bottom: 10px;">System Health Map</div>
+
+                <div class="service-row">
+                    <div class="service-info">
+                        <span class="service-name">Triage Router</span>
+                        <span class="service-port">:{{ router_port }}</span>
+                    </div>
+                    <span class="badge badge-online"><span class="pulse-dot"></span>Online</span>
+                </div>
+
+                <div class="service-row">
+                    <div class="service-info">
+                        <span class="service-name">LiteLLM Proxy</span>
+                        <span class="service-port">:{{ litellm_port }}</span>
+                    </div>
+                    <span id="litellm-status" class="badge {% if data.litellm_status %}badge-online{% else %}badge-offline{% endif %}">
+                        <span class="pulse-dot"></span>{% if data.litellm_status %}Online{% else %}Offline{% endif %}
+                    </span>
+                </div>
+
+                <div class="service-row">
+                    <div class="service-info">
+                        <span class="service-name">Valkey Cache</span>
+                        <span class="service-port">:{{ valkey_port }}</span>
+                    </div>
+                    <span id="valkey-status" class="badge {% if data.valkey_status %}badge-online{% else %}badge-offline{% endif %}">
+                        <span class="pulse-dot"></span>{% if data.valkey_status %}Online{% else %}Offline{% endif %}
+                    </span>
+                </div>
+
+                <div class="service-row">
+                    <div class="service-info">
+                        <span class="service-name">Llama-Server</span>
+                        <span class="service-port">:8080</span>
+                    </div>
+                    <span id="llama-server-status" class="badge {% if data.llama_server_status %}badge-online{% else %}badge-offline{% endif %}">
+                        <span class="pulse-dot"></span>{% if data.llama_server_status %}Online{% else %}Offline{% endif %}
+                    </span>
+                </div>
+
+                <div class="service-row">
+                    <div class="service-info">
+                        <span class="service-name">Langfuse Traces</span>
+                        <span class="service-port">:{{ langfuse_port }}</span>
+                    </div>
+                    <span id="langfuse-status" class="badge {% if data.langfuse_status %}badge-online{% else %}badge-offline{% endif %}">
+                        <span class="pulse-dot"></span>{% if data.langfuse_status %}Online{% else %}Offline{% endif %}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Global Token Tracker -->
+            <div class="glass-card">
+                <div class="section-title">
+                    <span>{{ src_badge("LITELLM", "#34d399") | safe }} Aggregated Gateway Token Usage</span>
+                </div>
+                <div style="background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 13px; opacity: 0.6; font-weight: 600; text-transform: uppercase;">Prompt</span>
+                        <span id="p-tokens" style="font-size: 16px; font-weight: 700; font-family: monospace;">{{ "{:,}".format(data.p_tokens) }}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 13px; opacity: 0.6; font-weight: 600; text-transform: uppercase;">Completion</span>
+                        <span id="c-tokens" style="font-size: 16px; font-weight: 700; font-family: monospace; color: #a5b4fc;">{{ "{:,}".format(data.c_tokens) }}</span>
+                    </div>
+                    <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 14px; opacity: 0.8; font-weight: 700; text-transform: uppercase;">Total Routed</span>
+                        <span id="t-tokens" style="font-size: 20px; font-weight: 800; font-family: monospace; color: #34d399;">{{ "{:,}".format(data.t_tokens) }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Best Free Model Roster Card -->
+            <div class="glass-card">
+                <div class="section-title" style="margin-bottom: 10px;">
+                    <span>{{ src_badge("ROSTER", "#f43f5e") | safe }} Current Best Free Model</span>
+                </div>
+                <div id="best-free-model-container" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
+                        <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {{ "%.1f"|format(data.best_free_model.score) }}</span>
+                    </div>
+                    <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
+                        ID: {{ data.best_free_model.id }}
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
+                        <span>📐 context {{ "{:,}".format(data.best_free_model.context_length) }} tok</span>
+                        <span style="color: #34d399; font-weight: bold;">{% if not data.best_free_model.is_fallback %}LIVE{% else %}FALLBACK{% endif %}</span>
+                    </div>
+                </div>
+                <div style="font-size: 11px; opacity: 0.4; margin-top: 10px; text-align: center;">
+                    Scores provided by Artificial Analysis API
+                </div>
+            </div>
+
+            <!-- Llama.cpp Metrics Card -->
+            <div class="glass-card">
+                <div class="section-title" style="margin-bottom: 10px;">
+                    <span>{{ src_badge("LLAMA.CPP", "#fb923c") | safe }} Engine Metrics</span>
+                    <span id="llamacpp-build" style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">build {{ data.llamacpp_build }}</span>
+                </div>
+                <div id="llamacpp-models-container">
+                    {% include 'partials/llamacpp_models.html' %}
+                </div>
+                <div id="llamacpp-slots-container">
+                    {% include 'partials/llamacpp_slots.html' %}
+                </div>
+            </div>
+            <!-- Goose active sessions and status card -->
+            <div class="glass-card">
+                <div class="section-title" style="margin-bottom: 10px;">{{ src_badge("GOOSE", "#fbbf24") | safe }} Session Directory</div>
+                <div id="goose-sessions-container" style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
+                    {% include 'partials/goose.html' %}
+                </div>
+            </div>
+
+            <!-- Quick console links card -->
+            <div class="glass-card status-container">
+                <div class="section-title" style="margin-bottom: 10px;">Quick Console Links</div>
+                <div class="btn-group">
+                    <!-- Goose Dashboard local -->
+                    <a href="https://t.me/SheepBot?start=goose" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
+                        <span>{{ src_badge("GOOSE", "#fbbf24") | safe }} 🦢 Goose Telegram Bot</span>
+                        <span class="btn-arrow">→</span>
+                    </a>
+                </div>
+                <div class="btn-group">
+                    <a href="{{ langfuse_url }}" target="_blank" class="btn">
+                        <span>{{ src_badge("LANGFUSE", "#e879f9") | safe }} Observability UI</span>
+                        <span class="btn-arrow">→</span>
+                    </a>
+                    <a href="{{ litellm_url }}" target="_blank" class="btn">
+                        <span>{{ src_badge("LITELLM", "#34d399") | safe }} Admin UI</span>
+                        <span class="btn-arrow">→</span>
+                    </a>
+                    <a href="{{ llama_url }}" target="_blank" class="btn">
+                        <span>{{ src_badge("LLAMA.CPP", "#fb923c") | safe }} Server Router UI</span>
+                        <span class="btn-arrow">→</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        LLM Triage Gateway Control Center &copy; 2026. Made with Antigravity.
+    </footer>
+</body>
+</html>

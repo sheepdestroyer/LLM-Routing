@@ -1,0 +1,29 @@
+{% if not data.goose_sessions %}
+        <div style="background: rgba(255,255,255,0.02); border-radius: 12px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.05); font-size: 14px; opacity: 0.6;">
+            ⚠️ No active Goose session database detected at mountpoint.
+        </div>
+    {% else %}
+        {% for sess in data.goose_sessions %}
+            {% set is_active = loop.index0 == 0 %}
+            {% set badge_style = 'background: rgba(129, 140, 248, 0.15); color: #c084fc; border: 1px solid rgba(129, 140, 248, 0.3);' if is_active else 'background: rgba(255,255,255,0.03); color: #fff; border: 1px solid rgba(255,255,255,0.05);' %}
+
+            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 15px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center;">
+                        {% if is_active %}
+                        <span style='font-size: 10px; background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;'>ACTIVE</span>
+                        {% endif %}
+                        <span style="font-weight: 600; font-size: 15px;">Session {{ sess.id }}</span>
+                    </div>
+                    <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {{ badge_style }}">{{ sess.goose_mode|default('auto')|upper }}</span>
+                </div>
+                <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {{ sess.description or sess.name or 'Interactive session' }}
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
+                    <span>📅 {{ sess.updated_at }}</span>
+                    <span style="font-weight: bold; color: #a5b4fc;">{{ "{:,}".format(sess.accumulated_total_tokens or 0) }} total tokens</span>
+                </div>
+            </div>
+        {% endfor %}
+    {% endif %}
