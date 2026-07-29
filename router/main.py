@@ -1550,13 +1550,19 @@ def record_tool_usage(usage: ToolUsageRecord):
             logger.warning(f"Failed to persist timeline: {e}")
 
 
+_goose_sessions_cache = {"mtime": 0.0, "data": []}
+
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
-    sessions_list = []
+    global _goose_sessions_cache
     db_path = "/config/goose_sessions/sessions/sessions.db"
     if not os.path.exists(db_path):
         return []
     try:
+        current_mtime = os.path.getmtime(db_path)
+        if current_mtime == _goose_sessions_cache["mtime"]:
+            return list(_goose_sessions_cache["data"])
+
         import sqlite3
 
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -1568,12 +1574,15 @@ def get_goose_sessions() -> list:
             ORDER BY updated_at DESC
             LIMIT 5
         """)
-        for row in cursor.fetchall():
-            sessions_list.append(dict(row))
+        sessions_list = [dict(row) for row in cursor.fetchall()]
         conn.close()
+
+        _goose_sessions_cache["mtime"] = current_mtime
+        _goose_sessions_cache["data"] = sessions_list
+        return list(sessions_list)
     except Exception as e:
         logger.error(f"Failed to query goose sessions SQLite DB: {e}")
-    return sessions_list
+        return []
 
 
 async def get_llamacpp_metrics() -> dict:
