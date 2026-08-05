@@ -6,14 +6,14 @@ from router import main
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_missing_file():
-    with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=False):
+    with patch("router.main.os.path.exists", return_value=False):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "missing", "detail": "No oauth_creds.json found", "expiry_ms": 0}
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_no_access_token():
     mock_data = {"expiry_date": 1234567890000}
-    with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=True), \
+    with patch("router.main.os.path.exists", return_value=True), \
          patch("router.main._read_json_file_async", new_callable=AsyncMock, return_value=mock_data):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "missing", "detail": "No access token in file", "expiry_ms": 0}
@@ -31,7 +31,7 @@ async def test_get_gemini_oauth_status_scenarios(delta, expected_status, expecte
     current_time_ms = 1000000000000
     expiry_ms = current_time_ms + delta
     mock_data = {"access_token": "test_token", "expiry_date": expiry_ms}
-    with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=True), \
+    with patch("router.main.os.path.exists", return_value=True), \
          patch("router.main._read_json_file_async", new_callable=AsyncMock, return_value=mock_data), \
          patch("time.time", return_value=current_time_ms / 1000.0):
         result = await main.get_gemini_oauth_status()
@@ -39,6 +39,6 @@ async def test_get_gemini_oauth_status_scenarios(delta, expected_status, expecte
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_exception():
-    with patch("asyncio.to_thread", new_callable=AsyncMock, side_effect=Exception("Test error")):
+    with patch("router.main.os.path.exists", side_effect=Exception("Test error")):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "error", "detail": "Test error", "expiry_ms": 0}
