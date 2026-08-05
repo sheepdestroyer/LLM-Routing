@@ -105,7 +105,7 @@ DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"
 export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT
 
 # Ensure local volume directories exist on the host for Podman mounts
-mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data"
+mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data" "${DATA_ROOT}/datasets"
 
 # Define and export the routing domain
 ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
