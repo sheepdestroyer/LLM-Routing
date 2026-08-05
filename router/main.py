@@ -1879,6 +1879,81 @@ async def proxy_memory(request: Request, path: str = ""):
         raise HTTPException(status_code=502, detail="Memory proxy failed")
 
 
+@app.api_route("/v1/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+@app.api_route("/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+async def proxy_audio(request: Request, path: str = ""):
+    """Proxies audio API calls (speech-to-text / text-to-speech) to LiteLLM."""
+    litellm_port = os.getenv("LITELLM_PORT") or "4000"
+    expected_netloc = f"127.0.0.1:{litellm_port}"
+
+    clean_path = posixpath.normpath("/" + path.lstrip("/"))
+
+    if (
+        ".." in path
+        or ".." in clean_path
+        or "@" in path
+        or "@" in clean_path
+        or "://" in path
+        or "://" in clean_path
+        or "\x00" in path
+        or "\x00" in clean_path
+    ):
+        logger.warning(f"Blocking potentially malicious audio proxy path: {path}")
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    litellm_base = f"http://{expected_netloc}/v1/audio"
+    url = f"{litellm_base}{clean_path}"
+
+    parsed_url = urlparse(url)
+    if parsed_url.netloc != expected_netloc:
+        logger.warning(
+            f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}"
+        )
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    query_params = dict(request.query_params)
+    body = await request.body()
+
+    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = f"Bearer {litellm_key}"
+
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": request.headers.get("content-type", "application/json"),
+    }
+
+    logger.info(f"Proxying audio request: {request.method} {url}")
+
+    try:
+        client = get_http_client()
+        r = await client.request(
+            method=request.method,
+            url=url,
+            params=query_params,
+            content=body,
+            headers=headers,
+            timeout=120.0,
+        )
+
+        response_headers = dict(r.headers)
+        for h in [
+            "content-encoding",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+        ]:
+            response_headers.pop(h, None)
+
+        return Response(
+            content=r.content, status_code=r.status_code, headers=response_headers
+        )
+    except Exception as e:
+        logger.error(f"Failed to proxy audio request: {e}")
+        raise HTTPException(status_code=502, detail="Audio proxy failed")
+
+
 @app.get("/v1/models")
 async def proxy_models():
     """Proxy /v1/models to LiteLLM, injecting llm-routing-auto-free as the first entry."""
@@ -1971,6 +2046,201 @@ async def proxy_models():
         raise HTTPException(status_code=502, detail="Model proxy failed")
 
 
+@app.api_route("/v1/responses", methods=["POST"])
+@app.api_route("/responses", methods=["POST"])
+async def responses_api(request: Request):
+    """Handle incoming OpenAI Responses API requests (/v1/responses and /responses).
+
+    Proxies requests to LiteLLM's /v1/responses endpoint, performing triage classification
+    when an auto model (e.g. llm-routing-auto-free) is requested, while supporting model aliases
+    (such as gpt-4o-mini, local-qwen-3.6-hass) and tool/streaming executions.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    await sync_cooldowns_from_valkey()
+
+    client_model = body.get("model", "llm-routing-auto-free")
+
+    AUTO_MODELS = {
+        "llm-routing-auto-free",
+        "llm-routing-auto-agy",
+        "llm-routing-auto-ollama",
+        "llm-routing-auto-agy-ollama",
+    }
+
+    last_user_message = ""
+    input_field = body.get("input")
+    if isinstance(input_field, str):
+        last_user_message = input_field
+    elif isinstance(input_field, list):
+        for item in reversed(input_field):
+            if isinstance(item, str):
+                last_user_message = item
+                if last_user_message.strip():
+                    break
+            elif isinstance(item, dict):
+                role = item.get("role")
+                item_type = item.get("type")
+                if role == "user" or item_type == "message":
+                    content = item.get("content") or ""
+                    if isinstance(content, str):
+                        last_user_message = content
+                    elif isinstance(content, list):
+                        parts = []
+                        for b in content:
+                            if isinstance(b, str):
+                                parts.append(b)
+                            elif isinstance(b, dict) and b.get("type") in ("input_text", "text"):
+                                txt = b.get("text") or ""
+                                if txt:
+                                    parts.append(txt)
+                        last_user_message = " ".join(parts)
+                    if last_user_message.strip():
+                        break
+                elif item_type in ("input_text", "text"):
+                    last_user_message = item.get("text", "")
+                    if last_user_message.strip():
+                        break
+
+    if not last_user_message:
+        instructions = body.get("instructions")
+        if isinstance(instructions, str):
+            last_user_message = instructions
+
+    target_model = client_model
+    if client_model in AUTO_MODELS or client_model == "llm-routing-ollama":
+        bypass_cache = request.headers.get("x-bypass-cache") == "true"
+        (
+            target_model,
+            triage_latency,
+            was_cache_hit,
+            raw_classification,
+        ) = await classify_request(last_user_message, bypass_cache=bypass_cache)
+        logger.info(f"Responses API Triage decision: Routing to -> '{target_model}'")
+
+    body_to_send = body.copy()
+    body_to_send["model"] = target_model
+
+    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        auth_header = f"Bearer {litellm_key}"
+
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": request.headers.get("content-type", "application/json"),
+    }
+
+    is_streaming = body_to_send.get("stream", False)
+    client = get_http_client()
+    url = f"{LITELLM_URL}/v1/responses"
+
+    logger.info(f"Proxying Responses API request for model={target_model} to {url}")
+
+    if is_streaming:
+        req = client.build_request(
+            "POST", url, json=body_to_send, headers=headers, timeout=600.0
+        )
+        resp = await client.send(req, stream=True)
+        if resp.status_code != 200:
+            error_body = await resp.aread()
+            await resp.aclose()
+            logger.warning(
+                f"Responses API stream failed ({resp.status_code}): {error_body[:300].decode('utf-8', errors='replace')}"
+            )
+            raise HTTPException(status_code=resp.status_code, detail="Responses proxy failed")
+
+        async def response_streamer():
+            try:
+                buffer = ""
+                seen_args_delta = set()
+                seen_args_done = set()
+                async for chunk in resp.aiter_bytes():
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line_str = line.strip()
+                        if line_str.startswith("data:"):
+                            raw_data = line_str[5:].strip()
+                            if raw_data and raw_data != "[DONE]":
+                                try:
+                                    data_obj = json.loads(raw_data)
+                                    event_type = data_obj.get("type")
+                                    if event_type == "response.function_call_arguments.delta":
+                                        item_id = data_obj.get("item_id")
+                                        if item_id:
+                                            seen_args_delta.add(item_id)
+                                    elif event_type == "response.function_call_arguments.done":
+                                        item_id = data_obj.get("item_id")
+                                        if item_id:
+                                            seen_args_done.add(item_id)
+                                    elif event_type == "response.output_item.done":
+                                        item = data_obj.get("item", {})
+                                        if item.get("type") == "function_call":
+                                            item_id = item.get("id")
+                                            args_val = item.get("arguments", "{}") or "{}"
+                                            if item_id and item_id not in seen_args_delta:
+                                                seen_args_delta.add(item_id)
+                                                delta_evt = {
+                                                    "type": "response.function_call_arguments.delta",
+                                                    "item_id": item_id,
+                                                    "delta": args_val,
+                                                    "output_index": 0,
+                                                    "sequence_number": 0,
+                                                }
+                                                yield f"data: {json.dumps(delta_evt)}\n\n".encode("utf-8")
+                                            if item_id and item_id not in seen_args_done:
+                                                seen_args_done.add(item_id)
+                                                done_evt = {
+                                                    "type": "response.function_call_arguments.done",
+                                                    "item_id": item_id,
+                                                    "name": item.get("name", ""),
+                                                    "arguments": args_val,
+                                                    "output_index": 0,
+                                                    "sequence_number": 0,
+                                                }
+                                                yield f"data: {json.dumps(done_evt)}\n\n".encode("utf-8")
+                                except Exception as parse_err:
+                                    logger.warning(f"Failed to parse SSE line: {parse_err}")
+                        yield (line + "\n").encode("utf-8")
+                if buffer:
+                    yield buffer.encode("utf-8")
+            except Exception as stream_err:
+                logger.error(f"Error during Responses API streaming proxy: {stream_err}")
+                raise
+            finally:
+                await resp.aclose()
+
+        return StreamingResponse(response_streamer(), media_type="text/event-stream")
+    else:
+        try:
+            r = await client.post(
+                url,
+                json=body_to_send,
+                headers=headers,
+                timeout=600.0,
+            )
+            response_headers = dict(r.headers)
+            for h in [
+                "content-encoding",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+            ]:
+                response_headers.pop(h, None)
+            return Response(
+                content=r.content,
+                status_code=r.status_code,
+                headers=response_headers,
+            )
+        except Exception as e:
+            logger.error(f"Failed to proxy Responses API request: {e}")
+            raise HTTPException(status_code=502, detail="Responses proxy failed")
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     """Handle incoming OpenAI-compatible chat completions requests.
@@ -2025,6 +2295,10 @@ async def chat_completions(request: Request):
         "agent-reasoning-core",
         "agent-advanced-core",
         "llm-routing-agy",
+        "local-qwen-3.6",
+        "local-qwen-3.6-hass",
+        "gpt-4o-mini",
+        "gpt-4o",
     }
 
     AUTO_MODELS = {

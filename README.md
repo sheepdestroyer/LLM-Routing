@@ -72,7 +72,7 @@ graph TD
 
 ## 1b. Container Health Checks & Auto-Restart
 
-All core containers are configured with health checks in the Quadlet templates under [`quadlets/`](quadlets/). The legacy [`pod.yaml`](pod.yaml) is retained as a compatibility template. Quadlet `HealthOnFailure=kill` together with systemd `Restart=always` enables automatic recovery from unhealthy containers.
+All core containers are configured with health checks in the Quadlet templates under [`quadlets/`](https://github.com/sheepdestroyer/LLM-Routing/tree/main/quadlets). The legacy [`pod.yaml`](https://github.com/sheepdestroyer/LLM-Routing/blob/main/pod.yaml) is retained as a compatibility template. Quadlet `HealthOnFailure=kill` together with systemd `Restart=always` enables automatic recovery from unhealthy containers.
 
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
@@ -770,7 +770,7 @@ To maximize throughput under concurrent queries, `llama-server` is configured wi
 #### 3. Custom Memory Endpoint Proxy & MCP Server
 To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
 * **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
-* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
+* **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](https://github.com/sheepdestroyer/LLM-Routing/blob/main/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
 
 ## 9c. Ollama Proxy Integration (via LiteLLM ollama_chat)
@@ -816,10 +816,31 @@ For auto-routing modes, the Triage Router handles failures by silently falling b
 ## 9d. Live Stack Tier Testing & Verification
 
 The repository includes an automated integration script to test the 5-tier intent routing pipeline on the live gateway stack:
-* **Location**: [verify_reasoning_tiers.py](scripts/verification/verify_reasoning_tiers.py)
+* **Location**: [verify_reasoning_tiers.py](https://github.com/sheepdestroyer/LLM-Routing/blob/main/scripts/verification/verify_reasoning_tiers.py)
 
 This script acts as an end-to-end routing smoke test by sending five sequential chat completion requests (from simple to advanced prompt complexities) to the gateway's `llm-routing-auto-free` auto-triage route, verifying that:
 1. The gateway successfully routes the prompt to the expected LiteLLM model group or provider.
+
+## 9e. Home Assistant Integration & Responses API Support
+
+LLM-Routing provides full compatibility with Home Assistant's `openai_conversation` official integration, supporting both legacy Chat Completions (`/v1/chat/completions`) and the OpenAI Responses API (`/v1/responses` and `/responses`).
+
+### Configuration in Home Assistant
+* **Base URL**: `https://litellm.x570.vendeuvre.lan/v1` (Production) or `https://dev.vendeuvre.lan/v1` (Dev)
+* **API Key**: Any valid LiteLLM key or master key
+* **Supported Models for Home Assistant**:
+  * `local-qwen-3.6-hass` (Recommended: local Qwen model with thinking disabled for fast Assist action responses)
+  * `local-qwen-3.6` (Local Qwen model with preserve_thinking enabled)
+  * `gpt-4o-mini` (Model alias provided for Home Assistant configuration flows & AI task options)
+  * `gpt-4o` (Model alias provided for high-capability task options)
+  * `llm-routing-auto-free` (Automatic complexity classification across free tiers)
+
+### Responses API & Tools Compatibility
+* **Endpoints**: Exposed on both `POST /v1/responses` and `POST /responses`.
+* **Home Location Lookup**: `client.responses.create` calls issued during HA configuration using `gpt-4o-mini` succeed without `Invalid model name` errors.
+* **Assist Tools / Function Calling**: Fully supported. Home Assistant tool definitions (`HassTurnOn`, `HassTurnOff`, custom intent schemas) are correctly formatted and returned as `function_call` output items.
+* **Code Interpreter**: Supported; request/response events pass through to compatible backends without schema rejection.
+* **Web Search**: Passed through gracefully to backends supporting web search; local models return informative responses if search capability is not enabled on the underlying model.
 2. The responses are returned successfully with acceptable latency.
 
 ### How to Run
