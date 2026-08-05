@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import sys
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
