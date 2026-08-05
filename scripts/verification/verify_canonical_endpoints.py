@@ -10,7 +10,7 @@ Usage:
 """
 import os
 import sys
-import json
+
 import time
 import datetime
 import argparse
@@ -733,7 +733,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
                           headers={"Authorization": f"Bearer {cfg['router_api_key']}"})
             ok = r.status_code == 200
             passed += check(f"GET {url} ({label})", ok, f"HTTP {r.status_code}")
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             # DNS/unreachable/timeout — skip gracefully (host may not resolve from test machine)
             skipped += 1
             print(f"  ⚠ GET {url} — SKIP: DNS/unreachable/timeout")
@@ -760,7 +760,7 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
             passed += check(f"POST {url}", ok, detail)
         else:
             passed += check(f"POST {url}", False, f"HTTP {r.status_code}: {r.text[:80]}")
-    except httpx.RequestError as e:
+    except httpx.RequestError:
         skipped += 1
         print(f"  ⚠ POST {url} — SKIP: DNS/unreachable/timeout")
     except Exception as e:
