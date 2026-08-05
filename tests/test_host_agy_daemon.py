@@ -442,3 +442,39 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_789", "--print", "test prompt")
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": 0, "conversation_id": "conv_789"}
+
+def test_daemon_post_stream_true_finally_cleanup(daemon_server, monkeypatch):
+    req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True})
+
+    from unittest.mock import MagicMock
+    mock_proc = MagicMock()
+    mock_proc.returncode = None
+    mock_proc.wait = AsyncMock()
+    killed = False
+    def mock_kill():
+        nonlocal killed
+        killed = True
+    mock_proc.kill = mock_kill
+
+    async def mock_exec(*args, **kwargs):
+        return mock_proc
+
+    closed_fds = []
+    real_close = host_agy_daemon.os.close
+    def mock_close(fd):
+        closed_fds.append(fd)
+        try:
+            real_close(fd)
+        except OSError:
+            pass
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+    monkeypatch.setattr(host_agy_daemon.os, "close", mock_close)
+    monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
+
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        resp.read()
+
+    assert killed is True
+    assert len(closed_fds) > 0
+

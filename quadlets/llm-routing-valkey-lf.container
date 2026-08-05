@@ -21,3 +21,7 @@ HealthStartPeriod=5s
 [Service]
 Restart=always
 TimeoutStartSec=90
+
+[Install]
+WantedBy=default.target llm-routing.pod
+
