@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from urllib.parse import urlparse
 try:
@@ -3446,57 +3447,6 @@ async def get_dashboard_data():
         logger.warning(f"Failed to fetch llama.cpp metrics: {llamacpp}")
         llamacpp = {"models": [], "slots": [], "build": "unknown"}
 
-    # Pre-compute oauth_banner_html to avoid nested f-string and JavaScript bracket escaping issues
-    oauth_banner_html = ""
-    if oauth_status["status"] == "expired":
-        oauth_banner_html = f"""
-        <div class="oauth-banner">
-            <div class="oauth-banner-inner oauth-banner-expired">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 22px;">⚠️</span>
-                    <div>
-                        <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Token Expired</div>
-                        <div style="opacity: 0.8; font-size: 13px;">{oauth_status["detail"]}. The agy proxy Tier 1 (Gemini) will timeout on every request, adding ~120s latency.</div>
-                    </div>
-                </div>
-                <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => {{ const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }})">
-                    <span class="copied-tooltip">Copied!</span>
-                    $ agy auth login
-                </div>
-            </div>
-        </div>
-        """
-    elif oauth_status["status"] in ("missing", "error"):
-        oauth_banner_html = f"""
-        <div class="oauth-banner">
-            <div class="oauth-banner-inner oauth-banner-missing">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 22px;">🔑</span>
-                    <div>
-                        <div style="font-weight: 700; font-size: 15px; margin-bottom: 2px;">Gemini OAuth Not Configured</div>
-                        <div style="opacity: 0.8; font-size: 13px;">{oauth_status["detail"]}. Run the command to authenticate.</div>
-                    </div>
-                </div>
-                <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => {{ const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }})">
-                    <span class="copied-tooltip">Copied!</span>
-                    $ agy auth login
-                </div>
-            </div>
-        </div>
-        """
-    else:
-        oauth_banner_html = f"""
-        <div class="oauth-banner">
-            <div class="oauth-banner-inner oauth-banner-valid">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="font-size: 18px;">✅</span>
-                    <span style="font-weight: 600;">Gemini OAuth Active</span>
-                    <span style="opacity: 0.7; font-size: 13px;">— {oauth_status["detail"]}</span>
-                </div>
-            </div>
-        </div>
-        """
-
     # 3. Calculative metrics — 5-tier triage table
     tier_data = [
         {
@@ -3529,154 +3479,32 @@ async def get_dashboard_data():
     for t in tier_data:
         t["ratio"] = (t["count"] / total_tier * 100.0) if total_tier > 0 else 0.0
 
-    # Build tier table rows
-    tier_table_rows = ""
-    for t in tier_data:
-        tier_table_rows += f"""
-        <tr>
-            <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{t["color"]};">
-                <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{t["color"]};margin-right:8px;box-shadow:0 0 4px {t["color"]}aa;"></span>
-                {t["tier"]}
-            </td>
-            <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{t["count"]}</td>
-            <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{t["ratio"]:.1f}%</td>
-        </tr>"""
-    tier_table_html = f"""
-    <table style="width:100%;border-collapse:collapse;">
-        <thead>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
-                <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Tier</th>
-                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Requests</th>
-                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Share</th>
-            </tr>
-        </thead>
-        <tbody>
-            {tier_table_rows}
-        </tbody>
-    </table>"""
-
     # 4. Generate dynamic conic-gradient CSS background for the Pie Chart
     pie_gradient = get_pie_chart_gradient()
     total_tool_tokens = sum(stats["tool_tokens"].values())
+    max_tool_val = max(stats["tool_tokens"].values()) if stats["tool_tokens"] and max(stats["tool_tokens"].values()) > 0 else 1
 
-    # 5. Generate tool tokens HTML & Pie Chart Legend
-    tool_tokens_html = ""
-    pie_legend_html = ""
-    max_tool_val = max(stats["tool_tokens"].values()) if max(stats["tool_tokens"].values()) > 0 else 1
-    
+    tool_tokens = []
     for tool_name, token_count in stats["tool_tokens"].items():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
         color = TOOL_COLORS.get(tool_name, "#94a3b8")
-        # Horizontal meters
-        tool_tokens_html += f"""
-        <div style="margin-bottom: 20px;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px;">
-                <span style="font-weight: 600; text-transform: capitalize;">🛠️ {tool_name}</span>
-                <span style="opacity: 0.8; font-weight: bold;">{token_count:,} tokens ({overall_pct:.1f}%)</span>
-            </div>
-            <div style="height: 10px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden;">
-                <div style="width: {pct}%; height: 100%; background: linear-gradient(90deg, {color}, {color}aa); border-radius: 10px; transition: width 0.5s ease;"></div>
-            </div>
-        </div>
-        """
+        tool_tokens.append({
+            "name": tool_name,
+            "count": token_count,
+            "pct": pct,
+            "overall_pct": overall_pct,
+            "color": color
+        })
 
-        # Circular Legend
-        pie_legend_html += f"""
-        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
-            <span style="width: 12px; height: 12px; border-radius: 50%; background: {color}; display: inline-block; box-shadow: 0 0 6px {color}aa;"></span>
-            <span style="text-transform: capitalize; font-weight: 600;">{tool_name}:</span>
-            <span style="opacity: 0.7;">{overall_pct:.1f}%</span>
-        </div>
-        """
-
-    # 6. Generate timeline HTML with route badges
-    timeline_html = ""
-    if not stats["timeline"]:
-        timeline_html = "<div style='opacity: 0.5; font-size: 14px; text-align: center; padding: 20px;'>Waiting for active tool executions...</div>"
-    else:
-        for ev in reversed(stats["timeline"]):
-            route_label = ev.get("route", "litellm_fallback")
-            route_color = (
-                "#fbbf24" if route_label == "google_oauth_direct" else "#818cf8"
-            )
-            route_short = (
-                "GOOGLE" if route_label == "google_oauth_direct" else "LITELLM"
-            )
-            timeline_html += f"""
-            <div style="display: flex; gap: 15px; margin-bottom: 15px; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 20px; position: relative;">
-                <div style="width: 10px; height: 10px; background: {route_color}; border-radius: 50%; position: absolute; left: -6px; top: 6px; box-shadow: 0 0 8px {route_color};"></div>
-                <div style="flex-grow: 1;">
-                    <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px;">
-                        <span style="font-weight: 600; text-transform: uppercase; color: #a5b4fc;">🔧 {ev["tool"]} <span style="font-size: 9px; padding: 1px 5px; border-radius: 4px; background: {route_color}22; color: {route_color}; border: 1px solid {route_color}44; margin-left: 6px; vertical-align: middle;">{route_short}</span></span>
-                        <span style="opacity: 0.5; font-family: monospace;">{ev["timestamp"]}</span>
-                    </div>
-                    <div style="font-size: 14px; opacity: 0.9;">
-                        Processed <strong>{ev["tokens"]:,} tokens</strong> on <span style="color: #c084fc;">{ev["model"]}</span>
-                    </div>
-                    <div style="font-size: 12px; opacity: 0.5; margin-top: 2px;">
-                        Latency: {ev["latency_ms"]} ms
-                    </div>
-                </div>
-            </div>
-            """
-
-    # 7. Generate Goose Sessions HTML
-    goose_html = ""
-    if not goose_sessions:
-        goose_html = """
-        <div style="background: rgba(255,255,255,0.02); border-radius: 12px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.05); font-size: 14px; opacity: 0.6;">
-            ⚠️ No active Goose session database detected at mountpoint.
-        </div>
-        """
-    else:
-        for idx, sess in enumerate(goose_sessions):
-            is_active = idx == 0
-            badge_style = (
-                "background: rgba(129, 140, 248, 0.15); color: #c084fc; border: 1px solid rgba(129, 140, 248, 0.3);"
-                if is_active
-                else "background: rgba(255,255,255,0.03); color: #fff; border: 1px solid rgba(255,255,255,0.05);"
-            )
-            active_label = (
-                "<span style='font-size: 10px; background: #10b981; color: #fff; padding: 2px 6px; border-radius: 4px; margin-right: 8px; font-weight: bold;'>ACTIVE</span>"
-                if is_active
-                else ""
-            )
-
-            desc = sess.get("description") or sess.get("name") or "Interactive session"
-            tokens = sess.get("accumulated_total_tokens", 0) or 0
-
-            goose_html += f"""
-            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 15px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="display: flex; align-items: center;">
-                        {active_label}
-                        <span style="font-weight: 600; font-size: 15px;">Session {sess["id"]}</span>
-                    </div>
-                    <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {badge_style}">{sess.get("goose_mode", "auto").upper()}</span>
-                </div>
-                <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                    {desc}
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
-                    <span>📅 {sess["updated_at"]}</span>
-                    <span style="font-weight: bold; color: #a5b4fc;">{tokens:,} total tokens</span>
-                </div>
-            </div>
-            """
-
-    # 8. Routing Paths pie chart & legend
-    routing_paths = stats.get(
-        "routing_paths", {"google_oauth_direct": 0, "litellm_fallback": 0}
-    )
+    # 8. Routing Paths pie chart
+    routing_paths = stats.get("routing_paths", {"google_oauth_direct": 0, "litellm_fallback": 0})
     total_routed = sum(routing_paths.values())
     routing_pie_gradient = "background: rgba(255, 255, 255, 0.05);"
-    routing_legend_html = ""
+    routing_data = []
     routing_colors = {"google_oauth_direct": "#fbbf24", "litellm_fallback": "#818cf8"}
-    routing_labels = {
-        "google_oauth_direct": "Google OAuth Direct",
-        "litellm_fallback": "LiteLLM Fallback",
-    }
+    routing_labels = {"google_oauth_direct": "Google OAuth Direct", "litellm_fallback": "LiteLLM Fallback"}
+
     if total_routed > 0:
         current_angle = 0.0
         route_grad_parts = []
@@ -3685,112 +3513,41 @@ async def get_dashboard_data():
             next_angle = current_angle + rpct
             rcolor = routing_colors.get(rname, "#94a3b8")
             route_grad_parts.append(f"{rcolor} {current_angle:.1f}% {next_angle:.1f}%")
-            routing_legend_html += f"""
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
-                <span style="width: 12px; height: 12px; border-radius: 50%; background: {rcolor}; display: inline-block; box-shadow: 0 0 6px {rcolor}aa;"></span>
-                <span style="font-weight: 600;">{routing_labels.get(rname, rname)}:</span>
-                <span style="opacity: 0.7;">{rcount} ({rpct:.1f}%)</span>
-            </div>
-            """
+            routing_data.append({
+                "name": rname,
+                "label": routing_labels.get(rname, rname),
+                "count": rcount,
+                "pct": rpct,
+                "color": rcolor
+            })
             current_angle = next_angle
-        routing_pie_gradient = (
-            f"background: conic-gradient({', '.join(route_grad_parts)});"
-        )
-
-    # 9. Model Usage — canonical source is Langfuse traces (replaces duplicated in-memory counter)
-    # See router trace → LiteLLM trace linkage via X-Langfuse-Trace-Id header.
+        routing_pie_gradient = f"background: conic-gradient({', '.join(route_grad_parts)});"
 
     # Persistent aggregated tokens
     p_tokens = stats.get("prompt_tokens", 0)
     c_tokens = stats.get("completion_tokens", 0)
     t_tokens = p_tokens + c_tokens
 
-    # 10. Pre-compute llama.cpp HTML cards
-    llamacpp_models_html = ""
-    if llamacpp["models"]:
-        for m in llamacpp["models"]:
-            status_style = (
-                "background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25);"
-                if m["status"] == "loaded"
-                else "background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08);"
-            )
-            params_str = (
-                f"<span>\U0001f9e0 {m['n_params'] / 1e9:.1f}B params</span>"
-                if m["n_params"]
-                else ""
-            )
-            ctx_str = (
-                f"<span>\U0001f4d0 ctx {m['n_ctx']:,}</span>" if m["n_ctx"] else ""
-            )
-            size_str = (
-                f"<span>\U0001f4be {m['size_bytes'] / 1e6:.0f} MB</span>"
-                if m["size_bytes"]
-                else ""
-            )
-            llamacpp_models_html += f"""
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-weight: 700; font-size: 14px; font-family: monospace;">{m["id"]}</span>
-                    <span style="font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; {status_style}">{m["status"].upper()}</span>
-                </div>
-                <div style="display: flex; gap: 16px; font-size: 11px; opacity: 0.6;">
-                    {params_str}{ctx_str}{size_str}
-                </div>
-            </div>
-            """
-    else:
-        llamacpp_models_html = '<div style="opacity: 0.5; font-size: 13px; text-align: center; padding: 15px;">No models detected</div>'
-
-    llamacpp_slots_html = ""
-    if llamacpp["slots"]:
-        slot_items = ""
-        for sl in llamacpp["slots"]:
-            dot_style = (
-                "background: #34d399; box-shadow: 0 0 8px #34d399;"
-                if sl["is_processing"]
-                else "background: rgba(255,255,255,0.15);"
-            )
-            slot_items += f"""
-            <div style="background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; padding: 10px 14px; position: relative; overflow: hidden;">
-                <div style="position: absolute; top: 0; right: 0; width: 8px; height: 8px; margin: 8px; border-radius: 50%; {dot_style}"></div>
-                <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">Slot {sl["id"]}</div>
-                <div style="font-size: 11px; opacity: 0.6; display: flex; flex-direction: column; gap: 2px;">
-                    <span>Prompt: {sl["n_prompt_processed"]} tok</span>
-                    <span>Decoded: {sl["n_decoded"]} tok</span>
-                </div>
-            </div>
-            """
-        llamacpp_slots_html = f"""
-        <div style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 14px;">
-            <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; opacity: 0.5; margin-bottom: 10px;">Inference Slots</div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
-                {slot_items}
-            </div>
-        </div>
-        """
-
     return {
         "valkey_status": valkey_status,
         "litellm_status": litellm_status,
         "llama_server_status": llama_server_status,
         "langfuse_status": langfuse_status,
-        "oauth_banner_html": oauth_banner_html,
+        "oauth_status": oauth_status,
         "best_free_model": best_free_model,
-        "tier_table_html": tier_table_html,
+        "tier_data": tier_data,
         "pie_gradient": pie_gradient,
         "total_tool_tokens": total_tool_tokens,
-        "tool_tokens_html": tool_tokens_html,
-        "pie_legend_html": pie_legend_html,
-        "timeline_html": timeline_html,
-        "goose_html": goose_html,
+        "tool_tokens": tool_tokens,
+        "timeline": stats["timeline"],
+        "goose_sessions": goose_sessions,
         "routing_pie_gradient": routing_pie_gradient,
-        "routing_legend_html": routing_legend_html,
+        "routing_data": routing_data,
         "p_tokens": p_tokens,
         "c_tokens": c_tokens,
         "t_tokens": t_tokens,
-        "llamacpp_models_html": llamacpp_models_html,
-        "llamacpp_slots_html": llamacpp_slots_html,
-        "llamacpp_build": llamacpp["build"],
+        "llamacpp": llamacpp,
+        "llamacpp_build": llamacpp.get("build", "unknown"),
         "avg_triage_latency_ms": stats["avg_triage_latency_ms"],
         "avg_proxy_latency_ms": stats["avg_proxy_latency_ms"],
         "cache_hits": stats["cache_hits"],
@@ -3800,9 +3557,34 @@ async def get_dashboard_data():
 
 
 @app.get("/api/dashboard-stats")
-async def get_dashboard_stats():
+async def get_dashboard_stats(request: Request):
     """Return dashboard metrics and pre-computed HTML as JSON for asynchronous UI updates."""
-    return await get_dashboard_data()
+    data = await get_dashboard_data()
+
+    # Render partials using Jinja2
+    context = {"request": request, "data": data}
+    oauth_banner_html = templates.get_template("partials/oauth_banner.html").render(context)
+    tier_table_html = templates.get_template("partials/tier_table.html").render(context)
+    pie_legend_html = templates.get_template("partials/pie_legend.html").render(context)
+    tool_tokens_html = templates.get_template("partials/tool_tokens.html").render(context)
+    routing_legend_html = templates.get_template("partials/routing_legend.html").render(context)
+    timeline_html = templates.get_template("partials/timeline.html").render(context)
+    goose_html = templates.get_template("partials/goose.html").render(context)
+    llamacpp_models_html = templates.get_template("partials/llamacpp_models.html").render(context)
+    llamacpp_slots_html = templates.get_template("partials/llamacpp_slots.html").render(context)
+
+    # Return data with the pre-computed HTML for JS
+    data["oauth_banner_html"] = oauth_banner_html
+    data["tier_table_html"] = tier_table_html
+    data["pie_legend_html"] = pie_legend_html
+    data["tool_tokens_html"] = tool_tokens_html
+    data["routing_legend_html"] = routing_legend_html
+    data["timeline_html"] = timeline_html
+    data["goose_html"] = goose_html
+    data["llamacpp_models_html"] = llamacpp_models_html
+    data["llamacpp_slots_html"] = llamacpp_slots_html
+
+    return data
 
 
 def resolve_external_urls(request: Request) -> tuple[str, str, str]:
@@ -3915,810 +3697,34 @@ async def get_dashboard(request: Request):
 
     data = await get_dashboard_data()
 
-    # Unpack data for the f-string template
-    valkey_status = data["valkey_status"]
-    litellm_status = data["litellm_status"]
-    llama_server_status = data["llama_server_status"]
-    langfuse_status = data["langfuse_status"]
-    oauth_banner_html = data["oauth_banner_html"]
-    best_free_model = data["best_free_model"]
-    tier_table_html = data["tier_table_html"]
-    pie_gradient = data["pie_gradient"]
-    tool_tokens_html = data["tool_tokens_html"]
-    pie_legend_html = data["pie_legend_html"]
-    timeline_html = data["timeline_html"]
-    goose_html = data["goose_html"]
-    routing_pie_gradient = data["routing_pie_gradient"]
-    routing_legend_html = data["routing_legend_html"]
-    p_tokens = data["p_tokens"]
-    c_tokens = data["c_tokens"]
-    t_tokens = data["t_tokens"]
-    llamacpp_models_html = data["llamacpp_models_html"]
-    llamacpp_slots_html = data["llamacpp_slots_html"]
-    avg_triage_latency_ms = data["avg_triage_latency_ms"]
-    avg_proxy_latency_ms = data["avg_proxy_latency_ms"]
-    cache_hits = data["cache_hits"]
-    total_requests = data["total_requests"]
-    last_triage_decision = data["last_triage_decision"]
+    # Expose src_badge to the template context
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "data": data,
+            "langfuse_url": langfuse_url,
+            "litellm_url": litellm_url,
+            "llama_url": llama_url,
+            "router_port": os.getenv("ROUTER_PORT") or "5000",
+            "litellm_port": os.getenv("LITELLM_PORT") or "4000",
+            "valkey_port": _valkey_port(),
+            "langfuse_port": os.getenv("LANGFUSE_WEB_PORT") or "3001",
+            "src_badge": src_badge,
+        }
+    )
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>LLM Triage Gateway - Control Center</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
-        <style>
-            :root {{
-                --slate-900: #0f172a;
-                --indigo-950: #1e1b4b;
-                --emerald-500: #10b981;
-                --rose-500: #f43f5e;
-                --text-main: #f8fafc;
-                --glass-bg: rgba(255, 255, 255, 0.03);
-                --glass-border: rgba(255, 255, 255, 0.08);
-            }}
-
-            .oauth-banner {{
-                width: 100%;
-                max-width: 1400px;
-                margin: 0 auto -10px auto;
-                padding: 0 20px;
-            }}
-
-            .oauth-banner-inner {{
-                border-radius: 12px;
-                padding: 16px 24px;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 16px;
-                font-size: 14px;
-                backdrop-filter: blur(12px);
-                -webkit-backdrop-filter: blur(12px);
-                animation: bannerPulse 3s ease-in-out infinite;
-            }}
-
-            .oauth-banner-expired {{
-                background: rgba(244, 63, 94, 0.12);
-                border: 1px solid rgba(244, 63, 94, 0.35);
-                color: #fda4af;
-            }}
-
-            .oauth-banner-valid {{
-                background: rgba(16, 185, 129, 0.08);
-                border: 1px solid rgba(16, 185, 129, 0.2);
-                color: #6ee7b7;
-                animation: none;
-            }}
-
-            .oauth-banner-missing {{
-                background: rgba(251, 191, 36, 0.1);
-                border: 1px solid rgba(251, 191, 36, 0.3);
-                color: #fde68a;
-            }}
-
-            .oauth-banner-cmd {{
-                font-family: monospace;
-                background: rgba(0, 0, 0, 0.3);
-                padding: 6px 14px;
-                border-radius: 8px;
-                font-weight: 700;
-                letter-spacing: 0.5px;
-                white-space: nowrap;
-                cursor: pointer;
-                transition: background 0.2s;
-                position: relative;
-            }}
-
-            .oauth-banner-cmd:hover {{
-                background: rgba(0, 0, 0, 0.5);
-            }}
-
-            .oauth-banner-cmd .copied-tooltip {{
-                position: absolute;
-                top: -28px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: #10b981;
-                color: #fff;
-                padding: 3px 10px;
-                border-radius: 6px;
-                font-size: 11px;
-                opacity: 0;
-                pointer-events: none;
-                transition: opacity 0.3s;
-            }}
-
-            .oauth-banner-cmd .copied-tooltip.show {{
-                opacity: 1;
-            }}
-
-            @keyframes bannerPulse {{
-                0%, 100% {{ opacity: 1; }}
-                50% {{ opacity: 0.85; }}
-            }}
-
-            * {{
-                box-sizing: border-box;
-                margin: 0;
-                padding: 0;
-            }}
-
-            body {{
-                font-family: 'Outfit', sans-serif;
-                background: linear-gradient(135deg, var(--slate-900), var(--indigo-950));
-                color: var(--text-main);
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                justify-content: space-between;
-                overflow-x: hidden;
-            }}
-
-            header {{
-                width: 100%;
-                max-width: 1400px;
-                margin: 0 auto;
-                padding: 30px 20px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-
-            .logo-area {{
-                display: flex;
-                align-items: center;
-                gap: 15px;
-            }}
-
-            .logo-dot {{
-                width: 15px;
-                height: 15px;
-                border-radius: 50%;
-                background: linear-gradient(45deg, #818cf8, #a78bfa);
-                box-shadow: 0 0 15px #818cf8;
-            }}
-
-            .logo-text {{
-                font-size: 24px;
-                font-weight: 800;
-                background: linear-gradient(45deg, #a5b4fc, #c084fc);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-            }}
-
-            .dashboard-title {{
-                font-size: 14px;
-                letter-spacing: 2px;
-                text-transform: uppercase;
-                opacity: 0.6;
-            }}
-
-            main {{
-                width: 100%;
-                max-width: 1400px;
-                margin: 0 auto;
-                padding: 0 20px 50px 20px;
-                flex-grow: 1;
-                display: grid;
-                grid-template-columns: 2fr 1fr;
-                gap: 30px;
-            }}
-
-            @media (max-width: 1000px) {{
-                main {{
-                    grid-template-columns: 1fr;
-                }}
-            }}
-
-            .glass-card {{
-                background: var(--glass-bg);
-                backdrop-filter: blur(20px);
-                border: 1px solid var(--glass-border);
-                border-radius: 24px;
-                padding: 30px;
-                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
-                transition: transform 0.3s ease, border-color 0.3s ease;
-                margin-bottom: 30px;
-            }}
-
-            .glass-card:hover {{
-                border-color: rgba(255, 255, 255, 0.15);
-            }}
-
-            .status-container {{
-                display: flex;
-                flex-direction: column;
-                gap: 16px;
-            }}
-
-            .section-title {{
-                font-size: 20px;
-                font-weight: 600;
-                margin-bottom: 20px;
-                color: #e2e8f0;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                border-bottom: 1px solid rgba(255,255,255,0.05);
-                padding-bottom: 12px;
-            }}
-
-            .service-row {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 12px 20px;
-                background: rgba(255, 255, 255, 0.01);
-                border-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.04);
-            }}
-
-            .service-info {{
-                display: flex;
-                align-items: center;
-                gap: 15px;
-            }}
-
-            .service-name {{
-                font-weight: 600;
-                font-size: 15px;
-            }}
-
-            .service-port {{
-                font-size: 12px;
-                opacity: 0.5;
-                font-family: monospace;
-            }}
-
-            .badge {{
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 5px 12px;
-                border-radius: 50px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-            }}
-
-            .badge-online {{
-                background: rgba(16, 185, 129, 0.1);
-                color: var(--emerald-500);
-                border: 1px solid rgba(16, 185, 129, 0.2);
-            }}
-
-            .badge-offline {{
-                background: rgba(244, 63, 94, 0.1);
-                color: var(--rose-500);
-                border: 1px solid rgba(244, 63, 94, 0.2);
-            }}
-
-            .pulse-dot {{
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                display: inline-block;
-            }}
-
-            .badge-online .pulse-dot {{
-                background: var(--emerald-500);
-                box-shadow: 0 0 10px var(--emerald-500);
-                animation: pulse 2s infinite;
-            }}
-
-            .badge-offline .pulse-dot {{
-                background: var(--rose-500);
-                box-shadow: 0 0 10px var(--rose-500);
-            }}
-
-            @keyframes pulse {{
-                0% {{ transform: scale(0.95); opacity: 0.8; }}
-                50% {{ transform: scale(1.1); opacity: 1; }}
-                100% {{ transform: scale(0.95); opacity: 0.8; }}
-            }}
-
-            .metrics-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 20px;
-                margin-bottom: 30px;
-            }}
-
-            .metric-box {{
-                background: rgba(255, 255, 255, 0.01);
-                border: 1px solid rgba(255, 255, 255, 0.04);
-                border-radius: 16px;
-                padding: 20px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }}
-
-            .metric-value {{
-                font-size: 28px;
-                font-weight: 800;
-                color: #fff;
-            }}
-
-            .metric-label {{
-                font-size: 12px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                opacity: 0.5;
-            }}
-
-            .ratio-container {{
-                display: flex;
-                height: 10px;
-                border-radius: 50px;
-                overflow: hidden;
-                margin-top: 15px;
-                background: rgba(255, 255, 255, 0.05);
-            }}
-
-            .ratio-legend {{
-                display: flex;
-                justify-content: space-between;
-                font-size: 12px;
-                margin-top: 8px;
-                opacity: 0.7;
-            }}
-
-            .btn-group {{
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-                margin-top: 15px;
-            }}
-
-            .btn {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 14px 20px;
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid rgba(255, 255, 255, 0.05);
-                border-radius: 12px;
-                color: #fff;
-                text-decoration: none;
-                font-weight: 600;
-                transition: all 0.3s ease;
-                font-size: 14px;
-            }}
-
-            .btn:hover {{
-                background: rgba(255, 255, 255, 0.06);
-                border-color: rgba(129, 140, 248, 0.3);
-                transform: translateX(4px);
-            }}
-
-            .btn-arrow {{
-                opacity: 0.5;
-                font-size: 16px;
-                transition: transform 0.3s ease;
-            }}
-
-            .btn:hover .btn-arrow {{
-                transform: translateX(3px);
-                opacity: 1;
-            }}
-
-            /* CSS Pie Chart styles */
-            .pie-chart {{
-                width: 150px;
-                height: 150px;
-                border-radius: 50%;
-                {pie_gradient}
-                box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
-                position: relative;
-                flex-shrink: 0;
-            }}
-            .pie-chart::after {{
-                content: "";
-                position: absolute;
-                width: 70px;
-                height: 70px;
-                background: #111827; /* Matches dashboard glass background inner */
-                border-radius: 50%;
-                top: 40px;
-                left: 40px;
-                box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
-            }}
-
-            footer {{
-                width: 100%;
-                text-align: center;
-                padding: 30px;
-                font-size: 12px;
-                opacity: 0.4;
-                letter-spacing: 1px;
-            }}
-        </style>
-        <script>
-            async function refreshDashboard() {{
-                try {{
-                    const basePath = window.location.pathname.endsWith('/') ? '../' : './';
-                    const res = await fetch(basePath + "api/dashboard-stats");
-                    if (!res.ok) throw new Error(`HTTP error! status: ${{res.status}}`);
-                    const data = await res.json();
-
-                    // 1. Update infrastructure status indicators
-                    const updateStatus = (id, isOnline) => {{
-                        const el = document.getElementById(id);
-                        if (el) {{
-                            el.className = isOnline ? "badge badge-online" : "badge badge-offline";
-                            el.innerHTML = `<span class="pulse-dot"></span>${{isOnline ? "Online" : "Offline"}}`;
-                        }}
-                    }};
-                    updateStatus("litellm-status", data.litellm_status);
-                    updateStatus("valkey-status", data.valkey_status);
-                    updateStatus("llama-server-status", data.llama_server_status);
-                    updateStatus("langfuse-status", data.langfuse_status);
-
-                    // 2. Update metrics grid
-                    document.getElementById("total-requests").textContent = data.total_requests;
-                    document.getElementById("last-triage-decision").textContent = data.last_triage_decision;
-                    document.getElementById("avg-triage-latency").textContent = data.avg_triage_latency_ms.toFixed(1) + " ms";
-                    document.getElementById("avg-proxy-latency").textContent = data.avg_proxy_latency_ms.toFixed(1) + " ms";
-                    document.getElementById("cache-hits").textContent = data.cache_hits;
-
-                    // 3. Update token counts
-                    document.getElementById("p-tokens").textContent = data.p_tokens.toLocaleString();
-                    document.getElementById("c-tokens").textContent = data.c_tokens.toLocaleString();
-                    document.getElementById("t-tokens").textContent = data.t_tokens.toLocaleString();
-
-                    // 4. Update dynamic HTML blocks
-                    document.getElementById("oauth-banner-container").innerHTML = data.oauth_banner_html;
-                    document.getElementById("tier-table-container").innerHTML = data.tier_table_html;
-                    document.getElementById("pie-legend-container").innerHTML = data.pie_legend_html;
-                    document.getElementById("routing-legend-container").innerHTML = data.routing_legend_html || "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>";
-                    document.getElementById("tool-tokens-container").innerHTML = data.tool_tokens_html;
-                    document.getElementById("timeline-container").innerHTML = data.timeline_html;
-                    document.getElementById("goose-sessions-container").innerHTML = data.goose_html;
-                    document.getElementById("llamacpp-models-container").innerHTML = data.llamacpp_models_html;
-                    document.getElementById("llamacpp-slots-container").innerHTML = data.llamacpp_slots_html;
-
-                    // 5. Update Frontier Free Model widget
-                    const bestFreeModelContainer = document.getElementById("best-free-model-container");
-                    if (bestFreeModelContainer) {{
-                        const m = data.best_free_model;
-                        const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
-                        bestFreeModelContainer.innerHTML = `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="font-weight: 800; font-size: 16px; color: #fff;">${{m.name}}</span>
-                                <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${{m.score.toFixed(1)}}</span>
-                            </div>
-                            <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
-                                ID: ${{m.id}}
-                            </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                                <span>📐 context ${{m.context_length.toLocaleString()}} tok</span>
-                                <span style="color: #34d399; font-weight: bold;">${{statusLabel}}</span>
-                            </div>
-                        `;
-                    }}
-
-                    // 6. Update Llama.cpp Build version
-                    const llamacppBuild = document.getElementById("llamacpp-build");
-                    if (llamacppBuild) {{
-                        llamacppBuild.textContent = "build " + data.llamacpp_build;
-                    }}
-
-                    // 7. Update pie chart gradients
-                    const toolPie = document.getElementById("tool-token-pie-chart");
-                    if (toolPie && data.pie_gradient) {{
-                        // data.pie_gradient is like "background: conic-gradient(...)"
-                        toolPie.style.cssText += data.pie_gradient;
-                    }}
-                    const routingPie = document.getElementById("routing-path-pie-chart");
-                    if (routingPie && data.routing_pie_gradient) {{
-                        routingPie.style.cssText += data.routing_pie_gradient;
-                    }}
-
-                }} catch (e) {{
-                    console.error("Dashboard fetch failed: ", e);
-                }}
-            }}
-
-            // Initialize on load and set periodic polling
-            window.addEventListener("DOMContentLoaded", () => {{
-                const basePath = window.location.pathname.endsWith('/') ? '../' : './';
-                const visLink = document.getElementById("visualizer-link");
-                if (visLink) {{
-                    visLink.href = basePath + "visualizer";
-                }}
-                refreshDashboard();
-            }});
-            setInterval(refreshDashboard, 3000);
-        </script>
-    </head>
-    <body>
-        <header>
-            <div class="logo-area">
-                <div class="logo-dot"></div>
-                <div class="logo-text">Antigravity Gateway</div>
-            </div>
-            <div class="dashboard-title">System Control Center</div>
-            <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-                <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
-            </div>
-        </header>
-
-        <div id="oauth-banner-container">
-            {oauth_banner_html}
-        </div>
-
-        <main>
-            <!-- LEFT COLUMN: LIVE TELEMETRY, METERS, PIES & TIMELINES -->
-            <div>
-                <!-- Analytics Card -->
-                <div class="glass-card">
-                    <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Gateway Performance Telemetry</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Persistent telemetry</span>
-                    </div>
-
-                    <div class="metrics-grid">
-                        <div class="metric-box">
-                            <span class="metric-value" id="total-requests">{total_requests}</span>
-                            <span class="metric-label">Total API Calls</span>
-                        </div>
-                        <div class="metric-box">
-                            <span class="metric-value" id="last-triage-decision" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{last_triage_decision}</span>
-                            <span class="metric-label">Last Triage Split</span>
-                        </div>
-                        <div class="metric-box">
-                            <span class="metric-value" id="avg-triage-latency">{avg_triage_latency_ms:.1f} ms</span>
-                            <span class="metric-label">Avg Triage Time</span>
-                        </div>
-                        <div class="metric-box">
-                            <span class="metric-value" id="avg-proxy-latency">{avg_proxy_latency_ms:.1f} ms</span>
-                            <span class="metric-label">Avg Proxy Time</span>
-                        </div>
-                        <div class="metric-box">
-                            <span class="metric-value" id="cache-hits" style="color: #34d399;">{cache_hits}</span>
-                            <span class="metric-label">Triage Cache Hits</span>
-                        </div>
-                    </div>
-
-                    <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.02); padding: 25px; border-radius: 20px;">
-                        <div style="font-size: 13px; font-weight: 600; margin-bottom: 12px;">{src_badge("ROUTER", "#818cf8")} Triage Routing Split</div>
-                        <div id="tier-table-container">
-                            {tier_table_html}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Token Distribution & Circular Tool Pies Card -->
-                <div class="glass-card">
-                    <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Tool Token Distribution</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Live conic-gradient pie</span>
-                    </div>
-                    
-                    <div style="display: flex; gap: 40px; align-items: center; margin-bottom: 30px; flex-wrap: wrap;">
-                        <div class="pie-chart" id="tool-token-pie-chart" style="{pie_gradient}"></div>
-                        <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 200px;">
-                            <h4 style="font-size: 14px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.6; margin-bottom: 5px;">Active Tool Split %</h4>
-                            <div id="pie-legend-container">
-                                {pie_legend_html}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px; text-align: center;">
-                        <div>
-                            <div class="metric-value" id="p-tokens" style="font-size: 20px; font-weight: 800; color: #60a5fa;">{p_tokens:,}</div>
-                            <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Prompt Tokens</div>
-                        </div>
-                        <div>
-                            <div class="metric-value" id="c-tokens" style="font-size: 20px; font-weight: 800; color: #a78bfa;">{c_tokens:,}</div>
-                            <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Completion Tokens</div>
-                        </div>
-                        <div>
-                            <div class="metric-value" id="t-tokens" style="font-size: 20px; font-weight: 800; color: #34d399;">{t_tokens:,}</div>
-                            <div style="font-size: 11px; text-transform: uppercase; opacity: 0.5; margin-top: 4px; font-weight: 600; letter-spacing: 0.5px;">Combined Total</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Routing Path Distribution Pie -->
-                <div class="glass-card">
-                    <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Routing Path Distribution</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">% requests per path</span>
-                    </div>
-                    <div style="display: flex; gap: 40px; align-items: center; flex-wrap: wrap;">
-                        <div id="routing-path-pie-chart" style="width: 130px; height: 130px; border-radius: 50%; {routing_pie_gradient} box-shadow: 0 0 25px rgba(0,0,0,0.4); position: relative; flex-shrink: 0;">
-                            <div style="position: absolute; width: 60px; height: 60px; background: #111827; border-radius: 50%; top: 35px; left: 35px; box-shadow: inset 0 0 10px rgba(0,0,0,0.8);"></div>
-                        </div>
-                        <div id="routing-legend-container" style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1; min-width: 180px;">
-                            {routing_legend_html if routing_legend_html else "<div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>"}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Final Model Usage: canonically tracked in Langfuse -->
-                <div class="glass-card">
-                    <div class="section-title">
-                        <span>{src_badge("LITELLM", "#34d399")} Model Usage</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Full traces in Langfuse</span>
-                    </div>
-                    <div style="text-align: center; padding: 25px 20px;">
-                        <p style="opacity: 0.7; margin-bottom: 14px; font-size: 14px;">Per-model usage, token consumption & cost are tracked with full trace detail in Langfuse.</p>
-                        <a href="{langfuse_url}" target="_blank" style="display: inline-block; padding: 8px 18px; background: rgba(232,121,249,0.12); color: #e879f9; border: 1px solid rgba(232,121,249,0.25); border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px;">Open Langfuse Observability →</a>
-                    </div>
-                </div>
-
-                <!-- Live Meters for Tool Tokens Card -->
-                <div class="glass-card">
-                    <div class="section-title">
-                        <span>{src_badge("GOOSE", "#fbbf24")} Live Tool Token Meters</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Token meters per extension tool</span>
-                    </div>
-                    <div id="tool-tokens-container">
-                        {tool_tokens_html}
-                    </div>
-                </div>
-
-                <!-- Timelines Card -->
-                <div class="glass-card" style="margin-bottom: 0;">
-                    <div class="section-title">
-                        <span>{src_badge("ROUTER", "#818cf8")} Request Timeline</span>
-                        <span style="font-size: 12px; opacity: 0.5; font-weight: normal;">Recent completions cascade</span>
-                    </div>
-                    <div id="timeline-container" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
-                        {timeline_html}
-                    </div>
-                </div>
-            </div>
-
-            <!-- RIGHT COLUMN: INFRASTRUCTURE & ACTIVE GOOSE SESSIONS -->
-            <div style="display: flex; flex-direction: column;">
-                <!-- Frontier Free Model widget -->
-                <div class="glass-card" style="background: rgba(16, 185, 129, 0.03); border-color: rgba(16, 185, 129, 0.15); margin-bottom: 30px;">
-                    <div class="section-title" style="margin-bottom: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.15); padding-bottom: 12px;">
-                        <span>{src_badge("INTELLECT", "#34d399")} Frontier Free Model</span>
-                        <span style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">agentic index score</span>
-                    </div>
-                    <div id="best-free-model-container" style="background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 12px; padding: 16px 20px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-weight: 800; font-size: 16px; color: #fff;">{best_free_model["name"]}</span>
-                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {best_free_model["score"]:.1f}</span>
-                        </div>
-                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;">
-                            ID: {best_free_model["id"]}
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                            <span>📐 context {best_free_model["context_length"]:,} tok</span>
-                            <span style="color: #34d399; font-weight: bold;">{"LIVE" if not best_free_model.get("is_fallback") else "FALLBACK"}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Infrastructure nodes card -->
-                <div class="glass-card status-container">
-                    <div class="section-title" style="margin-bottom: 10px;">{src_badge("ROUTER", "#818cf8")} Infrastructure Nodes</div>
-                    
-                    <div class="service-row">
-                        <div class="service-info">
-                            <span class="service-name">Triage Router</span>
-                            <span class="service-port">:{os.getenv('ROUTER_PORT') or '5000'}</span>
-                        </div>
-                        <span class="badge badge-online"><span class="pulse-dot"></span>Online</span>
-                    </div>
-
-                    <div class="service-row">
-                        <div class="service-info">
-                            <span class="service-name">LiteLLM Proxy</span>
-                            <span class="service-port">:{os.getenv('LITELLM_PORT') or '4000'}</span>
-                        </div>
-                        <span id="litellm-status" class="badge {"badge-online" if litellm_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if litellm_status else "Offline"}
-                        </span>
-                    </div>
-
-                    <div class="service-row">
-                        <div class="service-info">
-                            <span class="service-name">Valkey Cache</span>
-                            <span class="service-port">:{_valkey_port()}</span>
-                        </div>
-                        <span id="valkey-status" class="badge {"badge-online" if valkey_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if valkey_status else "Offline"}
-                        </span>
-                    </div>
-
-                    <div class="service-row">
-                        <div class="service-info">
-                            <span class="service-name">Llama-Server</span>
-                            <span class="service-port">:8080</span>
-                        </div>
-                        <span id="llama-server-status" class="badge {"badge-online" if llama_server_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if llama_server_status else "Offline"}
-                        </span>
-                    </div>
-
-                    <div class="service-row">
-                        <div class="service-info">
-                            <span class="service-name">Langfuse Traces</span>
-                            <span class="service-port">:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}</span>
-                        </div>
-                        <span id="langfuse-status" class="badge {"badge-online" if langfuse_status else "badge-offline"}">
-                            <span class="pulse-dot"></span>{"Online" if langfuse_status else "Offline"}
-                        </span>
-                    </div>
-                </div>
-
-                <!-- Llama.cpp Metrics Card -->
-                <div class="glass-card">
-                    <div class="section-title" style="margin-bottom: 10px;">
-                        <span>{src_badge("LLAMA.CPP", "#fb923c")} Engine Metrics</span>
-                        <span id="llamacpp-build" style="font-size: 11px; opacity: 0.4; font-weight: normal; font-family: monospace;">build {data["llamacpp_build"]}</span>
-                    </div>
-                    <div id="llamacpp-models-container">
-                        {llamacpp_models_html}
-                    </div>
-                    <div id="llamacpp-slots-container">
-                        {llamacpp_slots_html}
-                    </div>
-                </div>
-
-                <!-- Goose active sessions and status card -->
-                <div class="glass-card">
-                    <div class="section-title" style="margin-bottom: 10px;">{src_badge("GOOSE", "#fbbf24")} Session Directory</div>
-                    <div id="goose-sessions-container" style="max-height: 420px; overflow-y: auto; padding-right: 5px;">
-                        {goose_html}
-                    </div>
-                </div>
-
-                <!-- Quick console links card -->
-                <div class="glass-card status-container">
-                    <div class="section-title" style="margin-bottom: 10px;">Quick Console Links</div>
-                    <div class="btn-group">
-                        <!-- Goose Dashboard local -->
-                        <a href="https://t.me/SheepBot?start=goose" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
-                            <span>{src_badge("GOOSE", "#fbbf24")} 🦢 Goose Telegram Bot</span>
-                            <span class="btn-arrow">→</span>
-                        </a>
-                    </div>
-                    <div class="btn-group">
-                        <a href="{langfuse_url}" target="_blank" class="btn">
-                            <span>{src_badge("LANGFUSE", "#e879f9")} Observability UI</span>
-                            <span class="btn-arrow">→</span>
-                        </a>
-                        <a href="{litellm_url}" target="_blank" class="btn">
-                            <span>{src_badge("LITELLM", "#34d399")} Admin UI</span>
-                            <span class="btn-arrow">→</span>
-                        </a>
-                        <a href="{llama_url}" target="_blank" class="btn">
-                            <span>{src_badge("LLAMA.CPP", "#fb923c")} Server Router UI</span>
-                            <span class="btn-arrow">→</span>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </main>
-
-        <footer>
-            LLM Triage Gateway Control Center &copy; 2026. Made with Antigravity.
-        </footer>
-    </body>
-    </html>
-    """
-    return html_content
 
 
 # --- Static files (visualizer, data files) ---
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DATA_DIR = Path(__file__).resolve().parent / "data"
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 DATA_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @app.get("/visualizer", response_class=HTMLResponse)
