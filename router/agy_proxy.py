@@ -26,6 +26,7 @@ import os
 import time
 import httpx
 from typing import Optional, Protocol, runtime_checkable
+from dataclasses import dataclass
 
 @runtime_checkable
 class CooldownPersistence(Protocol):
@@ -181,30 +182,35 @@ def _wrap_response(text: str, model_name: str, prompt: str) -> dict:
         },
     }
 
-async def try_agy_proxy(prompt: str, messages: list = None,
-                        session_id: str = None,
-                        total_timeout: float = AGY_TOTAL_TIMEOUT_SECS,
-                        stream: bool = False,
-                        target_tier: str = "agent-advanced-core",
-                        client: Optional[httpx.AsyncClient] = None,
-                        cooldown_persistence: Optional[CooldownPersistence] = None) -> Optional[dict]:
+@dataclass
+class AgyProxyRequest:
+    prompt: str
+    messages: Optional[list] = None
+    session_id: Optional[str] = None
+    total_timeout: float = AGY_TOTAL_TIMEOUT_SECS
+    stream: bool = False
+    target_tier: str = "agent-advanced-core"
+    client: Optional[httpx.AsyncClient] = None
+    cooldown_persistence: Optional[CooldownPersistence] = None
+
+async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
     """
     Attempt agy proxy with session-aware tier fallback.
     
     Args:
-        prompt: Current user prompt
-        messages: Full message history for context
-        session_id: Router session identifier for conversation continuity
-        total_timeout: Max total time across all tiers
-        stream: If True, returns a dict with {"stream": async_generator, "model": model_name}
-        target_tier: Classified tier — "agent-reasoning-core" uses gemini-3.5-flash (low thinking),
-                     "agent-advanced-core" uses full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
-        client: Shared HTTP client instance from caller
-        cooldown_persistence: Valkey synchronization callback interface
+        request: AgyProxyRequest containing all parameters
     
     Returns:
         OpenAI-compatible response dict, streaming dict, or None if all tiers failed.
     """
+    prompt = request.prompt
+    messages = request.messages
+    session_id = request.session_id
+    total_timeout = request.total_timeout
+    stream = request.stream
+    target_tier = request.target_tier
+    client = request.client
+    cooldown_persistence = request.cooldown_persistence
     # Select model chain based on target tier
     # Reasoning: single tier, gemini-3.5-flash with low thinking
     # Advanced: full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
