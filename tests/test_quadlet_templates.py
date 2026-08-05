@@ -18,6 +18,21 @@ def test_quadlet_inventory_and_pod_membership():
         text = container.read_text()
         assert "Pod=llm-routing.pod" in text, container.name
         assert "ContainerName=POD_NAME_PLACEHOLDER-" in text, container.name
+        assert "[Install]\nWantedBy=default.target llm-routing.pod" in text, container.name
+
+
+def test_quadlet_container_healthcmds_and_aligned_versions():
+    minio = (QUADLETS / "llm-routing-minio.container").read_text()
+    assert 'HealthCmd=mc ready local || bash -c "</dev/tcp/127.0.0.1/MINIO_S3_PORT_PLACEHOLDER"' in minio
+
+    worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
+    assert 'HealthCmd=node -e "process.exit(0)"' in worker
+
+    litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
+    assert 'Image=ghcr.io/berriai/litellm:v1.95.0' in litellm
+
+    postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
+    assert 'Image=pgvector/pgvector:0.8.6-pg18' in postgres
 
 
 def test_liveness_healthchecks_restart_failed_containers():
@@ -34,6 +49,7 @@ def test_quadlet_templates_remain_env_rendered_and_secret_free():
         text = template.read_text()
         assert "_PLACEHOLDER" in text, template.name
         assert not re.search(r"sk-(?:or|lf|lit)-[A-Za-z0-9_-]{12,}", text), template.name
+
 
 
 def test_upgrade_syncs_quadlets_before_quadlet_start_stack():

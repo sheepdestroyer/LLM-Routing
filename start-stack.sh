@@ -879,12 +879,12 @@ try:
         # arbitrary image names, URLs, and credentials containing llm-routing.
         def namespace_identifier(match):
             field, value = match.group(1), match.group(2)
-            if field in {"Pod", "After", "Wants", "BindsTo", "Requires", "PartOf"}:
+            if field in {"Pod", "After", "Wants", "BindsTo", "Requires", "PartOf", "WantedBy"}:
                 value = identifier_prefix.sub(namespace + "-", value)
                 value = value.replace("llm-routing.pod", namespace + ".pod")
                 value = value.replace("llm-routing-pod.service", namespace + "-pod.service")
             return f"{field}={value}"
-        text = re.sub(r"(?m)^(Pod|After|Wants|BindsTo|Requires|PartOf)=(.*)$", namespace_identifier, text)
+        text = re.sub(r"(?m)^(Pod|After|Wants|BindsTo|Requires|PartOf|WantedBy)=(.*)$", namespace_identifier, text)
         unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
         if unresolved:
             sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
