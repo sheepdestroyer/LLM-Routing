@@ -26,7 +26,7 @@ try:
 except ImportError:
     from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, List, Set
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -709,63 +709,19 @@ async def sync_adaptive_router_roster(master_key: str):
     if not master_key:
         logger.warning("No LITELLM_MASTER_KEY — skipping roster sync")
         return
-    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
-    admin_url = LITELLM_URL
-    try:
-        client = get_http_client()
-        r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
-        if r.status_code != 200:
-            logger.warning(f"OpenRouter models API returned {r.status_code}")
-            return
-        all_models = r.json().get("data", [])
-    except Exception as e:
-        logger.warning(f"Failed to fetch OpenRouter models: {e}")
-        return
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
-    free_models = []
-    model_contexts = {}
-    model_supported_params = {}
-    for m in all_models:
-        mid = m.get("id", "")
-        # Skip internal OpenRouter encoded IDs that LiteLLM can't map to a provider
-        if not mid or (len(mid) > 64 and "/" not in mid):
-            continue
 
-        # 1. Enforce Tool/Function Calling Support
-        supported_params = m.get("supported_parameters") or []
-        if "tools" not in supported_params:
-            logger.info(f"🚫 Skipping {mid} — Model does not support tool calling.")
-            continue
+    global _last_roster_sync
+    _last_roster_sync = time.monotonic()
 
-        # 2. Denylist: skip models known to be problematic (stale, wrong context_length, etc.)
-        # llama-3.3-70b reports 131K ctx but actual endpoint enforces 65K → context_limit errors.
-        # All meta-llama and llama-derived models are too old and unreliable on free tier.
-        _denylist_prefixes = (
-            "meta-llama/",
-            "nousresearch/hermes-3-llama",
-        )
-        if any(mid.startswith(p) for p in _denylist_prefixes):
-            logger.info(
-                f"🚫 Skipping {mid} — denylisted (stale/unreliable free tier model)"
-            )
-            continue
-
-        pricing = m.get("pricing", {})
-        if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get(
-            "completion"
-        ) in ("0", 0, "0.0", 0.0):
-            try:
-                score = compute_free_model_score(m)
-            except Exception:
-                score = 25.0  # conservative fallback for unparseable models
-            free_models.append((score, mid))
-            model_contexts[mid] = m.get("context_length") or 262144
-            model_supported_params[mid] = supported_params
-    free_models.sort(reverse=True)
-    if not free_models:
+    free_models_data = await _fetch_openrouter_free_models()
+    if not free_models_data:
         logger.warning("No free models found — skipping roster sync")
         return
+
+    free_models = [(m["score"], m["id"]) for m in free_models_data]
+    model_contexts = {m["id"]: m["context_length"] for m in free_models_data}
+    model_supported_params = {m["id"]: m["supported_parameters"] for m in free_models_data}
+
     tier_assignments = {
         "agent-simple-core": [],
         "agent-medium-core": [],
@@ -774,10 +730,6 @@ async def sync_adaptive_router_roster(master_key: str):
         "agent-advanced-core": [],
     }
     # Normalize scores to 0-100 scale based on the actual max score in this roster.
-    # This auto-adapts when Artificial Analysis updates scores — if the max is 55,
-    # a score of 48 normalizes to 87; if the max rises to 80, 48 normalizes to 60.
-    # Without normalization, hardcoded 80/75/68/60 thresholds are impossible to reach
-    # when the AA Agentic Index caps free models at ~55.
     raw_scores = [s for s, _ in free_models]
     max_score = max(raw_scores) if raw_scores else 55.0
     if max_score < 1.0:
@@ -787,12 +739,7 @@ async def sync_adaptive_router_roster(master_key: str):
         """Helper to scale raw model index score against max score in roster to 0-100 range."""
         return (s / max_score) * 100.0
 
-    for (
-        score,
-        mid,
-    ) in (
-        free_models
-    ):  # include all models — top 2 are also assigned to their correct tier
+    for (score, mid) in free_models:
         n = norm(score)
         if n >= 80:
             tier_assignments["agent-advanced-core"].append(mid)
@@ -804,52 +751,44 @@ async def sync_adaptive_router_roster(master_key: str):
             tier_assignments["agent-medium-core"].append(mid)
         else:
             tier_assignments["agent-simple-core"].append(mid)
-    # Cascading: models capable of higher tiers also serve lower tiers.
-    # A model that qualifies for advanced should be available for reasoning,
-    # complex, and medium requests too — not just advanced. Without this,
-    # tiers like complex and reasoning end up with only 1 model while 5
-    # sit idle in advanced. Simple tier is excluded from cascading:
-    # fast/small models belong there, not the 550B heavyweight.
-    # Advanced → reasoning, complex, medium
+
+    # Cascading logic...
     for mid in tier_assignments["agent-advanced-core"]:
         for t in ["agent-reasoning-core", "agent-complex-core", "agent-medium-core"]:
             if mid not in tier_assignments[t]:
                 tier_assignments[t].append(mid)
-    # Reasoning → complex, medium
     for mid in tier_assignments["agent-reasoning-core"]:
         for t in ["agent-complex-core", "agent-medium-core"]:
             if mid not in tier_assignments[t]:
                 tier_assignments[t].append(mid)
-    # Complex → medium
     for mid in tier_assignments["agent-complex-core"]:
         if mid not in tier_assignments["agent-medium-core"]:
             tier_assignments["agent-medium-core"].append(mid)
-    # Safety net: if any tier is still empty after assignment, use top 2 models as fallback.
-    # This shouldn't happen with current AA coverage, but guards against edge cases.
+
     top_two = [mid for _, mid in free_models[:2]]
     for tier_name, models in tier_assignments.items():
         if not models:
             tier_assignments[tier_name] = top_two[:]
 
-    client = get_http_client()
-    # Purge all existing agent-* deployments before re-registering.
-    # Without this, every roster sync accumulates stale deployments (4,591+
-    # in 24h), bloating the DB and slowing LiteLLM startup. Each sync now
-    # starts clean — delete all, then register only the current roster.
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
-            logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale agent-* deployments"
-            )
+            logger.warning("DATABASE_URL is not set; skipping purge of stale agent-* deployments")
         else:
             await _purge_stale_deployments(db_url, "agent-%")
             logger.info("🧹 Purged stale agent-* deployments before roster sync")
     except Exception as e:
         logger.warning(f"Failed to purge stale deployments (non-fatal): {e}")
 
+    global _registered_free_models
+    _registered_free_models = {k: set() for k in tier_assignments}
+
     registered = 0
     failed = 0
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+    admin_url = LITELLM_URL
+    client = get_http_client()
+
     for tier_name, model_ids in tier_assignments.items():
         for mid in model_ids:
             ctx_len = model_contexts.get(mid, 262144)
@@ -859,7 +798,7 @@ async def sync_adaptive_router_roster(master_key: str):
                 "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
                 "model_info": {
                     "supports_vision": "vision" in sp,
-                    "supports_reasoning": True,  # OpenRouter API has no "reasoning" param; assume all modern LLMs support it
+                    "supports_reasoning": True,
                     "supports_function_calling": "tools" in sp,
                     "mode": "chat",
                     "max_tokens": ctx_len,
@@ -868,25 +807,17 @@ async def sync_adaptive_router_roster(master_key: str):
                 },
             }
             try:
-                r = await client.post(
-                    f"{admin_url}/model/new",
-                    headers=headers,
-                    json=payload,
-                    timeout=10.0,
-                )
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
                 if r.status_code in (200, 201):
                     registered += 1
+                    _registered_free_models[tier_name].add(mid)
                 else:
                     failed += 1
-                    logger.warning(
-                        f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}"
-                    )
+                    logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
             except Exception as e:
                 failed += 1
                 logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
-    logger.info(
-        f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers — {sum(len(v) for v in tier_assignments.values())} attempted"
-    )
+    logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers")
 
 
 async def _register_ollama_models_in_db(master_key: str):
@@ -1644,6 +1575,9 @@ async def get_llamacpp_metrics() -> dict:
 free_model_cache = {"data": None, "last_fetched": 0.0}
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
+_registered_free_models: Dict[str, Set[str]] = {}
+_last_roster_sync: float = 0.0
+
 # --- Artificial Analysis Agentic Index scores cache ---
 _AA_SCORES_CACHE: dict[str, float] = {}
 _AA_SCORES_LOADED = False
@@ -1674,6 +1608,53 @@ def compute_free_model_score(m: dict) -> float:
     """Return AA agentic index score, or a low default for unknown models."""
     mid = m.get("id", "")
     return _AA_SCORES_CACHE.get(mid, 25.0)
+
+
+async def _fetch_openrouter_free_models() -> List[dict]:
+    """Internal helper to fetch and score free models from OpenRouter."""
+    if not _AA_SCORES_LOADED:
+        await asyncio.to_thread(_load_aa_scores)
+    try:
+        client = get_http_client()
+        r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
+        if r.status_code != 200:
+            logger.warning(f"OpenRouter models API returned {r.status_code}")
+            return []
+        data = r.json().get("data", [])
+        free_models = []
+        for m in data:
+            mid = m.get("id", "")
+            if not mid or (len(mid) > 64 and "/" not in mid):
+                continue
+
+            # 1. Enforce Tool/Function Calling Support
+            supported_params = m.get("supported_parameters") or []
+            has_tools = "tools" in supported_params
+
+            # 2. Denylist: skip models known to be problematic (stale, wrong context_length, etc.)
+            _denylist_prefixes = (
+                "meta-llama/",
+                "nousresearch/hermes-3-llama",
+            )
+            if any(mid.startswith(p) for p in _denylist_prefixes):
+                continue
+
+            pricing = m.get("pricing", {})
+            if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
+                score = compute_free_model_score(m)
+                free_models.append({
+                    "id": mid,
+                    "name": m.get("name", mid),
+                    "score": score,
+                    "context_length": m.get("context_length") or 0,
+                    "has_tools": has_tools,
+                    "supported_parameters": supported_params
+                })
+        free_models.sort(key=lambda x: x["score"], reverse=True)
+        return free_models
+    except Exception as e:
+        logger.warning(f"Failed to fetch OpenRouter models: {e}")
+        return []
 
 
 def _save_free_models_roster(free_models: list[dict]) -> None:
@@ -1707,8 +1688,6 @@ def _save_best_model_to_disk(best_model: dict) -> None:
 async def get_best_free_model() -> dict:
     """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
     global free_model_cache
-    if not _AA_SCORES_LOADED:
-        await asyncio.to_thread(_load_aa_scores)
     now = time.time()
 
     # Check if cache is still valid
@@ -1725,50 +1704,33 @@ async def get_best_free_model() -> dict:
     }
 
     try:
-        client = get_http_client()
-        r = await client.get("https://openrouter.ai/api/v1/models", timeout=2.0)
-        if r.status_code == 200:
-            data = r.json().get("data", [])
-            best_model = None
-            max_score = -1.0
-            all_free = []
-
-            for m in data:
-                mid = m.get("id", "")
-                # Denylist: skip stale/unreliable free tier models
-                _denylist_prefixes = (
-                    "meta-llama/",
-                    "nousresearch/hermes-3-llama",
-                )
-                if any(mid.startswith(p) for p in _denylist_prefixes):
-                    continue
-                pricing = m.get("pricing", {})
-                # Standard pricing is string or float
-                p_prompt = pricing.get("prompt")
-                p_comp = pricing.get("completion")
-
-                # Verify if it is free
-                if p_prompt in ("0", 0, "0.0", 0.0) and p_comp in ("0", 0, "0.0", 0.0):
-                    score = compute_free_model_score(m)
-                    entry = {
-                        "id": mid,
-                        "name": m.get("name", mid),
-                        "score": score,
-                        "context_length": m.get("context_length", 0),
-                    }
-                    all_free.append(entry)
-                    if score > max_score:
-                        max_score = score
-                        best_model = {**entry, "is_fallback": False}
-            # Sort by score descending
-            all_free.sort(key=lambda x: x["score"], reverse=True)
+        free_models_data = await _fetch_openrouter_free_models()
+        if free_models_data:
+            all_free = [
+                {
+                    "id": m["id"],
+                    "name": m["name"],
+                    "score": m["score"],
+                    "context_length": m["context_length"],
+                    "has_tools": m["has_tools"]
+                }
+                for m in free_models_data
+            ]
             await asyncio.to_thread(_save_free_models_roster, all_free)
-            if best_model:
-                free_model_cache["data"] = best_model
-                free_model_cache["last_fetched"] = now
-                logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
-                await asyncio.to_thread(_save_best_model_to_disk, best_model)
-                return best_model
+
+            top = free_models_data[0]
+            best_model = {
+                "id": top["id"],
+                "name": top["name"],
+                "score": top["score"],
+                "context_length": top["context_length"],
+                "is_fallback": False
+            }
+            free_model_cache["data"] = best_model
+            free_model_cache["last_fetched"] = now
+            logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
+            await asyncio.to_thread(_save_best_model_to_disk, best_model)
+            return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
     
@@ -1944,6 +1906,23 @@ async def proxy_models():
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
         raise HTTPException(status_code=502, detail="Model proxy failed")
+
+
+async def maybe_trigger_roster_sync(force: bool = False):
+    """Opportunistically refresh the OpenRouter roster if ratelimited or after TTL."""
+    global _last_roster_sync
+    now = time.monotonic()
+    # 5-minute throttle for roster sync
+    if not force and (now - _last_roster_sync < 300):
+        return
+
+    master_key = os.getenv("LITELLM_MASTER_KEY")
+    if master_key:
+        logger.info(f"Triggering opportunistic roster sync (force={force})")
+        await sync_adaptive_router_roster(master_key)
+        # Invalidate cache to ensure dashboard gets fresh data
+        global free_model_cache
+        free_model_cache["data"] = None
 
 
 @app.post("/v1/chat/completions")
@@ -2697,6 +2676,10 @@ async def chat_completions(request: Request):
                                 _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                             except Exception as ex:
+                                if hasattr(ex, "status_code") and getattr(ex, "status_code") == 429:
+                                    if model_name.startswith("agent-"):
+                                        await maybe_trigger_roster_sync(force=True)
+
                                 logger.error(f"Stream error: {ex}")
                                 # End child span before parent on stream error (CodeRabbit: missing finalization)
                                 _end_child_span(litellm_span_obj,
@@ -2750,6 +2733,8 @@ async def chat_completions(request: Request):
                             output={"status": r.status_code, "error": "litellm_stream_failed"},
                             metadata={"status": "failed"},
                         )
+                        if r.status_code == 429 and model_name.startswith("agent-"):
+                            await maybe_trigger_roster_sync(force=True)
                         raise HTTPException(
                             status_code=r.status_code,
                             detail="LiteLLM upstream request failed",
@@ -2816,6 +2801,8 @@ async def chat_completions(request: Request):
                             output={"status": response.status_code, "error": "litellm_upstream_failed"},
                             metadata={"status": "failed"},
                         )
+                        if response.status_code == 429 and model_name.startswith("agent-"):
+                            await maybe_trigger_roster_sync(force=True)
                         raise HTTPException(
                             status_code=response.status_code,
                             detail="LiteLLM upstream request failed",
@@ -3459,7 +3446,54 @@ async def get_dashboard_data():
         </div>
         """
 
+    # 11. Free Model Roster Table
+    roster_path = "/config/router_dir/free_models_roster.json"
+    roster_table_html = ""
+    try:
+        if os.path.exists(roster_path):
+            with open(roster_path, "r") as f:
+                roster_data = json.load(f)
+
+            rows = ""
+            for m in roster_data.get("models", []):
+                mid = m["id"]
+                # Determine which tiers it's registered in
+                active_tiers = []
+                for tier, models in _registered_free_models.items():
+                    if mid in models:
+                        active_tiers.append(tier.replace("agent-", "").replace("-core", ""))
+
+                status_label = f"<span style='color:#34d399;'>Active ({', '.join(active_tiers)})</span>" if active_tiers else "<span style='opacity:0.5;'>Excluded</span>"
+                tool_icon = "🛠️" if m.get("has_tools", True) else "❌" # default to true if missing in old json
+
+                rows += f"""
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                    <td style="padding:10px 8px;font-size:12px;font-weight:600;">{m['name']}<br><span style="font-size:10px;opacity:0.4;font-family:monospace;">{mid}</span></td>
+                    <td style="padding:10px 8px;text-align:center;font-weight:bold;color:#fbbf24;">{m['score']:.1f}</td>
+                    <td style="padding:10px 8px;text-align:center;opacity:0.7;font-size:11px;">{m['context_length']//1000}k</td>
+                    <td style="padding:10px 8px;text-align:center;">{tool_icon}</td>
+                    <td style="padding:10px 8px;text-align:right;font-size:11px;">{status_label}</td>
+                </tr>
+                """
+            roster_table_html = f"""
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="opacity:0.5;font-size:10px;text-transform:uppercase;border-bottom:1px solid rgba(255,255,255,0.1);">
+                        <th style="padding:8px;text-align:left;">Model</th>
+                        <th style="padding:8px;">Score</th>
+                        <th style="padding:8px;">Ctx</th>
+                        <th style="padding:8px;">Tools</th>
+                        <th style="padding:8px;text-align:right;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>{rows}</tbody>
+            </table>
+            """
+    except Exception as e:
+        roster_table_html = f"<div style='opacity:0.5;padding:10px;'>Error loading roster: {e}</div>"
+
     return {
+        "roster_table_html": roster_table_html,
         "valkey_status": valkey_status,
         "litellm_status": litellm_status,
         "llama_server_status": llama_server_status,
@@ -3620,6 +3654,7 @@ async def get_dashboard(request: Request):
     t_tokens = data["t_tokens"]
     llamacpp_models_html = data["llamacpp_models_html"]
     llamacpp_slots_html = data["llamacpp_slots_html"]
+    roster_table_html = data["roster_table_html"]
     avg_triage_latency_ms = data["avg_triage_latency_ms"]
     avg_proxy_latency_ms = data["avg_proxy_latency_ms"]
     cache_hits = data["cache_hits"]
@@ -4067,6 +4102,7 @@ async def get_dashboard(request: Request):
                     document.getElementById("goose-sessions-container").innerHTML = data.goose_html;
                     document.getElementById("llamacpp-models-container").innerHTML = data.llamacpp_models_html;
                     document.getElementById("llamacpp-slots-container").innerHTML = data.llamacpp_slots_html;
+                    document.getElementById("roster-container").innerHTML = data.roster_table_html;
 
                     // 5. Update Frontier Free Model widget
                     const bestFreeModelContainer = document.getElementById("best-free-model-container");
@@ -4248,6 +4284,17 @@ async def get_dashboard(request: Request):
                     </div>
                     <div id="tool-tokens-container">
                         {tool_tokens_html}
+                    </div>
+                </div>
+
+                <!-- Free Model Roster Card -->
+                <div class="glass-card">
+                    <div class="section-title">
+                        <span>{src_badge("ROUTER", "#818cf8")} Free Model Roster</span>
+                        <span style="font-size: 11px; opacity: 0.5; font-weight: normal;">OpenRouter free tier status</span>
+                    </div>
+                    <div id="roster-container" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
+                        {roster_table_html}
                     </div>
                 </div>
 
