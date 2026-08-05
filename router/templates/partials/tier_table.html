@@ -1,0 +1,21 @@
+<table style="width:100%;border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+                <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Tier</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Requests</th>
+                <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;opacity:0.5;font-weight:600;letter-spacing:0.5px;">Share</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in data.tier_data %}
+            <tr>
+                <td style="padding:8px 12px;font-size:13px;font-weight:600;font-family:monospace;color:{{ t.color }};">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:{{ t.color }};margin-right:8px;box-shadow:0 0 4px {{ t.color }}aa;"></span>
+                    {{ t.tier }}
+                </td>
+                <td style="padding:8px 12px;text-align:right;font-size:13px;font-weight:700;">{{ t.count }}</td>
+                <td style="padding:8px 12px;text-align:right;font-size:12px;opacity:0.6;">{{ "%.1f"|format(t.ratio) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>

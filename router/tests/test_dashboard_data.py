@@ -57,10 +57,10 @@ async def test_get_dashboard_data_structure():
         assert "valkey_status" in data
         assert "litellm_status" in data
         assert "best_free_model" in data
-        assert "oauth_banner_html" in data
-        assert "tier_table_html" in data
-        assert "goose_html" in data
-        assert "llamacpp_models_html" in data
+        assert "oauth_status" in data
+        assert "tier_data" in data
+        assert "goose_sessions" in data
+        assert "llamacpp" in data
 
         # Verify that expected mocks were called (at least once)
         assert mock_sync.called

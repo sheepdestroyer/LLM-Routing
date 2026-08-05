@@ -1,0 +1,24 @@
+{% if not data.timeline %}
+        <div style='opacity: 0.5; font-size: 14px; text-align: center; padding: 20px;'>Waiting for active tool executions...</div>
+    {% else %}
+        {% for ev in data.timeline|reverse %}
+            {% set route_label = ev.route|default('litellm_fallback') %}
+            {% set route_color = '#fbbf24' if route_label == 'google_oauth_direct' else '#818cf8' %}
+            {% set route_short = 'GOOGLE' if route_label == 'google_oauth_direct' else 'LITELLM' %}
+            <div style="display: flex; gap: 15px; margin-bottom: 15px; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 20px; position: relative;">
+                <div style="width: 10px; height: 10px; background: {{ route_color }}; border-radius: 50%; position: absolute; left: -6px; top: 6px; box-shadow: 0 0 8px {{ route_color }};"></div>
+                <div style="flex-grow: 1;">
+                    <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 2px;">
+                        <span style="font-weight: 600; text-transform: uppercase; color: #a5b4fc;">🔧 {{ ev.tool }} <span style="font-size: 9px; padding: 1px 5px; border-radius: 4px; background: {{ route_color }}22; color: {{ route_color }}; border: 1px solid {{ route_color }}44; margin-left: 6px; vertical-align: middle;">{{ route_short }}</span></span>
+                        <span style="opacity: 0.5; font-family: monospace;">{{ ev.timestamp }}</span>
+                    </div>
+                    <div style="font-size: 14px; opacity: 0.9;">
+                        Processed <strong>{{ "{:,}".format(ev.tokens) }} tokens</strong> on <span style="color: #c084fc;">{{ ev.model }}</span>
+                    </div>
+                    <div style="font-size: 12px; opacity: 0.5; margin-top: 2px;">
+                        Latency: {{ ev.latency_ms }} ms
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% endif %}
