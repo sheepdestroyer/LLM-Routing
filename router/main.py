@@ -13,6 +13,7 @@ import copy
 import tempfile
 import yaml
 import httpx
+import markupsafe
 import redis.asyncio as aioredis
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
@@ -687,7 +688,32 @@ load_persisted_stats()
 # Triage Decision Cache (In-Memory dictionary mapping normalized prompt -> (classification, timestamp))
 triage_cache = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
+MAX_TRIAGE_CACHE_SIZE = 10000
 classification_lock = asyncio.Lock()
+
+
+def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
+    """Purge expired items from triage_cache and cap size to max_size."""
+    now = time.time()
+    expired_keys = [k for k, (_, t) in triage_cache.items() if now - t >= CACHE_TTL_SECONDS]
+    for k in expired_keys:
+        triage_cache.pop(k, None)
+
+    if len(triage_cache) > max_size:
+        sorted_keys = sorted(triage_cache.keys(), key=lambda k: triage_cache[k][1])
+        excess = len(triage_cache) - max_size
+        for k in sorted_keys[:excess]:
+            triage_cache.pop(k, None)
+
+
+async def _periodic_triage_cache_cleanup():
+    """Periodically clean up expired and excess entries in triage_cache."""
+    while True:
+        await asyncio.sleep(300)
+        try:
+            cleanup_triage_cache()
+        except Exception as e:
+            logger.warning(f"Error during triage cache cleanup: {e}")
 
 
 async def _purge_stale_deployments(db_url: str, pattern: str):
@@ -1013,14 +1039,20 @@ async def lifespan(app: FastAPI):
 
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
+    cache_cleanup_task = asyncio.create_task(_periodic_triage_cache_cleanup())
 
     try:
         yield
     finally:
-        # Cancel background score task
+        # Cancel background tasks
         task.cancel()
+        cache_cleanup_task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await cache_cleanup_task
         except asyncio.CancelledError:
             pass
 
@@ -1224,6 +1256,8 @@ async def classify_request(
             )
 
             # Store in cache
+            if len(triage_cache) >= MAX_TRIAGE_CACHE_SIZE:
+                cleanup_triage_cache(MAX_TRIAGE_CACHE_SIZE - 1)
             triage_cache[normalized_prompt] = (decision, time.time())
             return decision, latency, False, raw_result
 
@@ -3396,7 +3430,9 @@ async def metrics():
 # Source badge helper: generates a colored inline source tag
 def src_badge(label, color):
     """Generate inline HTML span styled as a colored status/category badge."""
-    return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {color}18; color: {color}; border: 1px solid {color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{label}</span>"
+    safe_label = markupsafe.escape(label)
+    safe_color = markupsafe.escape(color)
+    return f"<span style='font-size: 9px; padding: 2px 7px; border-radius: 4px; background: {safe_color}18; color: {safe_color}; border: 1px solid {safe_color}44; font-weight: 700; letter-spacing: 0.5px; vertical-align: middle; margin-right: 8px;'>{safe_label}</span>"
 
 
 async def get_dashboard_data():

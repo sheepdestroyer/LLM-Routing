@@ -31,7 +31,7 @@ def test_src_badge_special_chars():
     result = src_badge(label, color)
 
     assert isinstance(result, str)
-    assert f">{label}</span>" in result
+    assert ">O&#39;Connor &amp; Sons</span>" in result
     assert "color: blue;" in result
 
 def test_src_badge_exact_html():

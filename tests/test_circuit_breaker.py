@@ -281,6 +281,69 @@ async def test_save_to_valkey_exception_handling():
     with patch('router.circuit_breaker.logger') as mock_logger:
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
+@pytest.mark.anyio
+async def test_dual_circuit_breaker_evaluates_both():
+    """Verify DualCircuitBreaker.is_allowed() evaluates both sub-breakers explicitly without short-circuiting."""
+    reset_breakers()
+    b = get_breaker()
+
+    # Google is allowed (tier 0)
+    # Vendor tier 1 with expired cooldown: probe not yet granted
+    b.vendor.tier = 1
+    b.vendor.cooldown_until = time.time() - 10
+    b.vendor.probe_granted = False
+
+    # Calling is_allowed() must evaluate vendor.is_allowed() even though google.is_allowed() is True
+    res = b.is_allowed()
+    assert res is True
+    assert b.vendor.probe_granted is True, "vendor.is_allowed() should have been evaluated and granted probe"
+
+
+@pytest.mark.anyio
+async def test_sync_from_valkey_bytes_and_str():
+    """Verify sync_from_valkey handles bytes and string keys/values for probe_granted and state."""
+    reset_breakers()
+    b = get_breaker()
+
+    # Test 1: Bytes state from Valkey
+    mock_redis_bytes = AsyncMock()
+    mock_redis_bytes.hgetall.return_value = {
+        b"tier": b"2",
+        b"cooldown_until": b"12345.0",
+        b"probe_granted": b"True",
+        b"total_trips": b"3",
+        b"last_trip_time": b"12340.0",
+    }
+    await b.google.sync_from_valkey(mock_redis_bytes)
+    assert b.google.tier == 2
+    assert b.google.cooldown_until == 12345.0
+    assert b.google.probe_granted is True
+    assert b.google.total_trips == 3
+    assert b.google.last_trip_time == 12340.0
+
+    # Test 2: Bytes false
+    mock_redis_bytes_false = AsyncMock()
+    mock_redis_bytes_false.hgetall.return_value = {
+        b"probe_granted": b"False",
+    }
+    await b.google.sync_from_valkey(mock_redis_bytes_false)
+    assert b.google.probe_granted is False
+
+    # Test 3: String state
+    mock_redis_str = AsyncMock()
+    mock_redis_str.hgetall.return_value = {
+        "tier": "1",
+        "cooldown_until": "54321.0",
+        "probe_granted": "true",
+        "total_trips": "1",
+        "last_trip_time": "54300.0",
+    }
+    await b.vendor.sync_from_valkey(mock_redis_str)
+    assert b.vendor.tier == 1
+    assert b.vendor.cooldown_until == 54321.0
+    assert b.vendor.probe_granted is True
+
+
 if __name__ == "__main__":
     test_get_specific_breakers()
     test_initial_state()
@@ -296,6 +359,8 @@ if __name__ == "__main__":
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
+    asyncio.run(test_dual_circuit_breaker_evaluates_both())
+    asyncio.run(test_sync_from_valkey_bytes_and_str())
 
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
