@@ -100,7 +100,8 @@ def get_session_store(session_id: str) -> Optional[dict]:
         return None
     session = _session_store[session_id]
     if not isinstance(session, dict):
-        return session
+        _session_store.pop(session_id, None)
+        return None
     now = time.time()
     if now - session.get("last_accessed", now) >= SESSION_TTL_SECONDS:
         _session_store.pop(session_id, None)

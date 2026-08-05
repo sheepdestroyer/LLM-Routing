@@ -191,9 +191,7 @@ class DualCircuitBreaker:
     # This ensures old code without model awareness works correctly.
     def is_allowed(self) -> bool:
         """Check if either the google or vendor breaker allows the request (backward-compat)."""
-        g_allowed = self.google.is_allowed()
-        v_allowed = self.vendor.is_allowed()
-        return g_allowed or v_allowed
+        return self.google.is_allowed() or self.vendor.is_allowed()
 
     def is_allowed_peek(self) -> bool:
         """Check if either sub-breaker is allowed, without mutating state."""

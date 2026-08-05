@@ -282,8 +282,8 @@ async def test_save_to_valkey_exception_handling():
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
 @pytest.mark.anyio
-async def test_dual_circuit_breaker_evaluates_both():
-    """Verify DualCircuitBreaker.is_allowed() evaluates both sub-breakers explicitly without short-circuiting."""
+async def test_dual_circuit_breaker_short_circuits():
+    """Verify DualCircuitBreaker.is_allowed() short-circuits when Google is allowed, preserving Vendor probe slots."""
     reset_breakers()
     b = get_breaker()
 
@@ -293,10 +293,10 @@ async def test_dual_circuit_breaker_evaluates_both():
     b.vendor.cooldown_until = time.time() - 10
     b.vendor.probe_granted = False
 
-    # Calling is_allowed() must evaluate vendor.is_allowed() even though google.is_allowed() is True
+    # Calling is_allowed() short-circuits when google is allowed, preserving vendor probe_granted = False
     res = b.is_allowed()
     assert res is True
-    assert b.vendor.probe_granted is True, "vendor.is_allowed() should have been evaluated and granted probe"
+    assert b.vendor.probe_granted is False, "vendor probe slot should not be speculatively burned"
 
 
 @pytest.mark.anyio
