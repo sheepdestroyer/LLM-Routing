@@ -1,0 +1,11 @@
+{% if data.routing_data %}
+        {% for r in data.routing_data %}
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ r.color }}; display: inline-block; box-shadow: 0 0 6px {{ r.color }}aa;"></span>
+            <span style="font-weight: 600;">{{ r.label }}:</span>
+            <span style="opacity: 0.7;">{{ r.count }} ({{ "%.1f"|format(r.pct) }}%)</span>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div style='opacity: 0.5; font-size: 13px;'>No routing data yet</div>
+    {% endif %}
