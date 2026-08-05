@@ -714,12 +714,22 @@ async def sync_adaptive_router_roster(master_key: str):
 
     free_models_data = await _fetch_openrouter_free_models()
     if not free_models_data:
+        return
+
+    tool_capable_models = []
+    for m in free_models_data:
+        if not m.get("has_tools"):
+            logger.info(f"Skipping free model {m['id']}: does not support tool calling")
+        else:
+            tool_capable_models.append(m)
+
+    if not tool_capable_models:
         logger.warning("No free models found — skipping roster sync")
         return
 
-    free_models = [(m["score"], m["id"]) for m in free_models_data]
-    model_contexts = {m["id"]: m["context_length"] for m in free_models_data}
-    model_supported_params = {m["id"]: m["supported_parameters"] for m in free_models_data}
+    free_models = [(m["score"], m["id"]) for m in tool_capable_models]
+    model_contexts = {m["id"]: m["context_length"] for m in tool_capable_models}
+    model_supported_params = {m["id"]: m["supported_parameters"] for m in tool_capable_models}
 
     tier_assignments = {
         "agent-simple-core": [],
@@ -1646,11 +1656,16 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                 "nousresearch/hermes-3-llama",
             )
             if any(mid.startswith(p) for p in _denylist_prefixes):
+                logger.info(f"Skipping free model {mid}: denylisted")
                 continue
 
             pricing = m.get("pricing", {})
             if pricing.get("prompt") in ("0", 0, "0.0", 0.0) and pricing.get("completion") in ("0", 0, "0.0", 0.0):
-                score = compute_free_model_score(m)
+                try:
+                    score = compute_free_model_score(m)
+                except Exception as score_err:
+                    logger.warning(f"Failed to compute score for model {mid}: {score_err}")
+                    score = 25.0
                 free_models.append({
                     "id": mid,
                     "name": m.get("name", mid),
@@ -1660,6 +1675,8 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                     "supported_parameters": supported_params
                 })
         free_models.sort(key=lambda x: x["score"], reverse=True)
+        if not free_models:
+            logger.warning("No free models found — skipping roster sync")
         return free_models
     except Exception as e:
         logger.warning(f"Failed to fetch OpenRouter models: {e}")
@@ -2212,7 +2229,7 @@ _last_roster_sync = 0.0
 _roster_sync_lock = asyncio.Lock()
 
 async def maybe_trigger_roster_sync(force: bool = False):
-    \"\"\"Opportunistically refresh the OpenRouter roster if ratelimited or after TTL.\"\"\"
+    """Opportunistically refresh the OpenRouter roster if ratelimited or after TTL."""
     global _last_roster_sync, free_model_cache
     now = time.monotonic()
     min_interval = 60.0 if force else 300.0
@@ -3548,7 +3565,7 @@ async def get_dashboard_data():
                 score_val = m.get("score", 0.0)
                 ctx_val = m.get("context_length", 0) // 1000
 
-                rows += f\"\"\"
+                rows += f"""
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
                     <td style="padding:10px 8px;font-size:12px;font-weight:600;">{escaped_name}<br><span style="font-size:10px;opacity:0.4;font-family:monospace;">{escaped_id}</span></td>
                     <td style="padding:10px 8px;text-align:center;font-weight:bold;color:#fbbf24;">{score_val:.1f}</td>
@@ -3556,8 +3573,8 @@ async def get_dashboard_data():
                     <td style="padding:10px 8px;text-align:center;">{tool_icon}</td>
                     <td style="padding:10px 8px;text-align:right;font-size:11px;">{status_label}</td>
                 </tr>
-                \"\"\"
-            roster_table_html = f\"\"\"
+                """
+            roster_table_html = f"""
             <table style="width:100%;border-collapse:collapse;">
                 <thead>
                     <tr style="opacity:0.5;font-size:10px;text-transform:uppercase;border-bottom:1px solid rgba(255,255,255,0.1);">
@@ -3570,9 +3587,9 @@ async def get_dashboard_data():
                 </thead>
                 <tbody>{rows}</tbody>
             </table>
-            \"\"\"
+            """
     except Exception as e:
-        roster_table_html = f"<div style='opacity:0.5;padding:10px;'>Error loading roster: {e}</div>\"
+        roster_table_html = f"<div style='opacity:0.5;padding:10px;'>Error loading roster: {e}</div>"
     return {
         "roster_table_html": roster_table_html,
         "valkey_status": valkey_status,
