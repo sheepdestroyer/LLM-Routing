@@ -43,35 +43,41 @@ Note: Throughout this checklist, the production host SSH alias is represented by
 - HAProxy SSL cert: `<prod-home>/haproxy/certs/<prod-domain>.pem`
 - HAProxy config: `<prod-home>/haproxy/haproxy.cfg`
 
-### Fresh Deploy Steps (after a PR is merged to master)
+### Initial Provisioning (One-Time Setup on New Host)
 ```bash
-# 1. Clean up old deploy
-ssh <prod-host> "rm -rf <prod-home>/LLM-Routing"
+git clone https://github.com/sheepdestroyer/LLM-Routing.git <prod-home>/LLM-Routing
+```
 
-# 2. Clone fresh from master
-ssh <prod-host> "git clone https://github.com/sheepdestroyer/LLM-Routing.git <prod-home>/LLM-Routing"
+### Production Update Deployment (Standard Minimal Deploy after PR merges)
+```bash
+# 1. Navigate to deployment directory and pull latest master changes
+ssh <prod-host> "cd <prod-home>/LLM-Routing && git fetch origin master && git pull --rebase origin master"
 
-# 3. Start the full stack (builds and launches all containers)
+# 2. Deploy the stack (automatically triggers pre-deploy database backup & restarts/rebuilds podman containers)
 ssh <prod-host> "cd <prod-home>/LLM-Routing && ./start-stack.sh --full-rebuild"
 
-# 4. Start (or restart) production HAProxy
+# 3. Ensure production HAProxy is running
 ssh <prod-host> "podman rm -f production-haproxy || true"
 ssh <prod-host> "podman run -d --name production-haproxy --restart always --net host \
   -v <prod-home>/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro \
   -v <prod-home>/haproxy/certs:/usr/local/etc/haproxy/certs:ro \
   docker.io/library/haproxy:alpine"
 
-# 5. Start the host-side agy daemon 
+# 4. Start (or restart) the host-side agy daemon
 ssh <prod-host> "pkill -f host_agy_daemon.py || true"
 ssh <prod-host> "nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &"
 
-# 6. Verify end-to-end
+# 5. Verify end-to-end dashboard health
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
-# Replace the cert with a trusted CA-signed cert to remove -k.
-ssh <prod-host> "curl -k -s --resolve <prod-host>.<prod-domain>:443:127.0.0.1 https://<prod-host>.<prod-domain>/llm-routing/dashboard" | head -5
+ssh <prod-host> "curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-domain>/llm-routing/dashboard" | head -5
 ```
 
-### Notes
+### Deployment Guidelines & Data Integrity
+- **Non-Destructive Deployments**: Never execute `rm -rf <prod-home>/LLM-Routing` during production updates. Use `git pull --rebase origin master` to preserve persistent volume data in `<prod-home>/LLM-Routing/data` and database backups in `<prod-home>/LLM-Routing/backups/`.
+- **Pre-Deploy Backups**: `start-stack.sh` automatically runs `./scripts/backup.sh` before modifying any container or configuration. Backups are stored in `LLM-Routing/backups/` and retained for 14 days.
+- **Database Restoration**: If a volume reset is ever required, restore database dumps using:
+  - `podman exec -i prod-router-pod-postgres-db pg_restore -U postgres -d postgres --clean --if-exists < backups/postgres_db_<TIMESTAMP>.dump`
+  - `podman exec -i prod-router-pod-postgres-db pg_restore -U postgres -d langfuse --clean --if-exists < backups/langfuse_db_<TIMESTAMP>.dump`
 - The `agy-daemon.service` systemd unit cannot be reloaded via `systemctl --user` from
   the agent terminal (DBus is not connected). Start the daemon manually with `nohup` as
   shown above, or instruct the user to run it in their own session.
