@@ -2,13 +2,13 @@
 """Verify circuit breaker integration into agy_proxy.py"""
 try:
     from router.circuit_breaker import get_breaker
-    from router.agy_proxy import try_agy_proxy
+    from router.agy_proxy import try_agy_proxy, AgyProxyRequest
 except ImportError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from router.circuit_breaker import get_breaker
-    from router.agy_proxy import try_agy_proxy
+    from router.agy_proxy import try_agy_proxy, AgyProxyRequest
 import asyncio, time
 
 b = get_breaker()
@@ -17,6 +17,6 @@ for sub in (b.google, b.vendor):
     sub.cooldown_until = time.time() + 18000
     sub.probe_granted = False
 
-result = asyncio.run(try_agy_proxy('test prompt'))
+result = asyncio.run(try_agy_proxy(AgyProxyRequest(prompt='test prompt')))
 assert result is None, f'Breaker should return None when blocked, got: {result}'
 print('Integration verified: blocked breaker returns None from try_agy_proxy')

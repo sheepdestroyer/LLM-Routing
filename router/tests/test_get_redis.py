@@ -69,6 +69,16 @@ def test_valkey_port_invalid_fallback(mock_logger_warning, mock_monotonic):
     mock_logger_warning.assert_called_once()
     assert "Invalid Valkey port" in mock_logger_warning.call_args[0][0]
 
+
+@patch("router.main.logger.warning")
+@patch.dict(os.environ, {"VALKEY_CACHE_PORT": "not_an_int"})
+def test_valkey_cache_port_invalid_fallback(mock_logger_warning):
+    """_valkey_port() should log a warning and fall back to 6379 on invalid VALKEY_CACHE_PORT."""
+    port = main._valkey_port()
+    assert port == 6379
+    mock_logger_warning.assert_called_once()
+    assert "Invalid Valkey port 'not_an_int'" in mock_logger_warning.call_args[0][0]
+
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis")
 @patch("router.main.logger.warning")
