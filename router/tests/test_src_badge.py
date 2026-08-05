@@ -1,4 +1,5 @@
 import pytest
+import markupsafe
 from router.main import src_badge
 
 
@@ -20,9 +21,11 @@ from router.main import src_badge
 def test_src_badge(label: str, color: str) -> None:
     """Test src_badge generates correct HTML span with proper hex styling."""
     result = src_badge(label, color)
+    safe_label = markupsafe.escape(label)
+    safe_color = markupsafe.escape(color)
     assert result.startswith("<span")
     assert result.endswith("</span>")
-    assert f">{label}</span>" in result
-    assert f"color: {color};" in result
-    assert f"background: {color}18;" in result
-    assert f"border: 1px solid {color}44;" in result
+    assert f">{safe_label}</span>" in result
+    assert f"color: {safe_color};" in result
+    assert f"background: {safe_color}18;" in result
+    assert f"border: 1px solid {safe_color}44;" in result

@@ -135,11 +135,19 @@ class PerModelBreaker:
         if not redis_client:
             return
         try:
-            state = await redis_client.hgetall(f"circuit_breaker:{self.name}")
-            if state:
+            raw_state = await redis_client.hgetall(f"circuit_breaker:{self.name}")
+            if raw_state:
+                state = {}
+                for k, v in raw_state.items():
+                    key = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                    val = v.decode("utf-8") if isinstance(v, bytes) else v
+                    state[key] = val
                 self.tier = int(state.get("tier", "0"))
                 self.cooldown_until = float(state.get("cooldown_until", "0.0"))
-                self.probe_granted = state.get("probe_granted", "False") == "True"
+                pg = state.get("probe_granted", "False")
+                if isinstance(pg, bytes):
+                    pg = pg.decode("utf-8")
+                self.probe_granted = str(pg).strip().lower() in ("true", "1")
                 self.total_trips = int(state.get("total_trips", "0"))
                 self.last_trip_time = float(state.get("last_trip_time", "0.0"))
         except Exception as e:

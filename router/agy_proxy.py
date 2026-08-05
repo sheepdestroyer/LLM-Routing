@@ -68,8 +68,57 @@ AGY_TIMEOUT_SECS = 120
 AGY_TOTAL_TIMEOUT_SECS = 300
 
 # In-memory session store: {router_session_id: agy_conversation_data}
-# agy_conversation_data = {"conversation_id": str, "current_tier_index": int}
+# agy_conversation_data = {"conversation_id": str, "current_tier_index": int, "last_accessed": float}
 _session_store: dict = {}
+MAX_SESSION_STORE_SIZE = 10000
+SESSION_TTL_SECONDS = 86400  # 24 hours
+
+
+def cleanup_session_store(max_size: int = MAX_SESSION_STORE_SIZE) -> None:
+    """Purge expired sessions and evict oldest (LRU) sessions if size exceeds max_size."""
+    now = time.time()
+    expired_keys = [
+        k for k, v in _session_store.items()
+        if isinstance(v, dict) and now - v.get("last_accessed", now) >= SESSION_TTL_SECONDS
+    ]
+    for k in expired_keys:
+        _session_store.pop(k, None)
+
+    if len(_session_store) > max_size:
+        sorted_keys = sorted(
+            _session_store.keys(),
+            key=lambda k: _session_store[k].get("last_accessed", 0) if isinstance(_session_store[k], dict) else 0
+        )
+        excess = len(_session_store) - max_size
+        for k in sorted_keys[:excess]:
+            _session_store.pop(k, None)
+
+
+def get_session_store(session_id: str) -> Optional[dict]:
+    """Retrieve session data for session_id with TTL check and LRU timestamp update."""
+    if session_id not in _session_store:
+        return None
+    session = _session_store[session_id]
+    if not isinstance(session, dict):
+        _session_store.pop(session_id, None)
+        return None
+    now = time.time()
+    if now - session.get("last_accessed", now) >= SESSION_TTL_SECONDS:
+        _session_store.pop(session_id, None)
+        return None
+    session["last_accessed"] = now
+    return session
+
+
+def set_session_store(session_id: str, conversation_id: str, current_tier_index: int) -> None:
+    """Set or update session data with max capacity enforcement and LRU eviction."""
+    if session_id not in _session_store and len(_session_store) >= MAX_SESSION_STORE_SIZE:
+        cleanup_session_store(MAX_SESSION_STORE_SIZE - 1)
+    _session_store[session_id] = {
+        "conversation_id": conversation_id,
+        "current_tier_index": current_tier_index,
+        "last_accessed": time.time(),
+    }
 
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
 
@@ -267,12 +316,13 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
         # Check if we have an existing session with a conversation ID
         existing_conv_id = None
         start_tier_index = 0
-        if session_id and session_id in _session_store:
-            session = _session_store[session_id]
-            existing_conv_id = session.get("conversation_id")
-            start_tier_index = session.get("current_tier_index", 0)
-            conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
-            logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
+        if session_id:
+            session = get_session_store(session_id)
+            if session:
+                existing_conv_id = session.get("conversation_id")
+                start_tier_index = session.get("current_tier_index", 0)
+                conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
+                logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
         
         start_time = time.time()
         last_conv_id = existing_conv_id
@@ -371,19 +421,20 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 
                 async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id, close_client):
                     """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
-                    # Yield the initial token if it was a token
-                    init_data = json.loads(initial_line)
-                    if init_data.get("type") == "token" and init_data.get("content"):
-                        yield init_data["content"]
-                    elif init_data.get("type") == "conversation_id" and init_data.get("id"):
-                        current_conv_id = init_data["id"]
-                        if session_id:
-                            _session_store[session_id] = {
-                                "conversation_id": current_conv_id,
-                                "current_tier_index": actual_tier_idx,
-                            }
-                    
                     try:
+                        # Yield the initial token if it was a token
+                        init_data = json.loads(initial_line)
+                        if init_data.get("type") == "token" and init_data.get("content"):
+                            yield init_data["content"]
+                        elif init_data.get("type") == "conversation_id" and init_data.get("id"):
+                            current_conv_id = init_data["id"]
+                            if session_id:
+                                set_session_store(
+                                    session_id,
+                                    current_conv_id,
+                                    actual_tier_idx,
+                                )
+
                         async for line in lines_iter:
                             if not line.strip():
                                 continue
@@ -393,10 +444,11 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                             elif data.get("type") == "conversation_id" and data.get("id"):
                                 current_conv_id = data["id"]
                                 if session_id:
-                                    _session_store[session_id] = {
-                                        "conversation_id": current_conv_id,
-                                        "current_tier_index": actual_tier_idx,
-                                    }
+                                    set_session_store(
+                                        session_id,
+                                        current_conv_id,
+                                        actual_tier_idx,
+                                    )
                     finally:
                         await stream_resp.aclose()
                         if close_client:
@@ -451,10 +503,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     
                     # Save session state for continuation
                     if session_id and last_conv_id is not None:
-                        _session_store[session_id] = {
-                            "conversation_id": last_conv_id,
-                            "current_tier_index": actual_tier_idx,
-                        }
+                        set_session_store(session_id, last_conv_id, actual_tier_idx)
                         logger.info(f"agy proxy: saved session {session_id[:8]}..."
                                     f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}")
                     
