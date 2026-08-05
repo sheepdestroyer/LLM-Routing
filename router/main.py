@@ -3762,9 +3762,9 @@ async def get_dashboard(request: Request):
 
     # Expose src_badge to the template context
     return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
+        request=request,
+        name="dashboard.html",
+        context={
             "data": data,
             "langfuse_url": langfuse_url,
             "litellm_url": litellm_url,
