@@ -247,6 +247,8 @@ async def test_responses_api_streaming():
         response = await responses_api(mock_request)
         assert isinstance(response, StreamingResponse)
         assert response.media_type == "text/event-stream"
+        chunks = [chunk async for chunk in response.body_iterator]
+        assert len(chunks) == 4
 
 
 @pytest.mark.anyio
