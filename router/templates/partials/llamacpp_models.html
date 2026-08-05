@@ -1,0 +1,18 @@
+{% if data.llamacpp.models %}
+        {% for m in data.llamacpp.models %}
+            {% set status_style = 'background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25);' if m.status == 'loaded' else 'background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,0.08);' %}
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="font-weight: 700; font-size: 14px; font-family: monospace;">{{ m.id }}</span>
+                    <span style="font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; {{ status_style }}">{{ m.status|upper }}</span>
+                </div>
+                <div style="display: flex; gap: 16px; font-size: 11px; opacity: 0.6;">
+                    {% if m.n_params %}<span>🧠 {{ "%.1f"|format(m.n_params / 1000000000) }}B params</span>{% endif %}
+                    {% if m.n_ctx %}<span>📏 ctx {{ "{:,}".format(m.n_ctx) }}</span>{% endif %}
+                    {% if m.size_bytes %}<span>💾 {{ "%.0f"|format(m.size_bytes / 1000000) }} MB</span>{% endif %}
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div style="opacity: 0.5; font-size: 13px; text-align: center; padding: 15px;">No models detected</div>
+    {% endif %}
