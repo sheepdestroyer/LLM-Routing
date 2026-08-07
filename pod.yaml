@@ -232,7 +232,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: CLICKHOUSE_PASSWORD_PLACEHOLDER
-    image: clickhouse/clickhouse-server:26.7.1.1315
+    image: clickhouse/clickhouse-server:26.7.2.59
     livenessProbe:
       exec:
         command:
