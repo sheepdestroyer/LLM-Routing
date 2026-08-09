@@ -347,6 +347,13 @@
             font-size: 14px;
         }
 
+        .btn:focus-visible {
+            outline: 2px solid var(--emerald-500);
+            outline-offset: 2px;
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(129, 140, 248, 0.3);
+        }
+
         .btn:hover {
             background: rgba(255, 255, 255, 0.06);
             border-color: rgba(129, 140, 248, 0.3);
@@ -508,7 +515,7 @@
         </div>
         <div class="dashboard-title">System Control Center</div>
         <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-            <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
+            <a id="visualizer-link" href="visualizer" aria-label="Dataset Visualizer" style="color:#818cf8;text-decoration:none;">📊 Dataset Visualizer</a>
         </div>
     </header>
 
@@ -736,21 +743,21 @@
                     <!-- Goose Dashboard local -->
                     <a href="https://t.me/SheepBot?start=goose" target="_blank" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);">
                         <span>{{ src_badge("GOOSE", "#fbbf24") | safe }} 🦢 Goose Telegram Bot</span>
-                        <span class="btn-arrow">→</span>
+                        <span class="btn-arrow" aria-hidden="true">→</span>
                     </a>
                 </div>
                 <div class="btn-group">
                     <a href="{{ langfuse_url }}" target="_blank" class="btn">
                         <span>{{ src_badge("LANGFUSE", "#e879f9") | safe }} Observability UI</span>
-                        <span class="btn-arrow">→</span>
+                        <span class="btn-arrow" aria-hidden="true">→</span>
                     </a>
                     <a href="{{ litellm_url }}" target="_blank" class="btn">
                         <span>{{ src_badge("LITELLM", "#34d399") | safe }} Admin UI</span>
-                        <span class="btn-arrow">→</span>
+                        <span class="btn-arrow" aria-hidden="true">→</span>
                     </a>
                     <a href="{{ llama_url }}" target="_blank" class="btn">
                         <span>{{ src_badge("LLAMA.CPP", "#fb923c") | safe }} Server Router UI</span>
-                        <span class="btn-arrow">→</span>
+                        <span class="btn-arrow" aria-hidden="true">→</span>
                     </a>
                 </div>
             </div>
