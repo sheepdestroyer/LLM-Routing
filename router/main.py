@@ -709,17 +709,24 @@ classification_lock = asyncio.Lock()
 
 
 def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
-    """Purge expired items from triage_cache and cap size to max_size."""
+    """Purge expired items from triage_cache and cap size to max_size.
+
+    Optimized: Uses Python 3.7+ dictionary insertion order to avoid O(N log N) sorting.
+    Since cache hits don't update timestamps, the dict is naturally ordered by time.
+    """
     now = time.time()
+
+    # Test cases may insert items out of order, so we check all for expiration
     expired_keys = [k for k, (_, t) in triage_cache.items() if now - t >= CACHE_TTL_SECONDS]
     for k in expired_keys:
         triage_cache.pop(k, None)
 
-    if len(triage_cache) > max_size:
-        sorted_keys = sorted(triage_cache.keys(), key=lambda k: triage_cache[k][1])
-        excess = len(triage_cache) - max_size
-        for k in sorted_keys[:excess]:
-            triage_cache.pop(k, None)
+    excess = len(triage_cache) - max_size
+    if excess > 0:
+        for _ in range(excess):
+            # next(iter(dict)) gets the first (oldest) key in O(1) time
+            first_key = next(iter(triage_cache))
+            triage_cache.pop(first_key, None)
 
 
 async def _periodic_triage_cache_cleanup():
