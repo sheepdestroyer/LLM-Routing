@@ -1257,7 +1257,8 @@ async def classify_request(
 
             # Store in cache
             if len(triage_cache) >= MAX_TRIAGE_CACHE_SIZE:
-                cleanup_triage_cache(MAX_TRIAGE_CACHE_SIZE - 1)
+                # Batch evict 10% of the cache to avoid O(N log N) sorting cost per insertion
+                cleanup_triage_cache(int(MAX_TRIAGE_CACHE_SIZE * 0.9))
             triage_cache[normalized_prompt] = (decision, time.time())
             return decision, latency, False, raw_result
 
