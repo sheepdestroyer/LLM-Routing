@@ -1,0 +1,3 @@
+## 2024-05-24 - Interactive Elements Missing Keyboard Support
+**Learning:** Found that custom copy-to-clipboard elements (`.oauth-banner-cmd`) were using `onclick` without keyboard support (`onkeydown`) or semantic roles (`role="button"`, `tabindex="0"`), making them inaccessible to keyboard/screen reader users. Also discovered that toast/tooltip feedback for these actions lacked `aria-live` regions, meaning screen reader users wouldn't know when the action succeeded.
+**Action:** Always pair `onclick` with `onkeydown` for interactive elements that aren't native `<button>` or `<a>` tags. Ensure they have `role="button"` and `tabindex="0"`. Add `aria-live="polite"` to dynamically shown success/feedback text.
