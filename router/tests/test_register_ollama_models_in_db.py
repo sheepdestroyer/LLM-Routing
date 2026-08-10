@@ -152,7 +152,11 @@ async def test_register_ollama_models_config_load_exception(mock_to_thread, mock
     mock_response.status_code = 200
     mock_client.post.return_value = mock_response
 
-    mock_to_thread.side_effect = Exception("Config parse error")
+    def mock_to_thread_effect(func, *args, **kwargs):
+        if func == os.path.exists:
+            return True
+        raise Exception("Config parse error")
+    mock_to_thread.side_effect = mock_to_thread_effect
 
     await _register_ollama_models_in_db("test_master_key")
 
