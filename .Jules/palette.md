@@ -1,0 +1,3 @@
+## 2026-05-18 - Keyboard Accessibility for Custom Interactive Elements
+**Learning:** In this application, custom interactive elements like copy-to-clipboard banners are built using `div` tags instead of semantic buttons. Without proper ARIA roles and keyboard event handlers, these elements are completely inaccessible to keyboard users and screen readers, hiding important functionality.
+**Action:** When adding or auditing custom interactive `div` elements, always ensure they include `role="button"`, `tabindex="0"`, `aria-label`, and explicitly handle `onkeydown` events (specifically mapping Enter and Space keys to the click action) to maintain keyboard accessibility, alongside `:focus-visible` states for visual feedback.
