@@ -8,7 +8,6 @@ all 5 triage levels and validates the gateway's routing responses.
 """
 
 import httpx
-import json
 import time
 import os
 import sys
