@@ -892,16 +892,17 @@ async def _register_ollama_models_in_db(master_key: str):
         "./litellm/config.yaml",
     ]
 
-    def _load_yaml(p):
-        """Helper to load a YAML file safely."""
-        with open(p, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+    async def _load_yaml(p):
+        """Helper to load a YAML file safely asynchronously."""
+        async with aiofiles.open(p, "r", encoding="utf-8") as f:
+            content = await f.read()
+            return await asyncio.to_thread(yaml.safe_load, content)
 
     loaded_from_config = False
     for path in config_paths_to_try:
-        if path:
+        if path and await asyncio.to_thread(os.path.exists, path):
             try:
-                litellm_config = await asyncio.to_thread(_load_yaml, path)
+                litellm_config = await _load_yaml(path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
