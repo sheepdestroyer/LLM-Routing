@@ -622,7 +622,7 @@ def load_persisted_stats():
             logger.error(f"Failed to load persisted stats: {e}")
 
 
-def _atomic_write_json_sync(path: str, data) -> None:
+def _atomic_write_json_sync(path: str, serialized_data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
@@ -635,7 +635,10 @@ def _atomic_write_json_sync(path: str, data) -> None:
             raise
 
         with f:
-            json.dump(data, f, indent=2)
+            if isinstance(serialized_data, str):
+                f.write(serialized_data)
+            else:
+                json.dump(serialized_data, f, indent=2)
         os.replace(tmp_path, path)
         written = True
     finally:
@@ -649,14 +652,13 @@ def _atomic_write_json_sync(path: str, data) -> None:
 async def _atomic_write_json_async(path: str, data) -> None:
     """Asynchronously write JSON data to path via thread pool executor.
 
-    Deep-copies the data to prevent concurrent modification from the main thread
-    while the executor thread is serializing it.
+    Serializes the data to a JSON string first (which avoids a slow deepcopy),
+    then offloads the synchronous file write to an executor.
     """
     loop = asyncio.get_running_loop()
-    data_copy = copy.deepcopy(data)
-    await loop.run_in_executor(None, _atomic_write_json_sync, path, data_copy)
-
-
+    # Serialize to string which avoids the need for a deep copy, as string is immutable
+    serialized_data = json.dumps(data, indent=2)
+    await loop.run_in_executor(None, _atomic_write_json_sync, path, serialized_data)
 _last_stats_save = 0.0
 
 
