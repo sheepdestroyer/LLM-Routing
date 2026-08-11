@@ -68,9 +68,14 @@
             position: relative;
         }
 
-        .oauth-banner-cmd:hover,
+        .oauth-banner-cmd:hover {
+            background: rgba(0, 0, 0, 0.5);
+        }
+
         .oauth-banner-cmd:focus-visible {
             background: rgba(0, 0, 0, 0.5);
+            outline: 2px solid #818cf8;
+            outline-offset: 2px;
         }
 
         .oauth-banner-cmd .copied-tooltip {
