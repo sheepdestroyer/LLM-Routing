@@ -43,37 +43,35 @@ Note: Throughout this checklist, the production host SSH alias is represented by
 - HAProxy SSL cert: `<prod-home>/haproxy/certs/<prod-domain>.pem`
 - HAProxy config: `<prod-home>/haproxy/haproxy.cfg`
 
-### Initial Provisioning (One-Time Setup on New Host)
-```bash
-git clone https://github.com/sheepdestroyer/LLM-Routing.git <prod-home>/LLM-Routing
-```
+### Production Deployment (Gitless Minimal Deploy using GHCR Releases)
+Production host does not require a full `git` repository checkout or local container build toolchain. Production pulls pre-built, tested release container images from GHCR (`ghcr.io/sheepdestroyer/llm-routing:<VERSION>`) and consumes the lightweight runtime deployment bundle.
 
-### Production Update Deployment (Standard Minimal Deploy after PR merges)
 ```bash
-# 1. Navigate to deployment directory and pull latest master changes
-ssh <prod-host> "cd <prod-home>/LLM-Routing && git fetch origin master && git pull --rebase origin master"
+# 1. Download minimal deployment bundle for target release (e.g. v0.1.18 or latest)
+mkdir -p <prod-home>/LLM-Routing
+curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.18/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
 
-# 2. Deploy the stack (automatically triggers pre-deploy database backup & restarts/rebuilds podman containers)
-ssh <prod-host> "cd <prod-home>/LLM-Routing && ./start-stack.sh --full-rebuild"
+# 2. Deploy stack pulling GHCR container image (automatically triggers pre-deploy DB backup & restarts podman containers)
+cd <prod-home>/LLM-Routing && ROUTER_IMAGE=ghcr.io/sheepdestroyer/llm-routing:v0.1.18 ./start-stack.sh --pull
 
 # 3. Ensure production HAProxy is running
-ssh <prod-host> "podman rm -f production-haproxy || true"
-ssh <prod-host> "podman run -d --name production-haproxy --restart always --net host \
+podman rm -f production-haproxy || true
+podman run -d --name production-haproxy --restart always --net host \
   -v <prod-home>/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro \
   -v <prod-home>/haproxy/certs:/usr/local/etc/haproxy/certs:ro \
-  docker.io/library/haproxy:alpine"
+  docker.io/library/haproxy:alpine
 
 # 4. Start (or restart) the host-side agy daemon
-ssh <prod-host> "pkill -f host_agy_daemon.py || true"
-ssh <prod-host> "nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &"
+pkill -f host_agy_daemon.py || true
+nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &
 
 # 5. Verify end-to-end dashboard health
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
-ssh <prod-host> "curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-domain>/llm-routing/dashboard" | head -5
+curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-domain>/llm-routing/dashboard | head -5
 ```
 
 ### Deployment Guidelines & Data Integrity
-- **Non-Destructive Deployments**: Never execute `rm -rf <prod-home>/LLM-Routing` during production updates. Use `git pull --rebase origin master` to preserve persistent volume data in `<prod-home>/LLM-Routing/data` and database backups in `<prod-home>/LLM-Routing/backups/`.
+- **Non-Destructive Deployments**: Never execute `rm -rf <prod-home>/LLM-Routing` during production updates. Unpack release archives directly or use `start-stack.sh --pull` to preserve persistent volume data in `<prod-home>/LLM-Routing/data` and database backups in `<prod-home>/LLM-Routing/backups/`.
 - **Pre-Deploy Backups**: `start-stack.sh` automatically runs `./scripts/backup.sh` before modifying any container or configuration. Backups are stored in `LLM-Routing/backups/` and retained for 14 days.
 - **Database Restoration**: If a volume reset is ever required, restore database dumps using:
   - `podman exec -i prod-router-pod-postgres-db pg_restore -U postgres -d postgres --clean --if-exists < backups/postgres_db_<TIMESTAMP>.dump`
@@ -82,8 +80,8 @@ ssh <prod-host> "curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-
   the agent terminal (DBus is not connected). Start the daemon manually with `nohup` as
   shown above, or instruct the user to run it in their own session.
 - **Sudo Password Precaution**: Always preserve exact bytes (including trailing spaces or newlines) when reading `~/.sudo_password` (e.g. `'your_password_here   '`). Stripping whitespace will cause authentication to fail.
-- `start-stack.sh` without `--full-rebuild` will do a fast pod restart (reuses images).
-  Use `--full-rebuild` after code changes or image updates.
+- `start-stack.sh --pull` pulls pre-built release container images from GHCR without building locally.
+  Use `--full-rebuild` only in local development (`DEV_ENV_FILE=.env.dev`).
 - **GitHub CLI Authentication**: If running `gh` commands fails with a 401 error, ensure that `GITHUB_TOKEN` is exported (e.g., mapped from `GITHUB_MCP_PAT` in `~/.bashrc` via `export GITHUB_TOKEN="$GITHUB_MCP_PAT"`).
 
 ## GitHub API & Operations Policy
