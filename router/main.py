@@ -723,10 +723,8 @@ def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
 
     excess = len(triage_cache) - max_size
     if excess > 0:
-        for _ in range(excess):
-            # next(iter(dict)) gets the first (oldest) key in O(1) time
-            first_key = next(iter(triage_cache))
-            triage_cache.pop(first_key, None)
+        for k in list(triage_cache.keys())[:excess]:
+            triage_cache.pop(k, None)
 
 
 async def _periodic_triage_cache_cleanup():
@@ -1284,6 +1282,7 @@ async def classify_request(
             if len(triage_cache) >= MAX_TRIAGE_CACHE_SIZE:
                 # Batch evict 10% of the cache to avoid O(N log N) sorting cost per insertion
                 cleanup_triage_cache(int(MAX_TRIAGE_CACHE_SIZE * 0.9))
+            triage_cache.pop(normalized_prompt, None)
             triage_cache[normalized_prompt] = (decision, time.time())
             return decision, latency, False, raw_result
 
