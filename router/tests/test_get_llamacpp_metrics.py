@@ -1,8 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-import httpx
-
 from router.main import get_llamacpp_metrics
 
 @pytest.fixture
