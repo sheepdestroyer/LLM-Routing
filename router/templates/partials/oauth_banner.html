@@ -8,7 +8,7 @@
                     <div style="opacity: 0.8; font-size: 13px;">{{ data.oauth_status.detail }}. The agy proxy Tier 1 (Gemini) will timeout on every request, adding ~120s latency.</div>
                 </div>
             </div>
-            <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })">
+            <div class="oauth-banner-cmd" role="button" tabindex="0" aria-label="Copy agy auth login command" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })" onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }">
                 <span class="copied-tooltip">Copied!</span>
                 $ agy auth login
             </div>
@@ -24,7 +24,7 @@
                     <div style="opacity: 0.8; font-size: 13px;">{{ data.oauth_status.detail }}. Run the command to authenticate.</div>
                 </div>
             </div>
-            <div class="oauth-banner-cmd" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })">
+            <div class="oauth-banner-cmd" role="button" tabindex="0" aria-label="Copy agy auth login command" onclick="navigator.clipboard.writeText('agy auth login').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); })" onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }">
                 <span class="copied-tooltip">Copied!</span>
                 $ agy auth login
             </div>
