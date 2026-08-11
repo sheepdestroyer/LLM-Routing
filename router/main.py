@@ -631,7 +631,7 @@ def load_persisted_stats():
             logger.error(f"Failed to load persisted stats: {e}")
 
 
-def _atomic_write_json_sync(path: str, data) -> None:
+def _atomic_write_json_sync(path: str, serialized_data) -> None:
     """Synchronously write JSON data to path using atomic temp-file + os.replace."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
@@ -644,7 +644,10 @@ def _atomic_write_json_sync(path: str, data) -> None:
             raise
 
         with f:
-            json.dump(data, f, indent=2)
+            if isinstance(serialized_data, str):
+                f.write(serialized_data)
+            else:
+                json.dump(serialized_data, f, indent=2)
         os.replace(tmp_path, path)
         written = True
     finally:
@@ -658,14 +661,18 @@ def _atomic_write_json_sync(path: str, data) -> None:
 async def _atomic_write_json_async(path: str, data) -> None:
     """Asynchronously write JSON data to path via thread pool executor.
 
-    Deep-copies the data to prevent concurrent modification from the main thread
-    while the executor thread is serializing it.
+    Takes a fast shallow snapshot on the event loop thread and offloads
+    JSON serialization and file I/O to an executor to avoid blocking.
     """
     loop = asyncio.get_running_loop()
-    data_copy = copy.deepcopy(data)
-    await loop.run_in_executor(None, _atomic_write_json_sync, path, data_copy)
+    if isinstance(data, dict):
+        snapshot = {k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v for k, v in data.items()}
+    elif isinstance(data, list):
+        snapshot = list(data)
+    else:
+        snapshot = data
 
-
+    await loop.run_in_executor(None, _atomic_write_json_sync, path, snapshot)
 _last_stats_save = 0.0
 
 
