@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock
 from router.agy_proxy import _wrap_response, _is_quota_exhausted
 
 @pytest.mark.parametrize(
