@@ -652,13 +652,18 @@ def _atomic_write_json_sync(path: str, serialized_data) -> None:
 async def _atomic_write_json_async(path: str, data) -> None:
     """Asynchronously write JSON data to path via thread pool executor.
 
-    Serializes the data to a JSON string first (which avoids a slow deepcopy),
-    then offloads the synchronous file write to an executor.
+    Takes a fast shallow snapshot on the event loop thread and offloads
+    JSON serialization and file I/O to an executor to avoid blocking.
     """
     loop = asyncio.get_running_loop()
-    # Serialize to string which avoids the need for a deep copy, as string is immutable
-    serialized_data = json.dumps(data, indent=2)
-    await loop.run_in_executor(None, _atomic_write_json_sync, path, serialized_data)
+    if isinstance(data, dict):
+        snapshot = {k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v for k, v in data.items()}
+    elif isinstance(data, list):
+        snapshot = list(data)
+    else:
+        snapshot = data
+
+    await loop.run_in_executor(None, _atomic_write_json_sync, path, snapshot)
 _last_stats_save = 0.0
 
 
