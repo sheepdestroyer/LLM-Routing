@@ -894,6 +894,8 @@ async def _register_ollama_models_in_db(master_key: str):
 
     def _load_yaml(p):
         """Helper to load a YAML file safely."""
+        if not os.path.exists(p):
+            return None
         with open(p, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
@@ -3589,8 +3591,9 @@ async def get_dashboard_data():
     roster_table_html = ""
     try:
         if os.path.exists(roster_path):
-            with open(roster_path, "r", encoding="utf-8") as f:
-                roster_data = json.load(f)
+            async with aiofiles.open(roster_path, "r", encoding="utf-8") as f:
+                roster_content = await f.read()
+                roster_data = json.loads(roster_content)
 
             import html as html_lib
             rows = ""

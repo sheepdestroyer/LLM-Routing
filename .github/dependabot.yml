@@ -11,8 +11,8 @@ version: 2
 #    type: "docker-registry"
 #    url: "https://index.docker.io"
 #    username: "${{secrets.DOCKERHUB_USERNAME}}"
-#    password: "${{secrets.DOCKERHUB_TOKEN}}"##
-##
+#    password: "${{secrets.DOCKERHUB_TOKEN}}"
+
 updates:
   # Container image scanning for YAML manifests (pod.yaml, k8s manifests, helm values, etc.)
   - package-ecosystem: "docker"
@@ -40,6 +40,8 @@ updates:
       - dependency-name: "pgvector/pgvector"
         update-types: ["version-update:semver-major"]
       - dependency-name: "clickhouse/clickhouse-server"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "valkey/valkey"
         update-types: ["version-update:semver-major"]
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
