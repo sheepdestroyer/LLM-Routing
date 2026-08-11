@@ -1,0 +1,3 @@
+## 2026-08-11 - Custom div accessibility requires interactive handlers
+**Learning:** Making custom interactive elements (like copy-to-clipboard banners) accessible with just `role="button"` and `tabindex="0"` is not enough; they also require explicit keyboard event handlers (`onkeydown`) to respond to the Enter or Space keys for screen readers and keyboard users, otherwise the inline `onclick` handler will be ignored.
+**Action:** When adding accessibility to `div` tags, always include both the semantic attributes and an `onkeydown="if(event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.click(); }"` to properly route the event.
