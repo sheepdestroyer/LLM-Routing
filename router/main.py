@@ -894,6 +894,8 @@ async def _register_ollama_models_in_db(master_key: str):
 
     def _load_yaml(p):
         """Helper to load a YAML file safely."""
+        if not os.path.exists(p):
+            return None
         with open(p, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
