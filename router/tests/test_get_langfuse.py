@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
 import os
-import sys
 
 from router.main import get_langfuse
 import router.main
