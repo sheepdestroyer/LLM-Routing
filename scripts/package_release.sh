@@ -3,6 +3,9 @@ set -euo pipefail
 
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT_TAR="${1:-llm-routing-deploy.tar.gz}"
+if [[ "$OUTPUT_TAR" != /* ]]; then
+    OUTPUT_TAR="$(pwd)/$OUTPUT_TAR"
+fi
 
 cd "$WORKDIR"
 echo "📦 Packaging minimal release deployment bundle -> ${OUTPUT_TAR}..."
