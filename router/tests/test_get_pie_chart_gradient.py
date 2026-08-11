@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch
 from router.main import get_pie_chart_gradient, TOOL_COLORS, stats
 
