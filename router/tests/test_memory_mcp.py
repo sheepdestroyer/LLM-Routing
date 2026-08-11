@@ -2,7 +2,7 @@ import json
 import re
 import time
 import io
-import sys
+
 import httpx
 import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
