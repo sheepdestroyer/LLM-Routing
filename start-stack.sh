@@ -820,8 +820,10 @@ identifier_prefix = re.compile(r"\bllm-routing-(?=(?:" + "|".join(identifier_suf
 
 encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 # Derived by derive_external_service_urls(), shared with render_pod_yaml.
-proxy_base_url = os.environ["PROXY_BASE_URL_DERIVED"]
-nextauth_url = os.environ["NEXTAUTH_URL_DERIVED"]
+proxy_base_url = os.environ.get("PROXY_BASE_URL_DERIVED") or os.environ.get("PROXY_BASE_URL", "https://litellm.vendeuvre.lan")
+nextauth_url = os.environ.get("NEXTAUTH_URL_DERIVED") or os.environ.get("NEXTAUTH_URL", "https://langfuse.vendeuvre.lan")
+llama_server_url = os.environ.get("LLAMA_SERVER_URL_DERIVED") or os.environ.get("LLAMA_SERVER_URL", "https://llama.vendeuvre.lan")
+llama_classifier_url = os.environ.get("LLAMA_CLASSIFIER_URL_DERIVED") or os.environ.get("LLAMA_CLASSIFIER_URL", "https://llama.vendeuvre.lan/v1")
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
@@ -848,8 +850,8 @@ repl = {
     "PROXY_BASE_URL_PLACEHOLDER": proxy_base_url,
     "PUBLIC_BASE_URL_PLACEHOLDER": os.environ["PUBLIC_BASE_URL"].rstrip("/"),
     "ROUTING_DOMAIN_PLACEHOLDER": os.environ["ROUTING_DOMAIN"],
-    "LLAMA_CLASSIFIER_URL_PLACEHOLDER": os.environ["LLAMA_CLASSIFIER_URL"],
-    "LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"],
+    "LLAMA_CLASSIFIER_URL_PLACEHOLDER": llama_classifier_url,
+    "LLAMA_SERVER_URL_PLACEHOLDER": llama_server_url,
     "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
     "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
     "EFFECTIVE_ENV_FILE_PLACEHOLDER": os.environ["EFFECTIVE_ENV_FILE"],
