@@ -1,3 +1,11 @@
+## 2024-08-10 - Keyboard accessibility for interactive elements
+**Learning:** Using custom `div` elements for interactive actions creates non-semantic markup, requires manual `tabindex` / `onkeydown` handlers, and lacks screen-reader feedback.
+**Action:** Replace interactive custom `div` or `span` elements with native `<button type="button">` elements, and ensure dynamic status tooltips include `role="status"` and `aria-live="polite"`.
+
 ## 2026-08-12 - Accessible External Link Context & Focus Indicators
 **Learning:** Using `aria-label` on links that already contain visible text overrides child DOM nodes for screen readers. Using `aria-describedby` with visually hidden text (`.visually-hidden`) preserves the link text while adding new-tab context.
 **Action:** Always add `aria-hidden="true"` to decorative icons/arrows, `rel="noopener noreferrer"` to external links, `aria-describedby` for new-tab context on links with visible text, and define `:focus-visible` styles for interactive elements.
+
+## 2026-08-12 - Visible keyboard focus indicators (:focus-visible)
+**Learning:** Keyboard navigation via Tab key requires clear visual focus indicators on interactive elements (`.btn`, `#visualizer-link`, `.oauth-banner-cmd`) to satisfy WCAG SC 2.4.7 (Focus Visible) without cluttering mouse click UI state.
+**Action:** Apply `:focus-visible` styling with strong contrast outlines (`2px solid #818cf8`) and appropriate `outline-offset` across all interactive dashboard links and buttons.
