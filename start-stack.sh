@@ -698,19 +698,25 @@ safe_pod_teardown() {
 derive_external_service_urls() {
     local values
     values=$(python3 -c '
-import os
+import os, re
 from urllib.parse import urlparse
 public = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
 routing_domain = os.environ.get("ROUTING_DOMAIN") or "vendeuvre.lan"
 parsed = urlparse(public if "://" in public else f"https://{public}")
 scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "https"
-host = parsed.netloc or parsed.path.split("/", 1)[0] or routing_domain
-print(os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host}")
-print(os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host}")
+host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "") or routing_domain
+host_base = re.sub(r"^dashboard\.", "", host)
+host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+print(os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host_base}")
+print(os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host_base}")
+print(os.environ.get("LLAMA_SERVER_URL") or f"{scheme}://llama.{host_base}")
+print(os.environ.get("LLAMA_CLASSIFIER_URL") or f"{scheme}://llama.{host_base}/v1")
 ') || return 1
-    PROXY_BASE_URL_DERIVED=${values%%$'\n'*}
-    NEXTAUTH_URL_DERIVED=${values#*$'\n'}
-    export PROXY_BASE_URL_DERIVED NEXTAUTH_URL_DERIVED
+    PROXY_BASE_URL_DERIVED=$(echo "$values" | sed -n '1p')
+    NEXTAUTH_URL_DERIVED=$(echo "$values" | sed -n '2p')
+    LLAMA_SERVER_URL_DERIVED=$(echo "$values" | sed -n '3p')
+    LLAMA_CLASSIFIER_URL_DERIVED=$(echo "$values" | sed -n '4p')
+    export PROXY_BASE_URL_DERIVED NEXTAUTH_URL_DERIVED LLAMA_SERVER_URL_DERIVED LLAMA_CLASSIFIER_URL_DERIVED
 }
 
 # Pre-deploy database backup (runs before any pod modification)
