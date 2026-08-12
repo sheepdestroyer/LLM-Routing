@@ -97,8 +97,8 @@ def test_router_quadlet_reasserts_overlayed_llama_urls_after_env_source():
     assert "LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER" in template
     assert template.index("LLAMA_SERVER_URL=LLAMA_SERVER_URL_PLACEHOLDER") < template.index("exec uvicorn")
     script = (ROOT / "start-stack.sh").read_text()
-    assert '"LLAMA_CLASSIFIER_URL_PLACEHOLDER": os.environ["LLAMA_CLASSIFIER_URL"]' in script
-    assert '"LLAMA_SERVER_URL_PLACEHOLDER": os.environ["LLAMA_SERVER_URL"]' in script
+    assert '"LLAMA_CLASSIFIER_URL_PLACEHOLDER": llama_classifier_url' in script
+    assert '"LLAMA_SERVER_URL_PLACEHOLDER": llama_server_url' in script
 
 
 def test_containers_source_the_merged_effective_environment():
