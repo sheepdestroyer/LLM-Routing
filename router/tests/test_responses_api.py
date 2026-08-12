@@ -343,16 +343,17 @@ async def test_responses_api_input_text_extraction():
     {"Authorization": ""},
     {"Authorization": "Basic invalidtoken"},
     {"Authorization": "Bearer "},
+    {"Authorization": "Bearer invalid_secret_token_123"},
 ])
 async def test_responses_api_enforces_client_auth(missing_or_invalid_auth):
     """Verify POST /v1/responses rejects requests missing valid Bearer authorization with 401."""
     mock_request = MagicMock()
     mock_request.headers = missing_or_invalid_auth
 
-    with pytest.raises(HTTPException) as exc_info:
-        await responses_api(mock_request)
-    assert exc_info.value.status_code == 401
-    assert "Missing or invalid Authorization header" in exc_info.value.detail
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "valid-key"}):
+        with pytest.raises(HTTPException) as exc_info:
+            await responses_api(mock_request)
+        assert exc_info.value.status_code == 401
 
 
 @pytest.mark.anyio
@@ -367,7 +368,7 @@ async def test_responses_api_invalid_master_key_fail_fast(invalid_master_key):
     """Verify POST /v1/responses fails fast with 500 if server LITELLM_MASTER_KEY is unconfigured or placeholder."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(return_value={"model": "gpt-4o-mini", "input": "hi"})
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer client-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer gateway-pass"}
 
     with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key}), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):

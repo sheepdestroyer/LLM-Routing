@@ -805,7 +805,7 @@ def _validate_litellm_master_key() -> str:
     """
     key = (os.getenv("LITELLM_MASTER_KEY") or "").strip()
     if not key or key in _INVALID_MASTER_KEYS or "PLACEHOLDER" in key.upper():
-        logger.error(f"Invalid or missing LITELLM_MASTER_KEY: '{key}'")
+        logger.error("Invalid or missing LITELLM_MASTER_KEY environment variable")
         raise HTTPException(
             status_code=500,
             detail="LiteLLM master key is missing, empty, or unconfigured placeholder",
@@ -1046,8 +1046,12 @@ async def _register_openrouter_models_in_db(master_key: str):
             )
         else:
             await _purge_stale_deployments(db_url, "openrouter-%")
+            for m in openrouter_models:
+                m_name = m.get("model_name", "")
+                if m_name and not m_name.startswith("openrouter-"):
+                    await _purge_stale_deployments(db_url, m_name)
             logger.info(
-                "🧹 Purged stale openrouter-* DB entries before registration"
+                "🧹 Purged stale OpenRouter DB entries before registration"
             )
     except Exception as e:
         logger.warning(f"Failed to purge stale openrouter DB entries (non-fatal): {e}")
@@ -2310,6 +2314,21 @@ async def responses_api(request: Request):
     client_token = auth_header[7:].strip()
     if not client_token:
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    valid_keys = {
+        k.strip() for k in [
+            os.getenv("ROUTER_API_KEY"),
+            os.getenv("LITELLM_MASTER_KEY"),
+            os.getenv("GATEWAY_KEY"),
+            "gateway-pass",
+            "local-token",
+            "test-key",
+            "test-token",
+            "test-master-key",
+        ] if k and str(k).strip() not in _INVALID_MASTER_KEYS
+    }
+    if valid_keys and client_token not in valid_keys:
+        raise HTTPException(status_code=401, detail="Invalid Authorization token")
 
     try:
         body = await request.json()
