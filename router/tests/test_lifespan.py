@@ -18,6 +18,7 @@ async def test_lifespan_happy_path():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync_cooldowns, \
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
+         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
          patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
          patch("router.main.push_aggregate_scores", new_callable=AsyncMock) as mock_push_scores, \
          patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock) as mock_cleanup, \
@@ -30,6 +31,7 @@ async def test_lifespan_happy_path():
         mock_sync_cooldowns.assert_called_once()
         mock_client.get.assert_called_once()
         mock_sync_roster.assert_called_once_with("test-key")
+        mock_register_openrouter.assert_called_once_with("test-key")
         mock_register_ollama.assert_called_once_with("test-key")
 
 @pytest.mark.anyio
@@ -43,6 +45,7 @@ async def test_lifespan_timeout_path():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock), \
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
+         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
          patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
          patch("router.main.push_aggregate_scores", new_callable=AsyncMock), \
          patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock), \
@@ -50,13 +53,10 @@ async def test_lifespan_timeout_path():
          patch("router.main.logger.warning") as mock_warning, \
          patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
 
-        # In timeout path we mock range(max_wait) to avoid running 180 loops in tests
-        # or we just mock max_wait = 2 ? We can patch `max_wait` by patching or simply let the loop run with sleep mocked
-
-        # But max_wait is hardcoded to 180
         async with lifespan(app):
             pass
 
         assert mock_client.get.call_count == 180
         assert mock_sleep.call_count == 180
         mock_warning.assert_any_call("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
+

@@ -508,16 +508,19 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
 
     If PUBLIC_BASE_URL (or BASE_URL/BASEURL) is set with a valid external host,
     derives canonical HTTPS endpoints (https://llama.<host> and https://llama.<host>/v1)
-    unless explicit HTTPS environment variables are provided.
+    unless explicit environment variables (LLAMA_SERVER_URL / LLAMA_CLASSIFIER_URL) are provided.
 
     Preserves localhost HTTP fallbacks for isolated unit test environments.
     """
-    raw_server = config.get("llama_server_url") or "http://127.0.0.1:8080"
+    env_server = os.getenv("LLAMA_SERVER_URL")
+    env_classifier = os.getenv("LLAMA_CLASSIFIER_URL")
+
+    raw_server = env_server or config.get("llama_server_url") or "http://127.0.0.1:8080"
     if isinstance(raw_server, str) and raw_server.startswith("os.environ/"):
         env_var = raw_server.split("/", 1)[1]
         raw_server = os.environ.get(env_var, "")
 
-    raw_classifier = router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
+    raw_classifier = env_classifier or router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
     if isinstance(raw_classifier, str) and raw_classifier.startswith("os.environ/"):
         env_var = raw_classifier.split("/", 1)[1]
         raw_classifier = os.environ.get(env_var, "")
@@ -538,7 +541,9 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
             canonical_classifier = f"{scheme}://llama.{host_base}/v1"
 
     # Resolve server URL
-    if isinstance(raw_server, str) and raw_server.startswith("https://"):
+    if env_server:
+        resolved_server = env_server
+    elif isinstance(raw_server, str) and raw_server.startswith("https://"):
         resolved_server = raw_server
     elif canonical_server:
         resolved_server = canonical_server
@@ -551,7 +556,9 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
         resolved_server = "http://127.0.0.1:8080"
 
     # Resolve classifier URL
-    if isinstance(raw_classifier, str) and raw_classifier.startswith("https://"):
+    if env_classifier:
+        resolved_classifier = env_classifier
+    elif isinstance(raw_classifier, str) and raw_classifier.startswith("https://"):
         resolved_classifier = raw_classifier
     elif canonical_classifier:
         resolved_classifier = canonical_classifier
@@ -777,6 +784,35 @@ async def _periodic_triage_cache_cleanup():
             logger.warning(f"Error during triage cache cleanup: {e}")
 
 
+_INVALID_MASTER_KEYS = {
+    "",
+    "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER",
+    "LITELLM_MASTER_KEY_PLACEHOLDER",
+    "os.environ/LITELLM_MASTER_KEY",
+    "YOUR_LITELLM_MASTER_KEY",
+    "sk-1234",
+}
+
+
+def _validate_litellm_master_key() -> str:
+    """Validate LITELLM_MASTER_KEY environment variable.
+
+    Returns:
+        The valid master key string.
+
+    Raises:
+        HTTPException(500): If master key is missing, empty, or placeholder string.
+    """
+    key = (os.getenv("LITELLM_MASTER_KEY") or "").strip()
+    if not key or key in _INVALID_MASTER_KEYS or "PLACEHOLDER" in key.upper():
+        logger.error(f"Invalid or missing LITELLM_MASTER_KEY: '{key}'")
+        raise HTTPException(
+            status_code=500,
+            detail="LiteLLM master key is missing, empty, or unconfigured placeholder",
+        )
+    return key
+
+
 async def _purge_stale_deployments(db_url: str, pattern: str):
     """Purge stale deployments matching the pattern from LiteLLM's DB."""
     import asyncpg
@@ -914,6 +950,129 @@ async def sync_adaptive_router_roster(master_key: str):
                 failed += 1
                 logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
     logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers")
+
+
+async def _register_openrouter_models_in_db(master_key: str):
+    """Register static OpenRouter models from config via /model/new so they become DB models."""
+    if not master_key:
+        logger.warning(
+            "No LiteLLM master key provided — skipping OpenRouter DB registration"
+        )
+        return
+
+    admin_url = LITELLM_URL
+    headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
+
+    openrouter_models = []
+    litellm_config_path = os.getenv(
+        "LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml"
+    )
+
+    config_paths_to_try = [
+        litellm_config_path,
+        str(Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"),
+        "./litellm/config.yaml",
+    ]
+
+    def _load_yaml(p):
+        if not os.path.exists(p):
+            return None
+        with open(p, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    loaded_from_config = False
+    for path in config_paths_to_try:
+        if path:
+            try:
+                litellm_config = await asyncio.to_thread(_load_yaml, path)
+                if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
+                    for item in litellm_config["model_list"]:
+                        if isinstance(item, dict):
+                            model_name = item.get("model_name", "")
+                            litellm_params = item.get("litellm_params", {})
+                            model_target = (
+                                litellm_params.get("model", "")
+                                if isinstance(litellm_params, dict)
+                                else ""
+                            )
+                            if (
+                                isinstance(model_name, str)
+                                and model_name.startswith("openrouter-")
+                            ) or (
+                                isinstance(model_target, str)
+                                and model_target.startswith("openrouter/")
+                            ):
+                                openrouter_models.append(copy.deepcopy(item))
+                    if openrouter_models:
+                        logger.info(
+                            f"Loaded {len(openrouter_models)} OpenRouter model configurations dynamically from {path}"
+                        )
+                        loaded_from_config = True
+                        break
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load/parse LiteLLM config for OpenRouter at {path}: {e}"
+                )
+
+    if not loaded_from_config:
+        logger.warning(
+            "Could not load OpenRouter models from config.yaml, falling back to static definitions"
+        )
+        openrouter_models = [
+            {
+                "model_name": "openrouter-auto",
+                "litellm_params": {
+                    "model": "openrouter/openrouter/auto",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 2000000,
+                    "max_input_tokens": 2000000,
+                    "is_public_model_group": True,
+                },
+            }
+        ]
+
+    # Purge stale openrouter DB entries before re-registering
+    try:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            logger.warning(
+                "DATABASE_URL is not set; skipping purge of stale openrouter-* DB entries"
+            )
+        else:
+            await _purge_stale_deployments(db_url, "openrouter-%")
+            logger.info(
+                "🧹 Purged stale openrouter-* DB entries before registration"
+            )
+    except Exception as e:
+        logger.warning(f"Failed to purge stale openrouter DB entries (non-fatal): {e}")
+
+    client = get_http_client()
+    registered = 0
+    failed = 0
+    for payload in openrouter_models:
+        try:
+            r = await client.post(
+                f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
+            )
+            if r.status_code in (200, 201):
+                registered += 1
+            else:
+                failed += 1
+                logger.warning(
+                    f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
+                )
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
+    logger.info(
+        f"📊 OpenRouter DB registration: {registered} registered, {failed} failed"
+    )
 
 
 async def _register_ollama_models_in_db(master_key: str):
@@ -1091,10 +1250,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Roster sync failed: {e}")
 
-        # Register static ollama models via /model/new so they become DB models.
-        # The ollama_chat provider's internal model lookup overrides static config
-        # model_info at the group aggregation level (/model_group/info), causing
-        # features and token limits to show as null/false. DB models get priority.
+        try:
+            await _register_openrouter_models_in_db(litellm_master_key)
+        except Exception as e:
+            logger.warning(f"OpenRouter DB registration failed (non-fatal): {e}")
+
         try:
             await _register_ollama_models_in_db(litellm_master_key)
         except Exception as e:
@@ -2143,6 +2303,14 @@ async def responses_api(request: Request):
     when an auto model (e.g. llm-routing-auto-free) is requested, while supporting model aliases
     (such as gpt-4o-mini, local-qwen-3.6-hass) and tool/streaming executions.
     """
+    # Enforce client authentication
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    client_token = auth_header[7:].strip()
+    if not client_token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
     try:
         body = await request.json()
     except Exception:
@@ -2212,7 +2380,7 @@ async def responses_api(request: Request):
     body_to_send = body.copy()
     body_to_send["model"] = target_model
 
-    litellm_key = os.getenv("LITELLM_MASTER_KEY")
+    litellm_key = _validate_litellm_master_key()
     headers = {
         "Authorization": f"Bearer {litellm_key}",
         "Content-Type": request.headers.get("content-type", "application/json"),
@@ -2452,16 +2620,21 @@ async def chat_completions(request: Request):
                 _prop_ctx = _make_prop_ctx(_trace_session_id, _trace_user_id)
                 if _prop_ctx is not None:
                     _prop_ctx.__enter__()
-            parent_obs = lf.start_observation(
-                trace_context={"trace_id": langfuse_trace_id},
-                name=f"triage-{client_model}",
-                input=last_user_message[:200],
-                level="DEFAULT",
-                metadata={
+            parent_obs_kwargs = {
+                "trace_context": {"trace_id": langfuse_trace_id},
+                "name": f"triage-{client_model}",
+                "input": last_user_message[:200],
+                "level": "DEFAULT",
+                "metadata": {
                     "client_model": client_model,
                     "environment": os.getenv("ENVIRONMENT", "production"),
                 },
-            )
+            }
+            if _trace_session_id:
+                parent_obs_kwargs["session_id"] = _trace_session_id
+            if _trace_user_id:
+                parent_obs_kwargs["user_id"] = _trace_user_id
+            parent_obs = lf.start_observation(**parent_obs_kwargs)
         except Exception as e:
             logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
             langfuse_trace_id = None
@@ -2529,14 +2702,19 @@ async def chat_completions(request: Request):
         # Update the parent Langfuse observation with classification results
         if parent_obs:
             try:
-                parent_obs.update(
-                    output={"tier": target_model, "raw": raw_classification},
-                    metadata={
+                parent_obs_update_kwargs = {
+                    "output": {"tier": target_model, "raw": raw_classification},
+                    "metadata": {
                         "triage_latency_ms": round(triage_latency, 2),
                         "cache_hit": was_cache_hit,
                         "total_requests": stats["total_requests"],
                     },
-                )
+                }
+                if _trace_session_id:
+                    parent_obs_update_kwargs["session_id"] = _trace_session_id
+                if _trace_user_id:
+                    parent_obs_update_kwargs["user_id"] = _trace_user_id
+                parent_obs.update(**parent_obs_update_kwargs)
             except Exception as e:
                 logger.warning(f"Langfuse trace update failed (non-fatal): {e}")
 
@@ -2935,9 +3113,16 @@ async def chat_completions(request: Request):
                 }
 
             backend_api_base = backend_conf["api_base"]
-            backend_api_key = backend_conf["api_key"]
-            if backend_api_key == "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER":
-                backend_api_key = os.getenv("LITELLM_MASTER_KEY", backend_api_key)
+            raw_api_key = backend_conf.get("api_key", "")
+            if (
+                not raw_api_key
+                or raw_api_key in _INVALID_MASTER_KEYS
+                or raw_api_key == os.getenv("LITELLM_MASTER_KEY")
+                or "PLACEHOLDER" in str(raw_api_key).upper()
+            ):
+                backend_api_key = _validate_litellm_master_key()
+            else:
+                backend_api_key = raw_api_key
 
             logger.info(f"Proxying to LiteLLM as model={model_name}")
 
