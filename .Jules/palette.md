@@ -1,6 +1,3 @@
-## 2024-08-10 - Keyboard accessibility for interactive elements
-**Learning:** Using custom `div` elements for interactive actions creates non-semantic markup, requires manual `tabindex` / `onkeydown` handlers, and lacks screen-reader feedback.
-**Action:** Replace interactive custom `div` or `span` elements with native `<button type="button">` elements, and ensure dynamic status tooltips include `role="status"` and `aria-live="polite"`.
-## 2024-08-11 - Accessibility on External Links and Decorative Icons
-**Learning:** Decorative icons inside interactive elements can cause screen reader noise if not hidden, and external links missing `rel="noopener noreferrer"` present minor security risks. In addition, providing focus-visible states significantly aids keyboard navigation.
-**Action:** Always add `aria-hidden="true"` to decorative icons/arrows, `rel="noopener noreferrer"` and descriptive `aria-label`s to external links, and define `:focus-visible` styles for custom UI elements.
+## 2026-08-12 - Accessible External Link Context & Focus Indicators
+**Learning:** Using `aria-label` on links that already contain visible text overrides child DOM nodes for screen readers. Using `aria-describedby` with visually hidden text (`.visually-hidden`) preserves the link text while adding new-tab context.
+**Action:** Always add `aria-hidden="true"` to decorative icons/arrows, `rel="noopener noreferrer"` to external links, `aria-describedby` for new-tab context on links with visible text, and define `:focus-visible` styles for interactive elements.
