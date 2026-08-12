@@ -55,7 +55,7 @@ async def test_proxy_audio_valid_request():
         client = TestClient(app)
         response = client.get("/v1/audio/transcriptions")
         assert response.status_code == 200
-        assert mock_http_client.request.called
+        mock_http_client.request.assert_awaited_once()
         call_kwargs = mock_http_client.request.call_args.kwargs
         assert call_kwargs["url"] == "http://127.0.0.1:4000/v1/audio/transcriptions"
 
