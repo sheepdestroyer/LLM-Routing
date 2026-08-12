@@ -501,19 +501,73 @@ host = config.get("server", {}).get("host", "0.0.0.0")
 port = config.get("server", {}).get("port", 5000)
 
 router_model_conf = config.get("router", {}).get("router_model", {})
-router_api_base = router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
-if isinstance(router_api_base, str):
-    if router_api_base.startswith("os.environ/"):
-        env_var = router_api_base.split("/", 1)[1]
-        router_api_base = os.environ.get(env_var, "")
-        if not router_api_base:
-            if "pytest" in sys.modules:
-                router_api_base = "http://127.0.0.1:8080/v1"
-            else:
-                raise RuntimeError(
-                    f"Configuration error: Environment variable '{env_var}' is missing or empty."
-                )
-    router_api_base = router_api_base.rstrip("/")
+
+
+def _resolve_llama_endpoints() -> tuple[str, str]:
+    """Resolve LLAMA_SERVER_URL and LLAMA_CLASSIFIER_URL preferring canonical HTTPS endpoints.
+
+    If PUBLIC_BASE_URL (or BASE_URL/BASEURL) is set with a valid external host,
+    derives canonical HTTPS endpoints (https://llama.<host> and https://llama.<host>/v1)
+    unless explicit HTTPS environment variables are provided.
+
+    Preserves localhost HTTP fallbacks for isolated unit test environments.
+    """
+    raw_server = config.get("llama_server_url") or "http://127.0.0.1:8080"
+    if isinstance(raw_server, str) and raw_server.startswith("os.environ/"):
+        env_var = raw_server.split("/", 1)[1]
+        raw_server = os.environ.get(env_var, "")
+
+    raw_classifier = router_model_conf.get("api_base") or "http://127.0.0.1:8080/v1"
+    if isinstance(raw_classifier, str) and raw_classifier.startswith("os.environ/"):
+        env_var = raw_classifier.split("/", 1)[1]
+        raw_classifier = os.environ.get(env_var, "")
+
+    # Check for public base URL to derive canonical HTTPS hostname
+    public_base = os.getenv("PUBLIC_BASE_URL") or os.getenv("BASE_URL") or os.getenv("BASEURL")
+    canonical_server = None
+    canonical_classifier = None
+
+    if public_base:
+        parsed = urlparse(public_base if "://" in public_base else f"https://{public_base}")
+        scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
+        host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "")
+        if host and host not in ("localhost", "127.0.0.1", "::1"):
+            host_base = re.sub(r"^dashboard\.", "", host)
+            host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+            canonical_server = f"{scheme}://llama.{host_base}"
+            canonical_classifier = f"{scheme}://llama.{host_base}/v1"
+
+    # Resolve server URL
+    if isinstance(raw_server, str) and raw_server.startswith("https://"):
+        resolved_server = raw_server
+    elif canonical_server:
+        resolved_server = canonical_server
+    elif raw_server:
+        resolved_server = raw_server
+    elif "pytest" in sys.modules:
+        resolved_server = "http://127.0.0.1:8080"
+    else:
+        logger.warning("LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080")
+        resolved_server = "http://127.0.0.1:8080"
+
+    # Resolve classifier URL
+    if isinstance(raw_classifier, str) and raw_classifier.startswith("https://"):
+        resolved_classifier = raw_classifier
+    elif canonical_classifier:
+        resolved_classifier = canonical_classifier
+    elif raw_classifier:
+        resolved_classifier = raw_classifier
+    elif "pytest" in sys.modules:
+        resolved_classifier = "http://127.0.0.1:8080/v1"
+    else:
+        logger.warning("LLAMA_CLASSIFIER_URL env var not set, falling back to http://127.0.0.1:8080/v1")
+        resolved_classifier = "http://127.0.0.1:8080/v1"
+
+    return resolved_server.rstrip("/"), resolved_classifier.rstrip("/")
+
+
+LLAMA_SERVER_URL, LLAMA_CLASSIFIER_URL = _resolve_llama_endpoints()
+router_api_base = LLAMA_CLASSIFIER_URL
 
 router_api_key = router_model_conf.get("api_key")
 if not router_api_key:
@@ -532,21 +586,6 @@ router_model_name = router_model_conf.get("model", "qwen-4b-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
-
-# --- Resolve llama_server_url from config (os.environ/ pattern) ---
-_raw_llama_url = config.get("llama_server_url") or "http://127.0.0.1:8080"
-if isinstance(_raw_llama_url, str) and _raw_llama_url.startswith("os.environ/"):
-    env_var = _raw_llama_url.split("/", 1)[1]
-    _raw_llama_url = os.environ.get(env_var, "")
-    if not _raw_llama_url:
-        if "pytest" in sys.modules:
-            _raw_llama_url = "http://127.0.0.1:8080"
-        else:
-            logger.warning(
-                "LLAMA_SERVER_URL env var not set, falling back to http://127.0.0.1:8080"
-            )
-            _raw_llama_url = "http://127.0.0.1:8080"
-LLAMA_SERVER_URL = str(_raw_llama_url).rstrip("/")
 
 # Default colors for tool visualization badges and charts
 TOOL_COLORS = {

@@ -24,6 +24,8 @@ def clean_env():
         "BASEURL": os.getenv("BASEURL"),
         "BASE_URL": os.getenv("BASE_URL"),
         "ROUTING_DOMAIN": os.getenv("ROUTING_DOMAIN"),
+        "LLAMA_SERVER_URL": os.getenv("LLAMA_SERVER_URL"),
+        "LLAMA_CLASSIFIER_URL": os.getenv("LLAMA_CLASSIFIER_URL"),
     }
     # Clear env
     for k in initial_env:
@@ -134,3 +136,25 @@ def test_local_fallback_ipv4():
     assert lf == "http://127.0.0.1:3001"
     assert ll == "http://127.0.0.1:4000/ui"
     assert lm == "http://127.0.0.1:8080"
+
+
+def test_resolve_llama_endpoints_canonical_https():
+    os.environ["PUBLIC_BASE_URL"] = "https://x570.vendeuvre.lan/llm-routing"
+    server_url, classifier_url = main._resolve_llama_endpoints()
+    assert server_url == "https://llama.x570.vendeuvre.lan"
+    assert classifier_url == "https://llama.x570.vendeuvre.lan/v1"
+
+
+def test_resolve_llama_endpoints_local_fallback():
+    server_url, classifier_url = main._resolve_llama_endpoints()
+    assert server_url == "http://127.0.0.1:8080"
+    assert classifier_url == "http://127.0.0.1:8080/v1"
+
+
+def test_resolve_llama_endpoints_explicit_https_env():
+    os.environ["LLAMA_SERVER_URL"] = "https://custom-llama.domain.com"
+    os.environ["LLAMA_CLASSIFIER_URL"] = "https://custom-classifier.domain.com/v1"
+    server_url, classifier_url = main._resolve_llama_endpoints()
+    assert server_url == "https://custom-llama.domain.com"
+    assert classifier_url == "https://custom-classifier.domain.com/v1"
+
