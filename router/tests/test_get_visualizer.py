@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.responses import HTMLResponse
 from router.main import get_visualizer
-import asyncio
 
 @pytest.mark.anyio
 async def test_get_visualizer_exists():
