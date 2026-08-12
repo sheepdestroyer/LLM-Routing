@@ -22,7 +22,7 @@ pip install --quiet --upgrade pip
 # Runtime deps (from router/Dockerfile)
 pip install --quiet \
     fastapi "pydantic>=2.0,<3.0" uvicorn httpx pyyaml \
-    python-multipart asyncpg langfuse redis aiofiles
+    python-multipart asyncpg langfuse redis aiofiles orjson
 
 # Test deps
 pip install --quiet \
