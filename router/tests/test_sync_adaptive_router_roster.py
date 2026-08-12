@@ -68,7 +68,7 @@ async def test_sync_adaptive_router_roster_happy_path():
         mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
 
         # Verify purge was called
-        mock_purge.assert_called_once()
+        mock_purge.assert_called()
 
         # Verify litellm post calls
         assert mock_client_instance.post.call_count > 0

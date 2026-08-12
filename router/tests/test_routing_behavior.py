@@ -3,14 +3,15 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
-# We patch environment variables before importing main to prevent actual connections
-with patch.dict(os.environ, {
-    "CONFIG_PATH": "router/config.yaml",
-    "ROUTER_API_KEY": "test-key",
-    "ROUTER_API_BASE": "http://localhost:8080/v1",
-    "ROUTER_MODEL_NAME": "qwen-test",
-}):
-    from router.main import app, classify_request
+os.environ.setdefault("CONFIG_PATH", "router/config.yaml")
+os.environ.setdefault("ROUTER_API_KEY", "test-key")
+os.environ.setdefault("ROUTER_API_BASE", "http://localhost:8080/v1")
+os.environ.setdefault("ROUTER_MODEL_NAME", "qwen-test")
+os.environ.setdefault("LITELLM_MASTER_KEY", "test-master-key")
+
+from router.main import app, classify_request
+
+
 
 
 @pytest.mark.asyncio
@@ -87,13 +88,14 @@ def test_llm_routing_agy_fallback_to_advanced_core():
     # Patch try_agy_proxy to raise exception to simulate failure / unavailability
     # Patch get_http_client to capture the outgoing request to the LiteLLM backend
     with patch("agy_proxy.try_agy_proxy", side_effect=Exception("Agy unavailable"), create=True), \
-         patch("router.main.get_http_client", return_value=mock_client):
+         patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         payload = {
             "model": "llm-routing-agy",
             "messages": [{"role": "user", "content": "hello"}],
         }
         
-        response = client.post("/v1/chat/completions", json=payload)
+        response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
         
         assert response.status_code == 200
         assert response.json() == {"choices": [{"message": {"content": "completed response"}}]}
