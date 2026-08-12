@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 import json
@@ -48,8 +48,8 @@ async def test_save_annotations_success(mock_exists, mock_write, mock_read, mock
     assert body["status"] == "ok"
     assert body["saved"] == 2
 
-    mock_read.assert_called_once()
-    mock_write.assert_called_once()
+    mock_read.assert_awaited_once()
+    mock_write.assert_awaited_once()
 
     # Check the merged data that was written
     written_data = mock_write.call_args[0][1]
@@ -84,6 +84,10 @@ async def test_save_annotations_partial_update(mock_exists, mock_write, mock_rea
     response = await main.save_annotations(payload)
 
     # Check assertions
+    assert isinstance(response, JSONResponse)
+    mock_read.assert_awaited_once()
+    mock_write.assert_awaited_once()
+
     written_data = mock_write.call_args[0][1]
     assert "123" in written_data
     assert written_data["123"]["tier"] == 2
@@ -110,7 +114,7 @@ async def test_save_annotations_no_existing(mock_exists, mock_write, mock_read, 
 
     # Should not try to read if file doesn't exist
     mock_read.assert_not_called()
-    mock_write.assert_called_once()
+    mock_write.assert_awaited_once()
 
     # Check written data
     written_data = mock_write.call_args[0][1]
@@ -137,8 +141,8 @@ async def test_save_annotations_read_error(mock_exists, mock_write, mock_read, m
 
     # Check assertions
     assert isinstance(response, JSONResponse)
-    mock_read.assert_called_once()
-    mock_write.assert_called_once()
+    mock_read.assert_awaited_once()
+    mock_write.assert_awaited_once()
 
     # Check written data (should just be the new data)
     written_data = mock_write.call_args[0][1]
