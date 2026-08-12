@@ -6,6 +6,7 @@ import aiofiles
 import re
 import sys
 import json
+import orjson
 import time
 import asyncio
 import logging
@@ -2211,7 +2212,7 @@ async def responses_api(request: Request):
                             raw_data = line_str[5:].strip()
                             if raw_data and raw_data != "[DONE]":
                                 try:
-                                    data_obj = json.loads(raw_data)
+                                    data_obj = orjson.loads(raw_data)
                                     event_type = data_obj.get("type")
                                     if event_type == "response.function_call_arguments.delta":
                                         item_id = data_obj.get("item_id")
@@ -2235,7 +2236,7 @@ async def responses_api(request: Request):
                                                     "output_index": 0,
                                                     "sequence_number": 0,
                                                 }
-                                                yield f"data: {json.dumps(delta_evt)}\n\n".encode("utf-8")
+                                                yield b"data: " + orjson.dumps(delta_evt) + b"\n\n"
                                             if item_id and item_id not in seen_args_done:
                                                 seen_args_done.add(item_id)
                                                 done_evt = {
@@ -2246,7 +2247,7 @@ async def responses_api(request: Request):
                                                     "output_index": 0,
                                                     "sequence_number": 0,
                                                 }
-                                                yield f"data: {json.dumps(done_evt)}\n\n".encode("utf-8")
+                                                yield b"data: " + orjson.dumps(done_evt) + b"\n\n"
                                 except Exception as parse_err:
                                     logger.warning(f"Failed to parse SSE line: {parse_err}")
                         yield (line + "\n").encode("utf-8")
