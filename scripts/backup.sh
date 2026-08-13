@@ -12,6 +12,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="${WORKDIR}/backups"
 RETENTION_DAYS=14
 LOG_FILE="$(mktemp /tmp/llm-backup-${TIMESTAMP}-XXXXXX.log)"
+trap 'rm -f "$LOG_FILE"' EXIT
 
 # Source .env for POD_NAME and POSTGRES_PORT (with prod defaults)
 if [ -f "${WORKDIR}/.env" ]; then

@@ -139,24 +139,24 @@ EFFECTIVE_ENV_FILE="${DATA_ROOT}/effective.env"
 export EFFECTIVE_ENV_FILE
 
 # Ensure openssl is installed if we need to generate passwords/keys
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$NEXTAUTH_SECRET" ] || [ -z "$SALT" ] || [ -z "$ENCRYPTION_KEY" ] || [ -z "$LITELLM_MASTER_KEY" ] || [ -z "$ROUTER_API_KEY" ] || [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ] || [ -z "$LANGFUSE_INIT_USER_PASSWORD" ] || [ -z "$REDIS_AUTH" ] || [ -z "$CLICKHOUSE_PASSWORD" ] || [ -z "$LANGFUSE_PUBLIC_KEY" ] || [ -z "$LANGFUSE_SECRET_KEY" ]; then
+if [ -z "${POSTGRES_PASSWORD:-}" ] || [ -z "${NEXTAUTH_SECRET:-}" ] || [ -z "${SALT:-}" ] || [ -z "${ENCRYPTION_KEY:-}" ] || [ -z "${LITELLM_MASTER_KEY:-}" ] || [ -z "${ROUTER_API_KEY:-}" ] || [ -z "${MINIO_ROOT_USER:-}" ] || [ -z "${MINIO_ROOT_PASSWORD:-}" ] || [ -z "${LANGFUSE_INIT_USER_PASSWORD:-}" ] || [ -z "${REDIS_AUTH:-}" ] || [ -z "${CLICKHOUSE_PASSWORD:-}" ] || [ -z "${LANGFUSE_PUBLIC_KEY:-}" ] || [ -z "${LANGFUSE_SECRET_KEY:-}" ]; then
     if ! command -v openssl &>/dev/null; then
         echo "❌ Error: 'openssl' is required to generate secure random keys but was not found in PATH."
         exit 1
     fi
 fi
 
-if [ -z "$OPENROUTER_API_KEY" ]; then
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
     if [ -t 0 ]; then
         echo "🔑 OpenRouter API Key not found."
-        while [ -z "$OPENROUTER_API_KEY" ]; do
+        while [ -z "${OPENROUTER_API_KEY:-}" ]; do
             echo -n "Please enter your OpenRouter API Key (input will be hidden): "
             if ! read -rs OPENROUTER_API_KEY; then
                 echo -e "\n❌ Error: Failed to read OpenRouter API Key (EOF reached). Aborting." >&2
                 exit 1
             fi
             echo ""
-            if [ -z "$OPENROUTER_API_KEY" ]; then
+            if [ -z "${OPENROUTER_API_KEY:-}" ]; then
                 echo "❌ Error: API key cannot be empty. Please try again."
             fi
         done
@@ -173,7 +173,7 @@ if [ -z "$OPENROUTER_API_KEY" ]; then
     fi
 fi
 
-if [ -z "$POSTGRES_PASSWORD" ]; then
+if [ -z "${POSTGRES_PASSWORD:-}" ]; then
     echo "🔐 Generating secure POSTGRES_PASSWORD..."
     POSTGRES_PASSWORD=$(openssl rand -hex 16)
     echo "POSTGRES_PASSWORD=\"$POSTGRES_PASSWORD\"" >> "$ENV_FILE"
@@ -288,74 +288,74 @@ generate_uuid() {
     echo "${val:0:8}-${val:8:4}-${val:12:4}-${val:16:4}-${val:20:12}"
 }
 
-if [ -z "$NEXTAUTH_SECRET" ]; then
+if [ -z "${NEXTAUTH_SECRET:-}" ]; then
     NEXTAUTH_SECRET="$(gen_base64 32)" || exit 1
     echo "NEXTAUTH_SECRET=\"$NEXTAUTH_SECRET\"" >> "$ENV_FILE"
     echo "✓ Generated new NEXTAUTH_SECRET and saved to $ENV_FILE"
 fi
 
-if [ -z "$SALT" ]; then
+if [ -z "${SALT:-}" ]; then
     SALT="$(gen_hex 32)" || exit 1
     echo "SALT=\"$SALT\"" >> "$ENV_FILE"
     echo "✓ Generated new SALT and saved to $ENV_FILE"
 fi
 
-if [ -z "$ENCRYPTION_KEY" ]; then
+if [ -z "${ENCRYPTION_KEY:-}" ]; then
     ENCRYPTION_KEY="$(gen_hex 32)" || exit 1
     echo "ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ENCRYPTION_KEY and saved to $ENV_FILE"
 fi
 
-if [ -z "$LITELLM_MASTER_KEY" ]; then
+if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
     rand_key="$(gen_hex 16)" || exit 1
     LITELLM_MASTER_KEY="sk-litellm-$rand_key"
     echo "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new LiteLLM master key and saved to $ENV_FILE"
 fi
 
-if [ -z "$LITELLM_MASTER_KEY" ]; then
+if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
     echo "❌ Error: LITELLM_MASTER_KEY is not set and could not be generated."
     exit 1
 fi
 
-if [ -z "$LANGFUSE_INIT_USER_PASSWORD" ]; then
+if [ -z "${LANGFUSE_INIT_USER_PASSWORD:-}" ]; then
     LANGFUSE_INIT_USER_PASSWORD="$(gen_hex 16)" || exit 1
     echo "LANGFUSE_INIT_USER_PASSWORD=\"$LANGFUSE_INIT_USER_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new LANGFUSE_INIT_USER_PASSWORD and saved to $ENV_FILE"
 fi
 
-if [ -z "$REDIS_AUTH" ]; then
+if [ -z "${REDIS_AUTH:-}" ]; then
     REDIS_AUTH="$(gen_hex 16)" || exit 1
     echo "REDIS_AUTH=\"$REDIS_AUTH\"" >> "$ENV_FILE"
     echo "✓ Generated new REDIS_AUTH and saved to $ENV_FILE"
 fi
 
-if [ -z "$CLICKHOUSE_PASSWORD" ]; then
+if [ -z "${CLICKHOUSE_PASSWORD:-}" ]; then
     CLICKHOUSE_PASSWORD="$(gen_hex 16)" || exit 1
     echo "CLICKHOUSE_PASSWORD=\"$CLICKHOUSE_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new CLICKHOUSE_PASSWORD and saved to $ENV_FILE"
 fi
 
-if [ -z "$ROUTER_API_KEY" ]; then
+if [ -z "${ROUTER_API_KEY:-}" ]; then
     ROUTER_API_KEY="$(gen_hex 32)" || exit 1
     echo "ROUTER_API_KEY=\"$ROUTER_API_KEY\"" >> "$ENV_FILE"
     echo "✓ Generated new ROUTER_API_KEY and saved to $ENV_FILE"
 fi
 
-if [ -z "$MINIO_ROOT_USER" ]; then
+if [ -z "${MINIO_ROOT_USER:-}" ]; then
     rand_user="$(gen_hex 4)" || exit 1
     MINIO_ROOT_USER="minio-$rand_user"
     echo "MINIO_ROOT_USER=\"$MINIO_ROOT_USER\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_USER and saved to $ENV_FILE"
 fi
 
-if [ -z "$MINIO_ROOT_PASSWORD" ]; then
+if [ -z "${MINIO_ROOT_PASSWORD:-}" ]; then
     MINIO_ROOT_PASSWORD="$(gen_hex 16)" || exit 1
     echo "MINIO_ROOT_PASSWORD=\"$MINIO_ROOT_PASSWORD\"" >> "$ENV_FILE"
     echo "✓ Generated new MINIO_ROOT_PASSWORD and saved to $ENV_FILE"
 fi
 
-if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
+if [ -z "${LANGFUSE_PUBLIC_KEY:-}" ]; then
     if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_PUBLIC_KEY." >&2
         exit 1
@@ -366,7 +366,7 @@ if [ -z "$LANGFUSE_PUBLIC_KEY" ]; then
     echo "✓ Generated new LANGFUSE_PUBLIC_KEY and saved to $ENV_FILE"
 fi
 
-if [ -z "$LANGFUSE_SECRET_KEY" ]; then
+if [ -z "${LANGFUSE_SECRET_KEY:-}" ]; then
     if ! uuid=$(generate_uuid) || [ -z "$uuid" ]; then
         echo "❌ Error: Failed to generate LANGFUSE_SECRET_KEY." >&2
         exit 1
@@ -377,17 +377,17 @@ if [ -z "$LANGFUSE_SECRET_KEY" ]; then
     echo "✓ Generated new LANGFUSE_SECRET_KEY and saved to $ENV_FILE"
 fi
 
-if [ -z "$OLLAMA_API_KEY" ]; then
+if [ -z "${OLLAMA_API_KEY:-}" ]; then
     if [ -t 0 ]; then
         echo "🔑 OLLAMA_API_KEY not found."
-        while [ -z "$OLLAMA_API_KEY" ]; do
+        while [ -z "${OLLAMA_API_KEY:-}" ]; do
             echo -n "Please enter your Ollama API Key (input will be hidden): "
             if ! read -rs OLLAMA_API_KEY; then
                 echo -e "\n❌ Error: Failed to read Ollama API Key (EOF reached). Aborting." >&2
                 exit 1
             fi
             echo ""
-            if [ -z "$OLLAMA_API_KEY" ]; then
+            if [ -z "${OLLAMA_API_KEY:-}" ]; then
                 echo "❌ Error: API key cannot be empty. Please try again."
             fi
         done
@@ -404,7 +404,7 @@ if [ -z "$OLLAMA_API_KEY" ]; then
     fi
 fi
 
-if [ -z "$CLASSIFIER_INPUT_MAX_CHARS" ]; then
+if [ -z "${CLASSIFIER_INPUT_MAX_CHARS:-}" ]; then
     CLASSIFIER_INPUT_MAX_CHARS="300"
     echo "CLASSIFIER_INPUT_MAX_CHARS=\"$CLASSIFIER_INPUT_MAX_CHARS\"" >> "$ENV_FILE"
     echo "✓ Set default CLASSIFIER_INPUT_MAX_CHARS=300 and saved to $ENV_FILE"
