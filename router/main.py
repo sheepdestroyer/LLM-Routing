@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 
 from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -4098,6 +4098,15 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/data", StaticFiles(directory=str(DATA_DIR)), name="data")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Serve the dedicated favicon.ico file for root path request compatibility."""
+    fav_path = STATIC_DIR / "favicon.ico"
+    if fav_path.exists():
+        return FileResponse(fav_path)
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 
 @app.get("/visualizer", response_class=HTMLResponse)
