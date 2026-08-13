@@ -47,12 +47,12 @@ Note: Throughout this checklist, the production host SSH alias is represented by
 Production host does not require a full `git` repository checkout or local container build toolchain. Production pulls pre-built, tested release container images from GHCR (`ghcr.io/sheepdestroyer/llm-routing:<VERSION>`) and consumes the lightweight runtime deployment bundle.
 
 ```bash
-# 1. Download minimal deployment bundle for target release (e.g. v0.1.18 or latest)
+# 1. Download minimal deployment bundle for target release (e.g. v0.1.25 or latest)
 mkdir -p <prod-home>/LLM-Routing
-curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.18/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
+curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.25/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
 
 # 2. Deploy stack pulling GHCR container image (automatically triggers pre-deploy DB backup & restarts podman containers)
-cd <prod-home>/LLM-Routing && ROUTER_IMAGE=ghcr.io/sheepdestroyer/llm-routing:v0.1.18 ./start-stack.sh --pull
+cd <prod-home>/LLM-Routing && ROUTER_IMAGE=ghcr.io/sheepdestroyer/llm-routing:v0.1.25 ./start-stack.sh --pull
 
 # 3. Ensure production HAProxy is running
 podman rm -f production-haproxy || true
