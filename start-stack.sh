@@ -104,8 +104,17 @@ if [ -z "${ROUTER_IMAGE:-}" ]; then
     if [ -f "${WORKDIR}/.release_version" ]; then
         rel_ver="$(cat "${WORKDIR}/.release_version" | tr -d ' \n\r')"
         ROUTER_IMAGE="ghcr.io/sheepdestroyer/llm-routing:${rel_ver}"
+    elif command -v git >/dev/null 2>&1 && git -C "${WORKDIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        rel_ver="$(git -C "${WORKDIR}" describe --tags --abbrev=0 2>/dev/null || echo "")"
+        if [ -n "$rel_ver" ]; then
+            ROUTER_IMAGE="ghcr.io/sheepdestroyer/llm-routing:${rel_ver}"
+        else
+            echo "❌ Error: Could not determine release version tag (no .release_version file or git tags found in ${WORKDIR})" >&2
+            exit 1
+        fi
     else
-        ROUTER_IMAGE="ghcr.io/sheepdestroyer/llm-routing:latest"
+        echo "❌ Error: Could not determine release version tag (no .release_version file or git worktree found in ${WORKDIR})" >&2
+        exit 1
     fi
 fi
 DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"
@@ -883,8 +892,10 @@ def extract_manifest_images():
     imgs = {}
     workdir = os.environ["WORKDIR"]
     manifests = [os.path.join(workdir, "docker-compose.yml"), os.path.join(workdir, "pod.yaml")]
+    found_any = False
     for manifest in manifests:
         if os.path.exists(manifest):
+            found_any = True
             with open(manifest, "r", encoding="utf-8") as f:
                 for line in f:
                     m = re.search(r"image:\s*([^\s]+)", line)
@@ -906,6 +917,9 @@ def extract_manifest_images():
                             imgs["POSTGRES_IMAGE_PLACEHOLDER"] = val
                         elif "minio" in val and "MINIO_IMAGE_PLACEHOLDER" not in imgs:
                             imgs["MINIO_IMAGE_PLACEHOLDER"] = val
+    if not found_any:
+        sys.stderr.write(f"Error: Required manifest file (docker-compose.yml or pod.yaml) not found in WORKDIR ({workdir})\n")
+        sys.exit(1)
     return imgs
 
 repl.update(extract_manifest_images())
@@ -961,6 +975,10 @@ try:
     for stale in glob.glob(os.path.join(out_dir, "*.pod")) + glob.glob(os.path.join(out_dir, "*.container")):
         if os.path.basename(stale) not in rendered_names:
             os.unlink(stale)
+    parent_dir = os.path.dirname(out_dir)
+    for legacy in glob.glob(os.path.join(parent_dir, f"{namespace}*")):
+        if os.path.isfile(legacy):
+            os.unlink(legacy)
     for name in sorted(rendered_names):
         print(f"  ✓ {name}")
 finally:

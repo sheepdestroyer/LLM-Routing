@@ -39,7 +39,8 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
 
     router = (QUADLETS / "llm-routing-router.container").read_text()
-    assert "Label=wud.watch.digest=true" in router
+    assert "Label=wud.tag.include=^v?\\d+\\.\\d+\\.\\d+$" in router
+    assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in router
 
 
 def test_liveness_healthchecks_restart_failed_containers():
@@ -63,7 +64,7 @@ def test_upgrade_syncs_quadlets_before_quadlet_start_stack():
     script = (ROOT / "scripts" / "upgrade-prod.sh").read_text()
     assert "quadlets/" in script
     assert 'rsync -a --delete "$TEMP_DIR/quadlets/" "$PROD_DIR/quadlets/"' in script
-    assert "for f in pod.yaml start-stack.sh quadlets/" in script
+    assert "for f in pod.yaml docker-compose.yml start-stack.sh quadlets/" in script
 
 
 def test_rendered_quadlets_are_owner_only():
