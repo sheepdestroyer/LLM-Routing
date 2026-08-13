@@ -3,7 +3,7 @@ Description=MinIO S3 — Langfuse v3 event storage (POD_NAME_PLACEHOLDER)
 
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-minio-s3
-Image=minio/minio:RELEASE.2025-09-07T16-13-09Z
+Image=MINIO_IMAGE_PLACEHOLDER
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.

@@ -3,7 +3,7 @@ Description=PostgreSQL — Langfuse + LiteLLM metadata store (POD_NAME_PLACEHOLD
 
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-postgres-db
-Image=pgvector/pgvector:0.8.6-pg18
+Image=POSTGRES_IMAGE_PLACEHOLDER
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.

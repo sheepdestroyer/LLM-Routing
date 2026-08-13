@@ -3,7 +3,7 @@ Description=ClickHouse — Langfuse v3 OLAP trace store (POD_NAME_PLACEHOLDER)
 
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-clickhouse-db
-Image=clickhouse/clickhouse-server:26.4.5.143
+Image=CLICKHOUSE_IMAGE_PLACEHOLDER
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
