@@ -9,7 +9,7 @@ services:
   postgres-db:
     image: pgvector/pgvector:0.8.6-pg18
   clickhouse-db:
-    image: clickhouse/clickhouse-server:26.7.3.19
+    image: clickhouse/clickhouse-server:26.7.3.19-distroless
   valkey-lf:
     image: valkey/valkey:9.1.1
   langfuse-web:
