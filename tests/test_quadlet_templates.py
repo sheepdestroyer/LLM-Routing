@@ -36,10 +36,10 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     assert 'Image=POSTGRES_IMAGE_PLACEHOLDER' in postgres
     assert "Label=wud.tag.exclude=.*(trixie|bookworm|bullseye).*" in postgres
 
-    router = (QUADLETS / "llm-routing-router.container").read_text()
-    assert "Label=wud.watch=false" in router
-
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
+
+    router = (QUADLETS / "llm-routing-router.container").read_text()
+    assert "Label=wud.watch.digest=true" in router
 
 
 def test_liveness_healthchecks_restart_failed_containers():
