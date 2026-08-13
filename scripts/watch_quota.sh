@@ -20,7 +20,7 @@ echo "Current quota remaining: $LAST_QUOTA_TIME"
 
 while true; do
     # Run agy test with a simple prompt that won't use much quota
-    RESULT=$(agy --print "hi" 2>/dev/null)
+    RESULT=$(agy --print "hi" 2>/dev/null || true)
     if [ -n "$RESULT" ]; then
         echo "✅ QUOTA RESET at $(date '+%H:%M:%S')!"
         echo "   Response: ${RESULT:0:80}"
