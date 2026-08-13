@@ -5,7 +5,7 @@ Wants=llm-routing-postgres.service llm-routing-clickhouse.service llm-routing-va
 
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-langfuse-worker
-Image=langfuse/langfuse-worker:4.10.0
+Image=langfuse/langfuse-worker:4.9.0
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
