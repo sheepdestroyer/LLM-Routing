@@ -9,3 +9,7 @@
 ## 2026-08-12 - Visible keyboard focus indicators (:focus-visible)
 **Learning:** Keyboard navigation via Tab key requires clear visual focus indicators on interactive elements (`.btn`, `#visualizer-link`, `.oauth-banner-cmd`) to satisfy WCAG SC 2.4.7 (Focus Visible) without cluttering mouse click UI state.
 **Action:** Apply `:focus-visible` styling with strong contrast outlines (`2px solid #818cf8`) and appropriate `outline-offset` across all interactive dashboard links and buttons.
+
+## 2026-08-13 - Accessible Text Truncation & Hover Tooltips
+**Learning:** Heavily truncated text elements using CSS `text-overflow: ellipsis` (like long model IDs or descriptions) in dashboards can obscure content from visual users. Adding a `title` attribute provides a native hover tooltip for visual inspection. Do NOT add `tabindex="0"` or `role="button"` to non-interactive text elements, as screen readers naturally access the full DOM text string without extra tab stops or fake button semantics.
+**Action:** When truncating important information visually, apply a `title` attribute containing the full text to expose visual hover tooltips. Do not make non-interactive text focusable or assign button roles. Ensure JavaScript updating dynamic fields syncs the `.title` property.

@@ -2844,9 +2844,7 @@ async def chat_completions(request: Request):
                                                 }
                                             ],
                                         }
-                                        yield f"data: {json.dumps(chunk_data)}\n\n".encode(
-                                            "utf-8"
-                                        )
+                                        yield b"data: " + orjson.dumps(chunk_data) + b"\n\n"
 
                                     # End of stream chunk
                                     finish_data = {
@@ -2862,9 +2860,7 @@ async def chat_completions(request: Request):
                                             }
                                         ],
                                     }
-                                    yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                        "utf-8"
-                                    )
+                                    yield b"data: " + orjson.dumps(finish_data) + b"\n\n"
                                     yield b"data: [DONE]\n\n"
 
                                     # Success telemetry
@@ -3002,9 +2998,7 @@ async def chat_completions(request: Request):
                                                     }
                                                 ],
                                             }
-                                            yield f"data: {json.dumps(chunk_data)}\n\n".encode(
-                                                "utf-8"
-                                            )
+                                            yield b"data: " + orjson.dumps(chunk_data) + b"\n\n"
                                             await asyncio.sleep(0.005)
 
                                         finish_data = {
@@ -3020,9 +3014,7 @@ async def chat_completions(request: Request):
                                                 }
                                             ],
                                         }
-                                        yield f"data: {json.dumps(finish_data)}\n\n".encode(
-                                            "utf-8"
-                                        )
+                                        yield b"data: " + orjson.dumps(finish_data) + b"\n\n"
                                         yield b"data: [DONE]\n\n"
                                         # Finalize parent trace for simulated agy stream
                                         _end_parent_obs(parent_obs,
@@ -3250,7 +3242,7 @@ async def chat_completions(request: Request):
                                                 if data_str == "[DONE]":
                                                     continue
                                                 try:
-                                                    data_json = json.loads(data_str)
+                                                    data_json = orjson.loads(data_str)
                                                     choices = data_json.get("choices", [])
                                                     if choices and isinstance(
                                                         choices[0], dict
