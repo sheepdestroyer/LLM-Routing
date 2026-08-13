@@ -1,11 +1,11 @@
 import json
 import os
+import io
 import pytest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, MagicMock
 import sys
 import time
 
-# Import the module to test
 import sync_gemini_token
 
 @pytest.fixture
@@ -24,11 +24,14 @@ def mock_time():
         mock_t.return_value = 1600000000.0
         yield mock_t
 
+class UncloseableStringIO(io.StringIO):
+    def close(self):
+        pass
+
 def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result = MagicMock()
     mock_result.returncode = 0
 
-    # Valid JSON with expiry containing offset and nanoseconds
     valid_json = {
         "token": {
             "access_token": "test_access",
@@ -40,8 +43,12 @@ def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result.stdout = json.dumps(valid_json)
     mock_subprocess.return_value = mock_result
 
-    m_open = mock_open()
-    with patch('builtins.open', m_open):
+    written_stream = UncloseableStringIO()
+
+    with patch('tempfile.mkstemp', return_value=(100, "/tmp/mock_temp.json")), \
+         patch('os.chmod') as mock_chmod, \
+         patch('os.fdopen', return_value=written_stream), \
+         patch('os.replace') as mock_replace:
         sync_gemini_token.main()
 
     mock_subprocess.assert_called_once_with(
@@ -51,19 +58,14 @@ def test_happy_path(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     )
 
     mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
-    m_open.assert_called_once_with(sync_gemini_token.TARGET_PATH, "w")
+    assert mock_replace.call_count == 1
 
-    # Check the written file
-    handle = m_open()
-    written_data = "".join(call.args[0] for call in handle.write.call_args_list)
-    parsed_written_data = json.loads(written_data)
-
+    parsed_written_data = json.loads(written_stream.getvalue())
     assert parsed_written_data["access_token"] == "test_access"
     assert parsed_written_data["refresh_token"] == "test_refresh"
     assert parsed_written_data["token_type"] == "Bearer"
     assert "expiry_date" in parsed_written_data
 
-    # Assert standard output messages using capsys
     captured = capsys.readouterr()
     assert "✓ Success: Synced fresh token. Expires in" in captured.out
 
@@ -123,7 +125,6 @@ def test_missing_access_token(mock_subprocess, capsys):
 def test_fallback_expiry(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result = MagicMock()
     mock_result.returncode = 0
-    # Provide an invalid expiry date string
     valid_json = {
         "token": {
             "access_token": "test_access",
@@ -133,22 +134,22 @@ def test_fallback_expiry(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result.stdout = json.dumps(valid_json)
     mock_subprocess.return_value = mock_result
 
-    m_open = mock_open()
-    with patch('builtins.open', m_open):
+    written_stream = UncloseableStringIO()
+
+    with patch('tempfile.mkstemp', return_value=(100, "/tmp/mock_temp.json")), \
+         patch('os.chmod'), \
+         patch('os.fdopen', return_value=written_stream), \
+         patch('os.replace'):
         sync_gemini_token.main()
 
     mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
 
-    # Assert standard output/error messages using capsys
     captured = capsys.readouterr()
     assert "Warning: Failed to parse expiry date 'invalid-date'" in captured.err
     assert "Defaulting to 1 hour from now." in captured.err
     assert "✓ Success: Synced fresh token. Expires in 60m 0s" in captured.out
 
-    handle = m_open()
-    written_data = "".join(call.args[0] for call in handle.write.call_args_list)
-    parsed_written_data = json.loads(written_data)
-
+    parsed_written_data = json.loads(written_stream.getvalue())
     expected_expiry_ms = int((1600000000.0 + 3600) * 1000)
     assert parsed_written_data["expiry_date"] == expected_expiry_ms
 
@@ -156,8 +157,6 @@ def test_expired_token(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result = MagicMock()
     mock_result.returncode = 0
 
-    # Expiry is in the past: September 13, 2020 12:00:00 UTC = 1599998400.0 seconds
-    # which is 1600 seconds before mock_time (1600000000.0)
     expired_json = {
         "token": {
             "access_token": "test_access",
@@ -169,15 +168,17 @@ def test_expired_token(mock_subprocess, mock_os_makedirs, mock_time, capsys):
     mock_result.stdout = json.dumps(expired_json)
     mock_subprocess.return_value = mock_result
 
-    m_open = mock_open()
-    with patch('builtins.open', m_open):
+    written_stream = UncloseableStringIO()
+
+    with patch('tempfile.mkstemp', return_value=(100, "/tmp/mock_temp.json")), \
+         patch('os.chmod'), \
+         patch('os.fdopen', return_value=written_stream), \
+         patch('os.replace'):
         sync_gemini_token.main()
 
     mock_os_makedirs.assert_called_once_with(os.path.dirname(sync_gemini_token.TARGET_PATH), exist_ok=True)
 
-    # Assert standard output message using capsys for expired token
     captured = capsys.readouterr()
-    # 1600 seconds = 26m 40s ago
     assert "✓ Success: Synced expired token (expired 26m ago)" in captured.out
 
 def test_malformed_json(mock_subprocess, capsys):
@@ -194,7 +195,6 @@ def test_malformed_json(mock_subprocess, capsys):
     assert "Exception: " in captured.err
 
 def test_general_exception(mock_subprocess, capsys):
-    # Make subprocess.run raise an exception directly
     mock_subprocess.side_effect = Exception("Unexpected error")
 
     with pytest.raises(SystemExit) as excinfo:
