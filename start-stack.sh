@@ -16,7 +16,7 @@ show_help() {
     echo "Usage:"
     echo "  ./start-stack.sh                   → Restart existing pod (fast, preserves logs)"
     echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
-    echo "  ./start-stack.sh --pull            → Pull latest router image from GHCR and recreate/redeploy pod"
+    echo "  ./start-stack.sh --pull            → Pull triage router image from GHCR (auto-detecting .release_version tag or :latest) and redeploy pod"
     echo "  ./start-stack.sh --full-rebuild    → Rebuild custom router image locally and recreate/redeploy pod"
     echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
 }
