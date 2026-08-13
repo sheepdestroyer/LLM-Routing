@@ -69,7 +69,7 @@ spec:
       value: 'LITELLM_PORT_PLACEHOLDER'
     - name: POSTGRES_PORT
       value: 'POSTGRES_PORT_PLACEHOLDER'
-    image: ghcr.io/berriai/litellm:v1.96.0
+    image: ghcr.io/berriai/litellm:v1.96.2
     livenessProbe:
       exec:
         command:
@@ -232,7 +232,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: CLICKHOUSE_PASSWORD_PLACEHOLDER
-    image: clickhouse/clickhouse-server:26.4.5.143
+    image: clickhouse/clickhouse-server:26.7.3.19
     livenessProbe:
       exec:
         command:
@@ -377,7 +377,7 @@ spec:
       value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse:4.9.0
+    image: langfuse/langfuse:4.10.0
     livenessProbe:
       exec:
         command:
@@ -439,7 +439,7 @@ spec:
       value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
-    image: langfuse/langfuse-worker:4.9.0
+    image: langfuse/langfuse-worker:4.10.0
     livenessProbe:
       exec:
         command:
