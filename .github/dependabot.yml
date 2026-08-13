@@ -36,10 +36,10 @@ updates:
     groups:
       langfuse:
         patterns:
-          - "langfuse/*"
+          - "*langfuse*"
       valkey:
         patterns:
-          - "valkey/*"
+          - "*valkey*"
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
   - package-ecosystem: "docker"
