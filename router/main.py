@@ -1962,7 +1962,6 @@ def _atomic_save_json(path: str, data: dict) -> None:
 
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
-    import json as _json
     import datetime as _dt
     payload = {
         "models": free_models,
@@ -1970,20 +1969,19 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
         "count": len(free_models)
     }
     try:
-        with open("/config/router_dir/free_models_roster.json", "w") as f:
-            _json.dump(payload, f, indent=2)
+        path = os.path.join(_get_router_output_dir(), "free_models_roster.json")
+        _atomic_save_json(path, payload)
     except Exception:
         pass
 
 
 def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
-    import json as _json
     import datetime as _dt
     payload = {**best_model, "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")}
     try:
-        with open("/config/router_dir/best_free_model.json", "w") as f:
-            _json.dump(payload, f, indent=2)
+        path = os.path.join(_get_router_output_dir(), "best_free_model.json")
+        _atomic_save_json(path, payload)
     except Exception:
         pass  # Non-critical — Ralph falls back gracefully
 

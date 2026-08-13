@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 # Dev environment setup — creates venv and installs test dependencies
 # Run once: ./scripts/dev-setup.sh
 # Then activate: source .venv/bin/activate

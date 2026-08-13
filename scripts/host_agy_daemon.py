@@ -32,6 +32,10 @@ def read_file_sync(path):
 
 class AgyDaemonHandler(BaseHTTPRequestHandler):
     """HTTP request handler for agy execution requests."""
+    def log_message(self, format, *args):
+        """Override to silence standard HTTP logging."""
+        pass
+
     def do_POST(self):
         """Handle POST requests to execute agy commands."""
         if self.path != "/run":
@@ -39,9 +43,16 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
             
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        body = json.loads(post_data.decode('utf-8'))
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            body = json.loads(post_data.decode('utf-8'))
+        except (ValueError, json.JSONDecodeError) as e:
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"Invalid JSON payload: {e}"}).encode('utf-8'))
+            return
         
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
@@ -192,7 +203,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 stderr_file.close()
                 
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=TIMEOUT_SECONDS)
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
                     returncode = proc.returncode or 0
                 except asyncio.TimeoutError:
                     try:
@@ -202,8 +213,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                     returncode = -1
-            except Exception:
-                returncode = -1
+                except Exception:
+                    returncode = -1
             finally:
                 try:
                     stdout_file.close()
@@ -227,37 +238,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     os.unlink(path)
                 except Exception:
                     pass
->>>>>>> Stashed changes
                     
-                    # Wait only for the main agy process to exit
-                    await asyncio.wait_for(proc.wait(), timeout=timeout)
-                    returncode = proc.returncode or 0
-                except asyncio.TimeoutError:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    returncode = -1
-                except Exception:
-                    returncode = -1
+            if returncode == -1 and not stderr:
+                stderr = "TIMEOUT"
                 
-                # Read output from the temporary files without blocking the event loop concurrently
-                loop_ref = asyncio.get_running_loop()
-                stdout, stderr = await asyncio.gather(
-                    loop_ref.run_in_executor(None, read_file_sync, stdout_path),
-                    loop_ref.run_in_executor(None, read_file_sync, stderr_path),
-                )
-                    
-                # Clean up temporary files
-                for path in [stdout_path, stderr_path]:
-                    try:
-                        os.unlink(path)
-                    except Exception:
-                        pass
-                        
-                if returncode == -1 and not stderr:
-                    stderr = "TIMEOUT"
-                    
             result_conv_id = get_last_conversation_id()
             return {
                 "returncode": returncode,
@@ -266,17 +250,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 "conversation_id": result_conv_id
             }
             
-<<<<<<< Updated upstream
-        result = loop.run_until_complete(run())
-        loop.close()
-=======
         try:
             res = loop.run_until_complete(run())
         finally:
             loop.close()
->>>>>>> Stashed changes
         
-        response_bytes = json.dumps(result).encode('utf-8')
+        response_bytes = json.dumps(res).encode('utf-8')
         
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
@@ -284,22 +263,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_bytes)
 
-<<<<<<< Updated upstream
-    def log_message(self, format, *args):
-        """Override to silence standard HTTP logging."""
-        # Silence HTTP log outputs in standard output to keep service clean
-        pass
-
 def run_server():
     """Start the ThreadingHTTPServer on the configured port."""
     server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
     print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
-=======
-def main():
-    """Start the multi-threaded HTTP server."""
-    server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
-    print(f"🚀 Host agy daemon listening on http://127.0.0.1:{PORT}")
->>>>>>> Stashed changes
     try:
         server.serve_forever()
     except KeyboardInterrupt:
