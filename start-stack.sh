@@ -106,7 +106,7 @@ export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT 
 
 # Ensure local volume directories exist on the host for Podman mounts
 mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data" "${DATA_ROOT}/datasets"
-chmod 777 "${DATA_ROOT}/clickhouse-data"
+chmod 777 "${DATA_ROOT}/clickhouse-data" 2>/dev/null || true
 
 
 # Define and export the routing domain
