@@ -264,7 +264,7 @@ gen_hex() {
     val=$(openssl rand -hex "$1" 2>/dev/null)
     local status=$?
     local expected_len=$(( $1 * 2 ))
-    if [ $status -ne 0 ] || [ ${#val} -ne $expected_len ]; then
+    if [ "$status" -ne 0 ] || [ "${#val}" -ne "$expected_len" ]; then
         echo "❌ Error: Failed to generate secure random hex value of byte length $1 (openssl rand exit $status, length ${#val})." >&2
         return 1
     fi
@@ -275,7 +275,7 @@ gen_base64() {
     local val
     val=$(openssl rand -base64 "$1" 2>/dev/null)
     local status=$?
-    if [ $status -ne 0 ] || [ -z "$val" ]; then
+    if [ "$status" -ne 0 ] || [ -z "$val" ]; then
         echo "❌ Error: Failed to generate secure random base64 value of byte length $1 (openssl rand exit $status)." >&2
         return 1
     fi
@@ -496,7 +496,7 @@ cleanup_zombie_ports() {
     
     # Pass 4: wait up to 60s for kernel to release orphaned sockets
     local waited=0
-    while [ $waited -lt 60 ]; do
+    while [ "$waited" -lt 60 ]; do
         local still_stuck=0
         for port in $ALL_PORTS; do
             if ss -tlnpH 2>/dev/null | grep -q ":${port} "; then
@@ -526,7 +526,7 @@ setup_minio_buckets() {
     echo "📦 Ensuring MinIO buckets exist..."
 
     # Wait for MinIO S3 API to be ready
-    while [ $waited -lt $MAX_WAIT ]; do
+    while [ "$waited" -lt "$MAX_WAIT" ]; do
         if curl -sf --max-time 3 http://127.0.0.1:${MINIO_S3_PORT}/minio/health/live >/dev/null 2>&1; then
             echo "   ✓ MinIO S3 API ready after ${waited}s"
             break
@@ -534,7 +534,7 @@ setup_minio_buckets() {
         sleep 3
         waited=$((waited + 3))
     done
-    if [ $waited -ge $MAX_WAIT ]; then
+    if [ "$waited" -ge "$MAX_WAIT" ]; then
         echo "   ⚠️  MinIO not ready after ${MAX_WAIT}s — skipping bucket creation"
         return 1
     fi
@@ -542,7 +542,7 @@ setup_minio_buckets() {
     # Ensure mc alias points to the correct MinIO S3 API port
     # The default 'local' alias in the MinIO image points to :9000 which is ClickHouse,
     # not MinIO. We must override it.
-    if ! podman exec ${POD_NAME}-minio-s3 mc alias set local http://127.0.0.1:${MINIO_S3_PORT} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
+    if ! podman exec "${POD_NAME}-minio-s3" mc alias set local "http://127.0.0.1:${MINIO_S3_PORT}" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; then
         echo "❌ Error: Failed to set MinIO alias 'local' on http://127.0.0.1:${MINIO_S3_PORT}" >&2
         exit 1
     fi
@@ -550,11 +550,11 @@ setup_minio_buckets() {
     # Create required buckets (idempotent)
     local BUCKETS=("langfuse-events" "proj-triage-gateway-id")
     for bucket in "${BUCKETS[@]}"; do
-        if podman exec ${POD_NAME}-minio-s3 mc ls "local/${bucket}" >/dev/null 2>&1; then
+        if podman exec "${POD_NAME}-minio-s3" mc ls "local/${bucket}" >/dev/null 2>&1; then
             echo "   ✓ Bucket '${bucket}' exists"
         else
             echo "   + Creating bucket '${bucket}'..."
-            podman exec ${POD_NAME}-minio-s3 mc mb "local/${bucket}" 2>/dev/null || {
+            podman exec "${POD_NAME}-minio-s3" mc mb "local/${bucket}" 2>/dev/null || {
                 echo "   ⚠️  Failed to create bucket '${bucket}'"
             }
         fi
@@ -572,15 +572,15 @@ verify_stack_health() {
     echo "🩺 Verifying stack health (up to ${MAX_WAIT}s)..."
     
     # Wait for postgres first — everything depends on it
-    while [ $waited -lt $MAX_WAIT ]; do
-        if podman exec ${POD_NAME}-postgres-db pg_isready -U postgres -p ${POSTGRES_PORT} -q 2>/dev/null; then
+    while [ "$waited" -lt "$MAX_WAIT" ]; do
+        if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" -q 2>/dev/null; then
             echo "   ✓ PostgreSQL ready after ${waited}s"
             break
         fi
         sleep 5
         waited=$((waited + 5))
     done
-    if [ $waited -ge $MAX_WAIT ]; then
+    if [ "$waited" -ge "$MAX_WAIT" ]; then
         echo "   ⚠️  PostgreSQL not ready after ${MAX_WAIT}s"
         return 1
     fi
@@ -588,7 +588,7 @@ verify_stack_health() {
     # Wait for LiteLLM (Prisma migrate can take 2-3 min on fresh DB)
     local litellm_ready=false
     waited=0
-    while [ $waited -lt $MAX_WAIT ]; do
+    while [ "$waited" -lt "$MAX_WAIT" ]; do
         if curl -sf --max-time 3 http://127.0.0.1:${LITELLM_PORT}/health/readiness >/dev/null 2>&1; then
             echo "   ✓ LiteLLM ready after ${waited}s"
             litellm_ready=true
@@ -603,7 +603,7 @@ verify_stack_health() {
     
     # Wait for triage router + verify full pipeline
     waited=0
-    while [ $waited -lt 120 ]; do
+    while [ "$waited" -lt 120 ]; do
         local resp=$(curl -s --max-time 10 http://127.0.0.1:${ROUTER_PORT}/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -d '{"model":"agent-simple-core","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}' 2>/dev/null)
