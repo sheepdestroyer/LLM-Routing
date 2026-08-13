@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Usage:
 #   ./start-stack.sh              → Restart existing pod (fast, preserves logs)

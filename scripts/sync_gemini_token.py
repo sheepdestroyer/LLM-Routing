@@ -83,11 +83,24 @@ def main():
         }
         
         # Ensure target dir exists
-        os.makedirs(os.path.dirname(TARGET_PATH), exist_ok=True)
+        target_dir = os.path.dirname(TARGET_PATH)
+        os.makedirs(target_dir, exist_ok=True)
         
-        # Write securely
-        with open(TARGET_PATH, "w") as f:
-            json.dump(creds, f, indent=2)
+        # Write securely via tempfile with restrictive 0600 permissions
+        import tempfile
+        fd, temp_path = tempfile.mkstemp(dir=target_dir, prefix=".oauth_", suffix=".json")
+        try:
+            os.chmod(temp_path, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(creds, f, indent=2)
+            os.replace(temp_path, TARGET_PATH)
+            os.chmod(TARGET_PATH, 0o600)
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+            raise
             
         remaining_sec = (expiry_ms / 1000.0) - time.time()
         if remaining_sec > 0:

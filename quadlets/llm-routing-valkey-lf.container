@@ -23,5 +23,5 @@ Restart=always
 TimeoutStartSec=90
 
 [Install]
-WantedBy=default.target llm-routing.pod
+WantedBy=default.target llm-routing-pod.service
 
