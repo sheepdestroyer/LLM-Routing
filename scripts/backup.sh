@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ============================================================
 # LLM-Routing Stack Backup Script
@@ -11,7 +11,7 @@ WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="${WORKDIR}/backups"
 RETENTION_DAYS=14
-LOG_FILE="/tmp/llm-backup-${TIMESTAMP}.log"
+LOG_FILE="$(mktemp /tmp/llm-backup-${TIMESTAMP}-XXXXXX.log)"
 
 # Source .env for POD_NAME and POSTGRES_PORT (with prod defaults)
 if [ -f "${WORKDIR}/.env" ]; then
@@ -22,6 +22,7 @@ if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
 fi
 POD_NAME="${POD_NAME:-prod-router-pod}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -31,12 +32,12 @@ log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 log "⏳ Checking PostgreSQL readiness..."
 PG_READY=0
 # Check if container exists AND is running before looping
-PG_RUNNING=$(podman inspect --format '{{.State.Running}}' ${POD_NAME}-postgres-db 2>/dev/null || echo "false")
+PG_RUNNING=$(podman inspect --format '{{.State.Running}}' "${POD_NAME}-postgres-db" 2>/dev/null || echo "false")
 if [ "$PG_RUNNING" != "true" ]; then
     log "⚠️  PostgreSQL container not running — skipping DB backup"
 else
     for i in {1..15}; do
-        if podman exec ${POD_NAME}-postgres-db pg_isready -U postgres -p ${POSTGRES_PORT} 2>/dev/null; then
+        if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
             PG_READY=1
             log "✅ PostgreSQL is ready"
             break
@@ -47,10 +48,10 @@ else
 fi
 
 # ---- PostgreSQL Databases ----
-if [ $PG_READY -eq 1 ]; then
+if [ "$PG_READY" -eq 1 ]; then
     for db in postgres langfuse; do
         FILE="${BACKUP_DIR}/${db}_db_${TIMESTAMP}.dump"
-        if podman exec ${POD_NAME}-postgres-db \
+        if podman exec "${POD_NAME}-postgres-db" \
             pg_dump -U postgres -d "$db" -F c > "$FILE"; then
             log "✅ ${db} db: $(ls -lh "$FILE" | awk '{print $5}')"
         else
@@ -63,19 +64,16 @@ fi
 
 # ---- Config Files (lightweight copy) ----
 CONFIG_SNAPSHOT="${BACKUP_DIR}/configs_${TIMESTAMP}.tar.gz"
-tar czf "$CONFIG_SNAPSHOT" \
-    -C "$WORKDIR" \
-    litellm/config.yaml \
-    router/config.yaml \
-    router/main.py \
-    router/memory_mcp.py \
-    router/agentic_scores.json \
-    pod.yaml .env
+CONFIG_FILES=(litellm/config.yaml router/config.yaml router/main.py router/memory_mcp.py router/agentic_scores.json pod.yaml)
+if [ -f "${WORKDIR}/.env" ]; then
+    CONFIG_FILES+=(.env)
+fi
+tar czf "$CONFIG_SNAPSHOT" -C "$WORKDIR" "${CONFIG_FILES[@]}"
 log "✅ configs: $(ls -lh "$CONFIG_SNAPSHOT" | awk '{print $5}')"
 
 # ---- Prune old backups ----
-old=$(find "$BACKUP_DIR" -name "*.dump" -o -name "*.tar.gz" -mtime +$RETENTION_DAYS | wc -l)
-find "$BACKUP_DIR" -name "*.dump" -o -name "*.tar.gz" -mtime +$RETENTION_DAYS -delete
+old=$(find "$BACKUP_DIR" \( -name "*.dump" -o -name "*.tar.gz" \) -mtime +"$RETENTION_DAYS" | wc -l)
+find "$BACKUP_DIR" \( -name "*.dump" -o -name "*.tar.gz" \) -mtime +"$RETENTION_DAYS" -delete
 log "🧹 Pruned $old backup(s) older than ${RETENTION_DAYS} days"
 
 log "✅ Backup complete → ${BACKUP_DIR}/${TIMESTAMP}"

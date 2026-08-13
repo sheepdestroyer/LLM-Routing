@@ -460,7 +460,7 @@ cleanup_zombie_ports() {
         local pid=$(fuser "${port}/tcp" 2>/dev/null)
         if [ -n "$pid" ]; then
             echo "   Killing PID $pid on port $port"
-            kill -9 $pid 2>/dev/null || true
+            kill -9 "$pid" 2>/dev/null || true
         fi
     done
     
@@ -487,9 +487,9 @@ cleanup_zombie_ports() {
         while IFS= read -r line; do
             local pid=$(echo "$line" | grep -oP 'pid=\K\d+')
             if [ -n "$pid" ]; then
-                local proc_name=$(ps -p $pid -o comm= 2>/dev/null || echo "unknown")
+                local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
                 echo "   Killing cross-profile orphan: $proc_name (PID $pid) on port $port"
-                kill -9 $pid 2>/dev/null || true
+                kill -9 "$pid" 2>/dev/null || true
             fi
         done < <(ss -tlnpH 2>/dev/null | grep ":${port} " | grep -oP 'pid=\d+')
     done
@@ -689,14 +689,14 @@ safe_pod_teardown() {
     fi
     if [[ "$ownership" == "legacy" ]]; then
         echo "🛑 Gracefully stopping pod (SIGTERM, 30s timeout)..."
-        podman pod stop -t 30 ${POD_NAME} 2>/dev/null || true
+        podman pod stop -t 30 "${POD_NAME}" 2>/dev/null || true
         # podman pod exists returns 0 for stopped pods too — check running state
-        if podman pod inspect ${POD_NAME} --format '{{.State}}' 2>/dev/null | grep -q 'Running'; then
+        if podman pod inspect "${POD_NAME}" --format '{{.State}}' 2>/dev/null | grep -q 'Running'; then
             echo "⚠️  Graceful stop timed out — force-removing..."
-            podman pod rm -f ${POD_NAME} 2>/dev/null || true
+            podman pod rm -f "${POD_NAME}" 2>/dev/null || true
         else
             # Already stopped, just remove
-            podman pod rm ${POD_NAME} 2>/dev/null || true
+            podman pod rm "${POD_NAME}" 2>/dev/null || true
         fi
         cleanup_zombie_ports
         echo "✓ Pod torn down, ports cleaned"
@@ -730,7 +730,7 @@ print(os.environ.get("LLAMA_CLASSIFIER_URL") or f"{scheme}://llama.{host_base}/v
 
 # Pre-deploy database backup (runs before any pod modification)
 # Skip if pod doesn't exist (e.g., after manual cleanup)
-if podman pod exists ${POD_NAME} 2>/dev/null; then
+if podman pod exists "${POD_NAME}" 2>/dev/null; then
     echo "💾 Taking pre-deploy database backup..."
     bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
 fi

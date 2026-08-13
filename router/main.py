@@ -1946,6 +1946,20 @@ async def _fetch_openrouter_free_models() -> List[dict]:
         return []
 
 
+def _get_router_output_dir() -> str:
+    """Helper to derive router working directory for JSON state files."""
+    if CONFIG_PATH:
+        d = os.path.dirname(CONFIG_PATH)
+        if d:
+            return d
+    return "/config/router_dir"
+
+
+def _atomic_save_json(path: str, data: dict) -> None:
+    """Helper for atomic JSON file writes to prevent race conditions during reads."""
+    _atomic_write_json_sync(path, data)
+
+
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
     import json as _json

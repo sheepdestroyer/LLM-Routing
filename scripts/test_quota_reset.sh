@@ -1,19 +1,23 @@
 #!/bin/bash
 # Quota reset test script — run after quota resets (~00:56)
-set -e
+set -euo pipefail
 
 echo "=== agy Quota Reset Tests ==="
 echo "Time: $(date '+%H:%M:%S')"
 echo
 
+TMP_LOG1="$(mktemp /tmp/agy_test_stderr_XXXXXX.log)"
+TMP_LOG2="$(mktemp /tmp/agy_test_stderr3_XXXXXX.log)"
+trap 'rm -f "$TMP_LOG1" "$TMP_LOG2"' EXIT
+
 # Clean up any stale log entries
 echo "1. Testing default Gemini model..."
-OUTPUT=$(agy --print "Reply with exactly: Gemini OK" 2>/tmp/agy_test_stderr.log)
-RC=$?
-if [ $RC -eq 0 ] && [ -n "$OUTPUT" ]; then
+RC=0
+OUTPUT=$(agy --print "Reply with exactly: Gemini OK" 2>"$TMP_LOG1") || RC=$?
+if [ "$RC" -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "   ✅ Gemini: $OUTPUT"
 else
-    STDERR=$(tail -3 /tmp/agy_test_stderr.log)
+    STDERR=$(tail -3 "$TMP_LOG1")
     if echo "$STDERR" | grep -q "RESOURCE_EXHAUSTED\|429\|quota"; then
         echo "   ❌ Gemini: QUOTA EXHAUSTED — still waiting for reset"
         echo "   $STDERR"
@@ -26,13 +30,13 @@ fi
 echo
 
 echo "2. Testing Claude Opus 4.6..."
+RC=0
 OUTPUT=$(CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-4-6@default \
-    agy --print "Reply with exactly: Opus OK" 2>/tmp/agy_test_stderr3.log)
-RC=$?
-if [ $RC -eq 0 ] && [ -n "$OUTPUT" ]; then
+    agy --print "Reply with exactly: Opus OK" 2>"$TMP_LOG2") || RC=$?
+if [ "$RC" -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "   ✅ Opus 4.6: $OUTPUT"
 else
-    STDERR=$(tail -3 /tmp/agy_test_stderr3.log)
+    STDERR=$(tail -3 "$TMP_LOG2")
     if echo "$STDERR" | grep -q "RESOURCE_EXHAUSTED\|429\|quota"; then
         echo "   ❌ Opus 4.6: QUOTA EXHAUSTED"
     else
