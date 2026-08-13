@@ -121,6 +121,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     except asyncio.TimeoutError:
                         try:
                             proc.kill()
+                            await proc.wait()
                         except Exception:
                             pass
                         returncode = -1
@@ -146,11 +147,14 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     if proc is not None and proc.returncode is None:
                         try:
                             proc.kill()
+                            await proc.wait()
                         except Exception:
                             pass
                 
-            loop.run_until_complete(run_stream())
-            loop.close()
+            try:
+                loop.run_until_complete(run_stream())
+            finally:
+                loop.close()
             return
             
         # Execute in new asyncio event loop (non-streaming legacy path)
@@ -170,19 +174,60 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 cmd.extend(["--conversation", conversation_id])
             cmd.extend(["--print", prompt])
             
-            # Create temporary files for stdout/stderr to avoid hangs from daemonized children (e.g. vlc, mpv)
-            with tempfile.NamedTemporaryFile(delete=False) as stdout_file, \
-                 tempfile.NamedTemporaryFile(delete=False) as stderr_file:
-                 
-                stdout_path = stdout_file.name
-                stderr_path = stderr_file.name
+            proc = None
+            stdout_fd, stdout_path = tempfile.mkstemp(prefix="agy_out_", suffix=".log")
+            stderr_fd, stderr_path = tempfile.mkstemp(prefix="agy_err_", suffix=".log")
+            stdout_file = open(stdout_path, "w")
+            stderr_file = open(stderr_path, "w")
+            os.close(stdout_fd)
+            os.close(stderr_fd)
+            
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, env=env,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                )
+                stdout_file.close()
+                stderr_file.close()
                 
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd, env=env,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                    )
+                    await asyncio.wait_for(proc.wait(), timeout=TIMEOUT_SECONDS)
+                    returncode = proc.returncode or 0
+                except asyncio.TimeoutError:
+                    try:
+                        if proc is not None:
+                            proc.kill()
+                            await proc.wait()
+                    except Exception:
+                        pass
+                    returncode = -1
+            except Exception:
+                returncode = -1
+            finally:
+                try:
+                    stdout_file.close()
+                except Exception:
+                    pass
+                try:
+                    stderr_file.close()
+                except Exception:
+                    pass
+            
+            # Read output from the temporary files without blocking the event loop concurrently
+            loop_ref = asyncio.get_running_loop()
+            stdout, stderr = await asyncio.gather(
+                loop_ref.run_in_executor(None, read_file_sync, stdout_path),
+                loop_ref.run_in_executor(None, read_file_sync, stderr_path),
+            )
+                
+            # Clean up temporary files
+            for path in [stdout_path, stderr_path]:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+>>>>>>> Stashed changes
                     
                     # Wait only for the main agy process to exit
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
@@ -221,8 +266,15 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 "conversation_id": result_conv_id
             }
             
+<<<<<<< Updated upstream
         result = loop.run_until_complete(run())
         loop.close()
+=======
+        try:
+            res = loop.run_until_complete(run())
+        finally:
+            loop.close()
+>>>>>>> Stashed changes
         
         response_bytes = json.dumps(result).encode('utf-8')
         
@@ -232,6 +284,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_bytes)
 
+<<<<<<< Updated upstream
     def log_message(self, format, *args):
         """Override to silence standard HTTP logging."""
         # Silence HTTP log outputs in standard output to keep service clean
@@ -241,6 +294,12 @@ def run_server():
     """Start the ThreadingHTTPServer on the configured port."""
     server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
     print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
+=======
+def main():
+    """Start the multi-threaded HTTP server."""
+    server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
+    print(f"🚀 Host agy daemon listening on http://127.0.0.1:{PORT}")
+>>>>>>> Stashed changes
     try:
         server.serve_forever()
     except KeyboardInterrupt:

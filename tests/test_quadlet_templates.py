@@ -29,10 +29,10 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     assert 'HealthCmd=node -e "process.exit(0)"' in worker
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
-    assert 'Image=ghcr.io/berriai/litellm:v1.95.0' in litellm
+    assert 'Image=LITELLM_IMAGE_PLACEHOLDER' in litellm
 
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
-    assert 'Image=pgvector/pgvector:0.8.6-pg18' in postgres
+    assert 'Image=POSTGRES_IMAGE_PLACEHOLDER' in postgres
 
 
 def test_liveness_healthchecks_restart_failed_containers():

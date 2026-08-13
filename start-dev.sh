@@ -1,6 +1,6 @@
 #!/bin/bash
 # Dev deployment wrapper — stands up dev-router-pod on distinct ports alongside prod
-set -e
+set -euo pipefail
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORKDIR"
 

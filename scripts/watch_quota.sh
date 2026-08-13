@@ -1,5 +1,7 @@
 #!/bin/bash
 # Polling loop — checks quota every 30s and runs tests when reset
+set -euo pipefail
+
 # Log file to watch
 LOG_FILE="$HOME/.gemini/antigravity-cli/cli.log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
