@@ -18,7 +18,7 @@ def test_quadlet_inventory_and_pod_membership():
         text = container.read_text()
         assert "Pod=llm-routing.pod" in text, container.name
         assert "ContainerName=POD_NAME_PLACEHOLDER-" in text, container.name
-        assert "[Install]\nWantedBy=default.target llm-routing.pod" in text, container.name
+        assert "[Install]\nWantedBy=default.target llm-routing-pod.service" in text, container.name
 
 
 def test_quadlet_container_healthcmds_and_aligned_versions():

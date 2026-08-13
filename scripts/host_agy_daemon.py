@@ -224,6 +224,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     stderr_file.close()
                 except Exception:
                     pass
+                if proc is not None and proc.returncode is None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
             
             # Read output from the temporary files without blocking the event loop concurrently
             loop_ref = asyncio.get_running_loop()
