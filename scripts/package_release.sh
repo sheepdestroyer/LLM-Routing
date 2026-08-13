@@ -13,6 +13,7 @@ echo "📦 Packaging minimal release deployment bundle -> ${OUTPUT_TAR}..."
 # Stamp release version tag into .release_version bundle manifest
 RELEASE_VER="${REF_NAME:-${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")}}"
 echo "$RELEASE_VER" > .release_version
+trap 'rm -f .release_version' EXIT
 echo "   Release version stamp: ${RELEASE_VER}"
 
 tar -czf "$OUTPUT_TAR" \
