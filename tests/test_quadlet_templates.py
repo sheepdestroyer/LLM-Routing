@@ -38,6 +38,9 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
 
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
 
+    router = (QUADLETS / "llm-routing-router.container").read_text()
+    assert "Label=wud.watch.digest=true" in router
+
 
 def test_liveness_healthchecks_restart_failed_containers():
     for container in sorted(QUADLETS.glob("*.container")):
