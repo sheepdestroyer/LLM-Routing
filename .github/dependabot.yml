@@ -20,7 +20,7 @@ updates:
     schedule:
       interval: "daily"
       time: "02:55"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 50
     labels:
       - "dependencies"
       - "docker"
@@ -31,18 +31,15 @@ updates:
       - "sheepdestroyer"
     allow:
       - dependency-type: "all"
-    # If you need to check private registries, uncomment and reference the registry keys above
-    # registries:
-    #   - ghcr
-    #   - dockerhub
     ignore:
-      # Example: ignore semver-major updates for Postgres and ClickHouse while testing
-      - dependency-name: "pgvector/pgvector"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "clickhouse/clickhouse-server"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "valkey/valkey"
-        update-types: ["version-update:semver-major"]
+      - dependency-name: "ROUTER_IMAGE_PLACEHOLDER"
+    groups:
+      langfuse:
+        patterns:
+          - "langfuse/*"
+      valkey:
+        patterns:
+          - "valkey/*"
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
   - package-ecosystem: "docker"
@@ -51,7 +48,7 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "03:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 50
     labels:
       - "dependencies"
       - "docker"
@@ -68,7 +65,7 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "04:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 50
     labels:
       - "dependencies"
       - "github-actions"
