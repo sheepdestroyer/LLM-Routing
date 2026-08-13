@@ -30,9 +30,13 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
     assert 'Image=LITELLM_IMAGE_PLACEHOLDER' in litellm
+    assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in litellm
 
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
     assert 'Image=POSTGRES_IMAGE_PLACEHOLDER' in postgres
+    assert "Label=wud.tag.exclude=.*(trixie|bookworm|bullseye).*" in postgres
+
+    assert "Label=wud.tag.exclude=.*-cpu.*" in minio
 
 
 def test_liveness_healthchecks_restart_failed_containers():
