@@ -42,10 +42,10 @@ updates:
         patterns:
           - "valkey/valkey"
     cooldown:
-      default:
-        semver-major: 0
-        semver-minor: 0
-        semver-patch: 0
+      semver-major: 0
+      semver-minor: 0
+      semver-patch: 0
+
 
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
