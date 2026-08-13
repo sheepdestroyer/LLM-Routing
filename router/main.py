@@ -302,6 +302,112 @@ class ValkeyCooldownPersistence:
         await save_cooldowns_to_valkey()
 
 
+async def sync_stats_from_valkey() -> None:
+    """Sync router metrics and timeline from Valkey into local memory."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        raw_stats = await redis.get("router:stats")
+        if raw_stats:
+            val = json.loads(raw_stats)
+            if isinstance(val, dict):
+                # Update scalar counters (taking max to avoid regressions across workers)
+                for count_key in (
+                    "total_requests",
+                    "simple_requests",
+                    "medium_requests",
+                    "complex_requests",
+                    "reasoning_requests",
+                    "advanced_requests",
+                    "cache_hits",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_triage_time_ms",
+                    "total_proxy_time_ms",
+                ):
+                    if count_key in val:
+                        stats[count_key] = max(stats.get(count_key, 0), val[count_key])
+
+                # Compute average latencies if total_requests > 0
+                if stats["total_requests"] > 0:
+                    stats["avg_triage_latency_ms"] = (
+                        stats["total_triage_time_ms"] / stats["total_requests"]
+                    )
+                    stats["avg_proxy_latency_ms"] = (
+                        stats["total_proxy_time_ms"] / stats["total_requests"]
+                    )
+
+                # Update last decision if val provides one other than "None"
+                if val.get("last_triage_decision") and val["last_triage_decision"] != "None":
+                    stats["last_triage_decision"] = val["last_triage_decision"]
+
+                # Merge nested dictionaries
+                for dict_key in ("tool_tokens", "routing_paths"):
+                    if dict_key in val and isinstance(val[dict_key], dict):
+                        if dict_key not in stats:
+                            stats[dict_key] = {}
+                        for k, v in val[dict_key].items():
+                            stats[dict_key][k] = max(stats[dict_key].get(k, 0), v)
+
+        raw_timeline = await redis.get("router:timeline")
+        if raw_timeline:
+            tl = json.loads(raw_timeline)
+            if isinstance(tl, list) and tl:
+                stats["timeline"] = tl[-15:]
+    except Exception as e:
+        logger.warning(f"Failed to sync stats from Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
+
+
+async def save_stats_to_valkey() -> None:
+    """Save local in-memory router metrics and timeline to Valkey."""
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        data_to_store = {
+            "total_requests": stats.get("total_requests", 0),
+            "simple_requests": stats.get("simple_requests", 0),
+            "medium_requests": stats.get("medium_requests", 0),
+            "complex_requests": stats.get("complex_requests", 0),
+            "reasoning_requests": stats.get("reasoning_requests", 0),
+            "advanced_requests": stats.get("advanced_requests", 0),
+            "cache_hits": stats.get("cache_hits", 0),
+            "last_triage_decision": stats.get("last_triage_decision", "None"),
+            "avg_triage_latency_ms": stats.get("avg_triage_latency_ms", 0.0),
+            "avg_proxy_latency_ms": stats.get("avg_proxy_latency_ms", 0.0),
+            "total_triage_time_ms": stats.get("total_triage_time_ms", 0.0),
+            "total_proxy_time_ms": stats.get("total_proxy_time_ms", 0.0),
+            "prompt_tokens": stats.get("prompt_tokens", 0),
+            "completion_tokens": stats.get("completion_tokens", 0),
+            "tool_tokens": stats.get("tool_tokens", {}),
+            "routing_paths": stats.get("routing_paths", {}),
+        }
+        await redis.set("router:stats", json.dumps(data_to_store))
+        if "timeline" in stats and stats["timeline"]:
+            await redis.set("router:timeline", json.dumps(stats["timeline"]))
+    except Exception as e:
+        logger.warning(f"Failed to save stats to Valkey: {e}")
+        global _redis_client, _redis_last_init_attempt
+        _redis_client = None
+        _redis_last_init_attempt = time.monotonic()
+
+
+class ValkeyStatsPersistence:
+    """Persistence provider mapping Valkey/Redis client telemetry metrics synchronization."""
+
+    async def sync(self) -> None:
+        """Synchronize telemetry metrics from Valkey to local memory."""
+        await sync_stats_from_valkey()
+
+    async def save(self) -> None:
+        """Persist local memory telemetry metrics to Valkey."""
+        await save_stats_to_valkey()
+
+
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
 _log_level = getattr(logging, _log_level_str, logging.WARNING)
@@ -724,7 +830,7 @@ _last_stats_save = 0.0
 
 
 async def save_persisted_stats(force=False):
-    """Persists current statistics in-memory structure to disk securely (non-blocking).
+    """Persists current statistics in-memory structure to Valkey and disk securely (non-blocking).
 
     Offloads the synchronous file write to a thread pool executor so the
     event loop is not blocked. The 2-second throttle is checked before
@@ -732,6 +838,9 @@ async def save_persisted_stats(force=False):
     """
     global _last_stats_save
     now = time.monotonic()
+
+    # Save to Valkey for multi-worker consistency
+    await save_stats_to_valkey()
 
     # Throttle disk writes to max once per 2 seconds, unless forced
     if not force and (now - _last_stats_save < 2.0):
@@ -1224,8 +1333,9 @@ async def _register_ollama_models_in_db(master_key: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: wait for LiteLLM readiness, then sync free-model roster."""
-    # Initialize shared HTTPX client and sync cooldowns from Redis/Valkey
+    # Initialize shared HTTPX client and sync cooldowns and stats from Redis/Valkey
     get_http_client()
+    await sync_stats_from_valkey()
     await sync_cooldowns_from_valkey()
 
     litellm_ready_url = f"{LITELLM_URL}/health/readiness"
@@ -3607,6 +3717,7 @@ async def chat_completions(request: Request):
 @app.get("/metrics")
 async def metrics():
     """Expose triage and circuit breaker metrics in Prometheus format."""
+    await sync_stats_from_valkey()
     await sync_cooldowns_from_valkey()
     breaker = get_breaker()
     breaker_status = breaker.status()
@@ -3712,6 +3823,7 @@ async def get_dashboard_data():
     """Fetch all metrics and pre-compute HTML snippets for the dashboard."""
     # Run ALL independent I/O concurrently with protective timeouts
     (
+        _,  # sync_stats_from_valkey
         _,  # sync_cooldowns_from_valkey
         valkey_status,
         litellm_status,
@@ -3722,6 +3834,7 @@ async def get_dashboard_data():
         goose_sessions,
         llamacpp,
     ) = await asyncio.gather(
+        asyncio.wait_for(sync_stats_from_valkey(), timeout=2.0),
         asyncio.wait_for(sync_cooldowns_from_valkey(), timeout=2.0),
         check_tcp_port("127.0.0.1", _valkey_port()),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}/"),

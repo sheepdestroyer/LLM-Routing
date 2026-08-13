@@ -439,7 +439,7 @@
     </style>
     <script>
         // Fetch dashboard data asynchronously to prevent UI blocking
-        async function refreshDashboard() {
+        async function refreshStats() {
             try {
                 // Handle relative paths when deployed under a subpath proxy
                 const basePath = window.location.pathname.endsWith('/') ? '../api/' : './api/';
@@ -526,6 +526,7 @@
                 console.error("Dashboard fetch failed: ", e);
             }
         }
+        const refreshDashboard = refreshStats;
 
         // Initialize on load and set periodic polling
         window.addEventListener("DOMContentLoaded", () => {
@@ -534,9 +535,9 @@
             if (visLink) {
                 visLink.href = basePath + "visualizer";
             }
-            refreshDashboard();
+            refreshStats();
         });
-        setInterval(refreshDashboard, 3000);
+        setInterval(refreshStats, 3000);
     </script>
 </head>
 <body>
