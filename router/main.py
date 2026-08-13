@@ -1946,9 +1946,35 @@ async def _fetch_openrouter_free_models() -> List[dict]:
         return []
 
 
+def _get_router_output_dir() -> str:
+    """Helper to derive router working directory for JSON state files."""
+    if CONFIG_PATH:
+        d = os.path.dirname(CONFIG_PATH)
+        if d:
+            return d
+    return "/config/router_dir"
+
+
+def _atomic_save_json(path: str, data: dict) -> None:
+    """Helper for atomic JSON file writes to prevent race conditions during reads."""
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    temp_path = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
+        raise
+
+
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
-    import json as _json
     import datetime as _dt
     payload = {
         "models": free_models,
@@ -1956,22 +1982,21 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
         "count": len(free_models)
     }
     try:
-        with open("/config/router_dir/free_models_roster.json", "w") as f:
-            _json.dump(payload, f, indent=2)
-    except Exception:
-        pass
+        target_path = os.path.join(_get_router_output_dir(), "free_models_roster.json")
+        _atomic_save_json(target_path, payload)
+    except Exception as e:
+        logger.debug(f"Failed to save free_models_roster.json: {e}")
 
 
 def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
-    import json as _json
     import datetime as _dt
     payload = {**best_model, "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")}
     try:
-        with open("/config/router_dir/best_free_model.json", "w") as f:
-            _json.dump(payload, f, indent=2)
-    except Exception:
-        pass  # Non-critical — Ralph falls back gracefully
+        target_path = os.path.join(_get_router_output_dir(), "best_free_model.json")
+        _atomic_save_json(target_path, payload)
+    except Exception as e:
+        logger.debug(f"Failed to save best_free_model.json: {e}")
 
 
 async def get_best_free_model() -> dict:
