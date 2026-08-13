@@ -17,7 +17,7 @@
                     </div>
                     <span style="font-size: 12px; padding: 3px 8px; border-radius: 20px; {{ badge_style }}">{{ sess.goose_mode|default('auto')|upper }}</span>
                 </div>
-                <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <div style="font-size: 13px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ sess.description or sess.name or 'Interactive session' }}">
                     {{ sess.description or sess.name or 'Interactive session' }}
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
