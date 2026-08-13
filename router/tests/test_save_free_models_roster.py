@@ -1,6 +1,8 @@
 import datetime
+import os
 from unittest.mock import patch, mock_open
 
+from router import main
 from router.main import _save_free_models_roster
 
 def test_save_free_models_roster_success():
@@ -8,17 +10,21 @@ def test_save_free_models_roster_success():
 
     mock_now = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
-    # We patch json.dump and open
     with patch("builtins.open", mock_open()) as m_open, \
          patch("json.dump") as m_dump, \
+         patch("os.replace") as m_replace, \
          patch("datetime.datetime") as m_dt:
         m_dt.now.return_value = mock_now
         m_dt.timezone = datetime.timezone
 
         _save_free_models_roster(free_models)
 
-        m_open.assert_called_once_with("/config/router_dir/free_models_roster.json", "w")
-        m_dump.assert_called_once()
+        assert m_open.call_count == 1
+        opened_path = m_open.call_args[0][0]
+        assert "free_models_roster.json.tmp." in opened_path
+        assert m_open.call_args[1] == {"encoding": "utf-8"}
+        assert m_replace.call_count == 1
+        assert m_dump.call_count == 1
 
         # Check payload
         called_payload = m_dump.call_args[0][0]

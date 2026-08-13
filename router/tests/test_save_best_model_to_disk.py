@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch, mock_open
 from router import main
 
@@ -8,6 +9,7 @@ def test_save_best_model_to_disk_success():
 
     with patch("builtins.open", mock_file), \
          patch("json.dump") as mock_json_dump, \
+         patch("os.replace") as mock_replace, \
          patch("datetime.datetime") as mock_datetime:
 
         # Setup mock datetime
@@ -16,8 +18,12 @@ def test_save_best_model_to_disk_success():
 
         main._save_best_model_to_disk(best_model)
 
-        # Verify file opened correctly
-        mock_file.assert_called_once_with("/config/router_dir/best_free_model.json", "w")
+        # Verify file opened correctly with atomic temp extension
+        assert mock_file.call_count == 1
+        opened_path = mock_file.call_args[0][0]
+        assert "best_free_model.json.tmp." in opened_path
+        assert mock_file.call_args[1] == {"encoding": "utf-8"}
+        assert mock_replace.call_count == 1
 
         # Verify json.dump called with correct payload
         expected_payload = {
@@ -36,5 +42,3 @@ def test_save_best_model_to_disk_exception_handled():
     # Should not raise exception
     with patch("builtins.open", mock_file):
         main._save_best_model_to_disk(best_model)
-
-    mock_file.assert_called_once_with("/config/router_dir/best_free_model.json", "w")
