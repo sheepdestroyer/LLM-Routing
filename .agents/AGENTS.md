@@ -47,9 +47,9 @@ Note: Throughout this checklist, the production host SSH alias is represented by
 Production host does not require a full `git` repository checkout or local container build toolchain. Production pulls pre-built, tested release container images from GHCR (`ghcr.io/sheepdestroyer/llm-routing:<VERSION>`) and consumes the lightweight runtime deployment bundle.
 
 ```bash
-# 1. Download minimal deployment bundle for target release (e.g. v0.1.25 or latest)
+# 1. Download minimal deployment bundle for target release (e.g. v0.1.28 or latest)
 mkdir -p <prod-home>/LLM-Routing
-curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.25/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
+curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.28/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
 
 # 2. Deploy stack pulling GHCR container image (automatically triggers pre-deploy DB backup & restarts podman containers)
 cd <prod-home>/LLM-Routing && ./start-stack.sh --pull
@@ -81,7 +81,7 @@ curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-domain>/llm-routi
   shown above, or instruct the user to run it in their own session.
 - **Sudo Password Precaution**: Always preserve exact bytes (including trailing spaces or newlines) when reading `~/.sudo_password` (e.g. `'your_password_here   '`). Stripping whitespace will cause authentication to fail.
 - `start-stack.sh --pull` pulls pre-built release container images from GHCR without building locally.
-  Use `--full-rebuild` only in local development (`DEV_ENV_FILE=.env.dev`).
+  Use `--full-rebuild` only in local development.
 - **GitHub CLI Authentication**: If running `gh` commands fails with a 401 error, ensure that `GITHUB_TOKEN` is exported (e.g., mapped from `GITHUB_MCP_PAT` in `~/.bashrc` via `export GITHUB_TOKEN="$GITHUB_MCP_PAT"`).
 
 ## GitHub API & Operations Policy
