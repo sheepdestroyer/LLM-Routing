@@ -870,6 +870,38 @@ repl = {
     "MINIO_CONSOLE_PORT_PLACEHOLDER": os.environ["MINIO_CONSOLE_PORT"],
 }
 
+def extract_manifest_images():
+    imgs = {}
+    workdir = os.environ["WORKDIR"]
+    manifests = [os.path.join(workdir, "docker-compose.yml"), os.path.join(workdir, "pod.yaml")]
+    for manifest in manifests:
+        if os.path.exists(manifest):
+            with open(manifest, "r", encoding="utf-8") as f:
+                for line in f:
+                    m = re.search(r"image:\s*([^\s]+)", line)
+                    if m:
+                        val = m.group(1).strip("'\"")
+                        if "ROUTER_IMAGE_PLACEHOLDER" in val:
+                            continue
+                        if "litellm" in val and "LITELLM_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["LITELLM_IMAGE_PLACEHOLDER"] = val
+                        elif "langfuse-worker" in val and "LANGFUSE_WORKER_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["LANGFUSE_WORKER_IMAGE_PLACEHOLDER"] = val
+                        elif "langfuse" in val and "LANGFUSE_WEB_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["LANGFUSE_WEB_IMAGE_PLACEHOLDER"] = val
+                        elif "clickhouse" in val and "CLICKHOUSE_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["CLICKHOUSE_IMAGE_PLACEHOLDER"] = val
+                        elif "valkey" in val and "VALKEY_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["VALKEY_IMAGE_PLACEHOLDER"] = val
+                        elif "pgvector" in val and "POSTGRES_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["POSTGRES_IMAGE_PLACEHOLDER"] = val
+                        elif "minio" in val and "MINIO_IMAGE_PLACEHOLDER" not in imgs:
+                            imgs["MINIO_IMAGE_PLACEHOLDER"] = val
+    return imgs
+
+repl.update(extract_manifest_images())
+
+
 templates = sorted(glob.glob(os.path.join(src_dir, "*.pod")) + glob.glob(os.path.join(src_dir, "*.container")))
 if not templates:
     sys.stderr.write(f"Error: no quadlet templates found in {src_dir}\n")
