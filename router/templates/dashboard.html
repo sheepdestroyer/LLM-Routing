@@ -493,7 +493,7 @@
                             <span style="font-weight: 800; font-size: 16px; color: #fff;">${m.name}</span>
                             <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${m.score.toFixed(1)}</span>
                         </div>
-                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: ${m.id}" tabindex="0">
+                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: ${m.id}" tabindex="0" role="button">
                             ID: ${m.id}
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
@@ -569,7 +569,7 @@
                         <span class="metric-label">Total API Calls</span>
                     </div>
                     <div class="metric-box">
-                        <span class="metric-value" id="last-triage-decision" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ data.last_triage_decision }}" tabindex="0">{{ data.last_triage_decision }}</span>
+                        <span class="metric-value" id="last-triage-decision" style="color: #c084fc; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ data.last_triage_decision }}" tabindex="0" role="button">{{ data.last_triage_decision }}</span>
                         <span class="metric-label">Last Triage Split</span>
                     </div>
                     <div class="metric-box">
@@ -732,7 +732,7 @@
                         <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
                         <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {{ "%.1f"|format(data.best_free_model.score) }}</span>
                     </div>
-                    <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: {{ data.best_free_model.id }}" tabindex="0">
+                    <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: {{ data.best_free_model.id }}" tabindex="0" role="button">
                         ID: {{ data.best_free_model.id }}
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
