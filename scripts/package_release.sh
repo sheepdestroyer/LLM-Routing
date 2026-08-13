@@ -19,6 +19,8 @@ echo "   Release version stamp: ${RELEASE_VER}"
 tar -czf "$OUTPUT_TAR" \
     start-stack.sh \
     quadlets \
+    docker-compose.yml \
+    pod.yaml \
     litellm/config.yaml \
     litellm/entrypoint.py \
     router/config.yaml \
