@@ -52,7 +52,7 @@ mkdir -p <prod-home>/LLM-Routing
 curl -sSL https://github.com/sheepdestroyer/LLM-Routing/releases/download/v0.1.25/llm-routing-deploy.tar.gz | tar -xz -C <prod-home>/LLM-Routing
 
 # 2. Deploy stack pulling GHCR container image (automatically triggers pre-deploy DB backup & restarts podman containers)
-cd <prod-home>/LLM-Routing && ROUTER_IMAGE=ghcr.io/sheepdestroyer/llm-routing:v0.1.25 ./start-stack.sh --pull
+cd <prod-home>/LLM-Routing && ./start-stack.sh --pull
 
 # 3. Ensure production HAProxy is running
 podman rm -f production-haproxy || true
