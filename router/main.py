@@ -3065,7 +3065,7 @@ async def chat_completions(request: Request):
                                                 if data_str == "[DONE]":
                                                     continue
                                                 try:
-                                                    data_json = json.loads(data_str)
+                                                    data_json = orjson.loads(data_str)
                                                     choices = data_json.get("choices", [])
                                                     if choices and isinstance(
                                                         choices[0], dict
