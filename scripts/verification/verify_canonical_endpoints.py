@@ -9,6 +9,7 @@ Usage:
     python scripts/verification/verify_canonical_endpoints.py --prod  # explicit prod
 """
 import os
+import re
 import sys
 
 import time
