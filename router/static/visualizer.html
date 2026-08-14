@@ -7,6 +7,11 @@
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="alternate icon" type="image/x-icon" href="/static/favicon.ico">
 <style>
+:root {
+  --focus-outline-color: #818cf8;
+  --focus-outline: 2px solid var(--focus-outline-color);
+  --focus-offset: 2px;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 2px solid #0f3460; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -17,13 +22,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .controls { background: #16213e; padding: 10px 20px; border-bottom: 1px solid #0f3460; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .controls button, .controls select { background: #0f3460; color: #e0e0e0; border: 1px solid #1a1a4e; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
 .controls button:hover { background: #1a1a5e; }
-.controls button:focus-visible, .controls select:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.controls button:focus-visible, .controls select:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
 .controls button.active { background: #e94560; border-color: #e94560; }
 .main { display: flex; height: calc(100vh - 100px); }
 .list { width: 380px; min-width: 300px; overflow-y: auto; border-right: 1px solid #0f3460; background: #1a1a2e; }
-.list-item { padding: 10px 14px; border-bottom: 1px solid #0f3460; cursor: pointer; font-size: 0.82em; }
+.list-item { position: relative; padding: 10px 14px; border-bottom: 1px solid #0f3460; cursor: pointer; font-size: 0.82em; }
 .list-item:hover { background: #16213e; }
-.list-item:focus-visible { outline: 2px solid #818cf8; outline-offset: -2px; }
+.list-item:focus-visible { outline: var(--focus-outline); outline-offset: -2px; z-index: 1; }
 .list-item.selected { background: #0f3460; border-left: 3px solid #e94560; }
 .list-item .id { color: #888; font-size: 0.75em; }
 .list-item .snippet { margin: 4px 0; color: #ccc; max-height: 2.4em; overflow: hidden; }
@@ -47,7 +52,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .tier-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .tier-btn { padding: 8px 14px; border: 1px solid #0f3460; border-radius: 4px; cursor: pointer; font-size: 0.8em; background: #1a1a2e; color: #ccc; transition: all 0.15s; }
 .tier-btn:hover { background: #0f3460; }
-.tier-btn:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.tier-btn:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
 .tier-btn.selected-human { border-color: #64b5f6; background: #1a1a4a; color: #64b5f6; }
 .tier-btn.llm-label { border-style: dashed; border-color: #ff9800; }
 .tier-btn.classifier-label { border-style: dashed; border-color: #9c27b0; }
@@ -63,7 +68,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .annotation-bar input { flex: 1; background: #0f3460; border: 1px solid #1a1a4e; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; font-size: 0.85em; }
 .annotation-bar button { background: #e94560; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
 .annotation-bar button.save { background: #4caf50; }
-.annotation-bar button:focus-visible, .annotation-bar input:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.annotation-bar button:focus-visible, .annotation-bar input:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
 .progress-bar { height: 4px; background: #0f3460; border-radius: 2px; margin-top: 8px; }
 .progress-fill { height: 100%; background: #64b5f6; border-radius: 2px; transition: width 0.3s; }
 .filter-count { color: #e94560; font-weight: bold; }
