@@ -14,6 +14,7 @@ Tool names match the built-in Memory MCP exactly:
 """
 import sys
 import json
+import orjson
 import time
 import hashlib
 import httpx
@@ -83,13 +84,13 @@ def _is_memory_key(key: str) -> bool:
 def _memory_value(data: str, tags: list | None) -> str:
     """Encode data + tags into the stored value JSON."""
     payload = {"data": data, "tags": tags or []}
-    return json.dumps(payload, ensure_ascii=False)
+    return orjson.dumps(payload).decode('utf-8')
 
 
 def _parse_memory_value(raw: str) -> dict:
     """Decode stored value back into {data, tags}."""
     try:
-        val = json.loads(raw)
+        val = orjson.loads(raw)
         if not isinstance(val, dict):
             return {"data": str(val) if val is not None else "", "tags": []}
         if "data" not in val or val["data"] is None:
@@ -488,7 +489,7 @@ async def main_loop():
         if not line:
             continue
         try:
-            req = json.loads(line)
+            req = orjson.loads(line)
             req_id = req.get("id")
 
             # Notifications have no ID — skip response
@@ -502,9 +503,9 @@ async def main_loop():
                     "id": req_id,
                     "result": result
                 }
-                sys.stdout.write(json.dumps(response) + "\n")
+                sys.stdout.write(orjson.dumps(response).decode('utf-8') + "\n")
                 sys.stdout.flush()
-        except json.JSONDecodeError as e:
+        except orjson.JSONDecodeError as e:
             log(f"JSON parse error: {e}")
         except Exception as e:
             log(f"Unexpected error: {e}")

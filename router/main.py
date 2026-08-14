@@ -310,7 +310,7 @@ async def sync_stats_from_valkey() -> None:
     try:
         raw_stats = await redis.get("router:stats")
         if raw_stats:
-            val = json.loads(raw_stats)
+            val = orjson.loads(raw_stats)
             if isinstance(val, dict):
                 # Update scalar counters (taking max to avoid regressions across workers)
                 for count_key in (
@@ -352,7 +352,7 @@ async def sync_stats_from_valkey() -> None:
 
         raw_timeline = await redis.get("router:timeline")
         if raw_timeline:
-            tl = json.loads(raw_timeline)
+            tl = orjson.loads(raw_timeline)
             if isinstance(tl, list) and tl:
                 stats["timeline"] = tl[-15:]
     except Exception as e:
@@ -386,9 +386,9 @@ async def save_stats_to_valkey() -> None:
             "tool_tokens": stats.get("tool_tokens", {}),
             "routing_paths": stats.get("routing_paths", {}),
         }
-        await redis.set("router:stats", json.dumps(data_to_store))
+        await redis.set("router:stats", orjson.dumps(data_to_store).decode('utf-8'))
         if "timeline" in stats and stats["timeline"]:
-            await redis.set("router:timeline", json.dumps(stats["timeline"]))
+            await redis.set("router:timeline", orjson.dumps(stats["timeline"]).decode('utf-8'))
     except Exception as e:
         logger.warning(f"Failed to save stats to Valkey: {e}")
         global _redis_client, _redis_last_init_attempt
@@ -762,7 +762,7 @@ def load_persisted_stats():
     if os.path.exists(STATS_JSON_PATH):
         try:
             with open(STATS_JSON_PATH, "r") as f:
-                loaded = json.load(f)
+                loaded = orjson.loads(f.read())
                 # Merge loaded stats with default stats dictionary
                 for k, v in loaded.items():
                     if isinstance(v, dict) and k in stats:
@@ -777,7 +777,7 @@ def load_persisted_stats():
             if os.path.exists(timeline_path):
                 try:
                     with open(timeline_path, "r") as f:
-                        stats["timeline"] = json.load(f)
+                        stats["timeline"] = orjson.loads(f.read())
                 except Exception:
                     pass  # stale/broken timeline file → start fresh
         except Exception as e:
@@ -1995,7 +1995,7 @@ def _load_aa_scores():
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
-            data = json.load(f)
+            data = orjson.loads(f.read())
             _AA_SCORES_CACHE = data.get("scores", {})
             _AA_SCORES_LOADED = True
             logger.info(
@@ -3978,7 +3978,7 @@ async def get_dashboard_data():
         if os.path.exists(roster_path):
             async with aiofiles.open(roster_path, "r", encoding="utf-8") as f:
                 roster_content = await f.read()
-                roster_data = json.loads(roster_content)
+                roster_data = orjson.loads(roster_content)
 
             import html as html_lib
             rows = ""
@@ -4308,7 +4308,7 @@ async def _read_annotations_async(path) -> dict:
         async with aiofiles.open(path, "r", encoding="utf-8") as f:
             # Read asynchronously, but parse in a thread pool to avoid blocking event loop
             content = await f.read()
-            data = await asyncio.to_thread(json.loads, content)
+            data = await asyncio.to_thread(orjson.loads, content)
             _annotations_cache[path] = {"mtime": current_mtime, "data": data}
 
     return copy.deepcopy(_annotations_cache[path]["data"])
