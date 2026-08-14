@@ -105,6 +105,56 @@
             visibility: visible;
         }
 
+        .model-id-copy-btn {
+            position: relative;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: inherit;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 4px 8px;
+            margin-bottom: 8px;
+            width: 100%;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .model-id-copy-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .model-id-copy-btn:focus-visible {
+            outline: 2px solid #818cf8;
+            outline-offset: 2px;
+        }
+
+        .model-id-copy-btn .copied-tooltip {
+            position: absolute;
+            top: -24px;
+            right: 8px;
+            background: #10b981;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 11px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s, visibility 0.3s;
+            visibility: hidden;
+        }
+
+        .model-id-copy-btn .copied-tooltip.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
         @keyframes bannerPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.85; }
@@ -492,14 +542,15 @@
                 if (bestFreeModelContainer) {
                     const m = data.best_free_model;
                     const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
+                    const safeId = escapeHtml(m.id || "");
                     bestFreeModelContainer.innerHTML = `
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-weight: 800; font-size: 16px; color: #fff;">${m.name}</span>
+                            <span style="font-weight: 800; font-size: 16px; color: #fff;">${escapeHtml(m.name || "")}</span>
                             <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> ${m.score.toFixed(1)}</span>
                         </div>
-                        <button type="button" class="oauth-banner-cmd" title="${m.id}" style="font-size: 11px; padding: 4px 8px; margin-bottom: 8px; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" aria-label="Copy model ID" onclick="navigator.clipboard.writeText('${m.id}').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }).catch(err => console.error('Failed to copy to clipboard:', err));">
+                        <button type="button" class="model-id-copy-btn" data-model-id="${safeId}" title="${safeId}" aria-label="Copy model ID" onclick="copyModelId(this)">
                             <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
-                            ID: ${m.id}
+                            ID: ${safeId}
                         </button>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
                             <span>📐 context ${m.context_length.toLocaleString()} tok</span>
@@ -530,6 +581,27 @@
             }
         }
         const refreshDashboard = refreshStats;
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function copyModelId(btn) {
+            const modelId = btn.getAttribute("data-model-id") || "";
+            if (!modelId) return;
+            navigator.clipboard.writeText(modelId).then(() => {
+                const t = btn.querySelector(".copied-tooltip");
+                if (t) {
+                    t.classList.add("show");
+                    setTimeout(() => t.classList.remove("show"), 1500);
+                }
+            }).catch(err => console.error("Failed to copy to clipboard:", err));
+        }
 
         // Initialize on load and set periodic polling
         window.addEventListener("DOMContentLoaded", () => {
@@ -738,7 +810,7 @@
                         <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
                         <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> {{ "%.1f"|format(data.best_free_model.score) }}</span>
                     </div>
-                    <button type="button" class="oauth-banner-cmd" title="{{ data.best_free_model.id }}" style="font-size: 11px; padding: 4px 8px; margin-bottom: 8px; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" aria-label="Copy model ID" onclick="navigator.clipboard.writeText('{{ data.best_free_model.id }}').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }).catch(err => console.error('Failed to copy to clipboard:', err));">
+                    <button type="button" class="model-id-copy-btn" data-model-id="{{ data.best_free_model.id }}" title="{{ data.best_free_model.id }}" aria-label="Copy model ID" onclick="copyModelId(this)">
                         <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
                         ID: {{ data.best_free_model.id }}
                     </button>
