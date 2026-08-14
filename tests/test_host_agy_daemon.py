@@ -478,3 +478,107 @@ def test_daemon_post_stream_true_finally_cleanup(daemon_server, monkeypatch):
     assert killed is True
     assert len(closed_fds) > 0
 
+def test_parse_usage_output():
+    text = """Quota:
+Gemini Models          Weekly Limit Remaining     96%   2026-08-20T16:58:06Z
+Gemini Models          Five Hour Limit Remaining  98%   2026-08-14T17:58:03Z
+Claude and GPT models  Weekly Limit Remaining     100%  2026-08-21T13:37:53Z
+Claude and GPT models  Five Hour Limit Remaining  100%  2026-08-14T18:37:53Z"""
+    result = host_agy_daemon.parse_usage_output(text)
+    assert len(result["quotas"]) == 4
+    assert result["quotas"][0]["category"] == "Gemini Models"
+    assert result["quotas"][0]["remaining"] == "96%"
+    assert result["quotas"][2]["category"] == "Claude and GPT models"
+    assert result["quotas"][2]["remaining"] == "100%"
+
+def test_parse_models_output():
+    text = """⠋ Fetching available models...
+gemini-3.7-flash-high     Gemini 3.7 Flash (High)
+claude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)
+gpt-oss-120b-medium       GPT-OSS 120B (Medium)"""
+    models = host_agy_daemon.parse_models_output(text)
+    assert len(models) == 3
+    assert models[0]["id"] == "gemini-3.7-flash-high"
+    assert models[1]["id"] == "claude-sonnet-4-6"
+    assert models[2]["id"] == "gpt-oss-120b-medium"
+    assert models[2]["name"] == "GPT-OSS 120B (Medium)"
+
+def test_get_auth_status(tmp_path, monkeypatch):
+    token_file = tmp_path / "antigravity-oauth-token"
+    token_file.write_text(json.dumps({
+        "auth_method": "consumer",
+        "token": {
+            "access_token": "mock_tok",
+            "refresh_token": "mock_ref",
+            "expiry": "2026-08-14T15:45:24.092546+02:00"
+        }
+    }))
+    monkeypatch.setattr(host_agy_daemon, "CLI_TOKEN_PATH", str(token_file))
+
+    status = host_agy_daemon.get_auth_status()
+    assert status["authenticated"] is True
+    assert status["source"] == "cli_token"
+
+    # Test missing token file
+    monkeypatch.setattr(host_agy_daemon, "CLI_TOKEN_PATH", str(tmp_path / "nonexistent.json"))
+    missing_status = host_agy_daemon.get_auth_status()
+    assert missing_status["authenticated"] is False
+    assert missing_status["status"] == "missing"
+
+def test_daemon_get_health(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/health")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["status"] == "ok"
+    assert "agy_binary" in data
+    assert "auth" in data
+
+def test_daemon_get_run_probe(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/run")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["status"] == "ok"
+
+def test_daemon_get_usage(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {
+            "returncode": 0,
+            "stdout": "Quota:\nGemini Models  Weekly Limit Remaining  95%  2026-08-20Z",
+            "stderr": "",
+            "conversation_id": None
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    req = urllib.request.Request(f"{daemon_server}/usage")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert "quotas" in data
+
+def test_daemon_get_models(daemon_server, monkeypatch):
+    from unittest.mock import MagicMock
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = "gpt-oss-120b-medium  GPT-OSS 120B (Medium)\n"
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: mock_run)
+
+    req = urllib.request.Request(f"{daemon_server}/models")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["status"] == "ok"
+    assert len(data["models"]) == 1
+    assert data["models"][0]["id"] == "gpt-oss-120b-medium"
+
+def test_daemon_get_status(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/status")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["status"] == "ok"
+    assert "auth" in data
+
+
+

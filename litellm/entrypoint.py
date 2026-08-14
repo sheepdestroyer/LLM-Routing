@@ -26,16 +26,19 @@ if os.path.exists(env_path):
                     val = val.strip().strip('"').strip("'")
                 os.environ.setdefault(key, val)
 
-# Load Gemini OAuth token from credentials JSON
-creds_path = "/config/gemini_auth/oauth_creds.json"
-if os.path.exists(creds_path):
+# Load Gemini OAuth token from Antigravity CLI token file
+token_path = "/config/gemini_auth/antigravity-cli/antigravity-oauth-token"
+if os.path.exists(token_path) and "GEMINI_OAUTH_TOKEN" not in os.environ:
     try:
-        with open(creds_path) as f:
+        with open(token_path) as f:
             creds = json.load(f)
-            token = creds.get("access_token", "")
-            if token:
-                os.environ["GEMINI_OAUTH_TOKEN"] = token
-    except (json.JSONDecodeError, IOError):
+            if isinstance(creds, dict):
+                token = creds.get("access_token")
+                if not token and isinstance(creds.get("token"), dict):
+                    token = creds["token"].get("access_token")
+                if token:
+                    os.environ["GEMINI_OAUTH_TOKEN"] = token
+    except (json.JSONDecodeError, IOError, AttributeError):
         pass
 
 # Wait for PostgreSQL to be ready before starting LiteLLM

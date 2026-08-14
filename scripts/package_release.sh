@@ -26,7 +26,6 @@ tar -czf "$OUTPUT_TAR" \
     router/config.yaml \
     scripts/backup.sh \
     scripts/host_agy_daemon.py \
-    scripts/sync_gemini_token.py \
     .release_version \
     README.md
 

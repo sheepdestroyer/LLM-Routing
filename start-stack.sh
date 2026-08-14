@@ -186,26 +186,15 @@ if [ -z "${POSTGRES_PASSWORD:-}" ]; then
     chmod 600 "$ENV_FILE"
 fi
 
-# 2. Sync Gemini OAuth token (skip if <15 min old)
-OAUTH_CREDS="$HOME/.gemini/oauth_creds.json"
-NEED_SYNC=true
-if [ -f "$OAUTH_CREDS" ]; then
-    CREDS_AGE=$(($(date +%s) - $(stat -c %Y "$OAUTH_CREDS" 2>/dev/null || echo 0)))
-    if [ "$CREDS_AGE" -lt 900 ]; then
-        NEED_SYNC=false
-    fi
-fi
-if $NEED_SYNC; then
-    python3 scripts/sync_gemini_token.py || echo "⚠️ Warning: Failed to sync Gemini token from keyring"
-fi
-
+# 2. Check Gemini OAuth token
+CLI_TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 ACTIVE_OAUTH=""
-if [ -f "$OAUTH_CREDS" ]; then
-    ACTIVE_OAUTH=$(jq -r '.access_token' "$OAUTH_CREDS" 2>/dev/null || echo "")
+if [ -f "$CLI_TOKEN" ]; then
+    ACTIVE_OAUTH=$(jq -r '.token.access_token // .access_token // empty' "$CLI_TOKEN" 2>/dev/null || echo "")
 fi
 if [ -z "$ACTIVE_OAUTH" ]; then
-    echo "⚠️ Warning: Could not resolve Google OAuth token from $OAUTH_CREDS."
-    echo "Gemini models may fail. Please ensure you are logged into Antigravity."
+    echo "⚠️ Warning: Could not resolve Google OAuth token from $CLI_TOKEN."
+    echo "Gemini models may fail. Please ensure you are logged into Antigravity ($ agy auth login)."
 fi
 
 # Ensure host agy daemon systemd service is installed and updated
