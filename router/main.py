@@ -641,7 +641,7 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
         scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
         host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "")
         if host and host not in ("localhost", "127.0.0.1", "::1"):
-            host_base = re.sub(r"^dashboard\.", "", host)
+            host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host)
             host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
             canonical_server = f"{scheme}://llama.{host_base}"
             canonical_classifier = f"{scheme}://llama.{host_base}/v1"
@@ -4149,7 +4149,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
             logger.warning("Invalid public port in netloc %r; omitting port", netloc_val)
             port_suffix = ""
 
-        host_base = re.sub(r"^dashboard\.", "", host_val)
+        host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host_val)
         host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
         service_netloc = f"{host_base}{port_suffix}"
         return (

@@ -130,12 +130,9 @@ ROUTING_DOMAIN="${ROUTING_DOMAIN:-vendeuvre.lan}"
 export ROUTING_DOMAIN
 
 # Derive public/local base URLs from env/config with sensible defaults, removing trailing slash
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://x570.${ROUTING_DOMAIN}/llm-routing}}}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${BASE_URL:-${BASEURL:-https://llm-routing.${ROUTING_DOMAIN}}}}"
 if [[ ! "$PUBLIC_BASE_URL" =~ ^https?:// ]]; then
     PUBLIC_BASE_URL="https://${PUBLIC_BASE_URL}"
-fi
-if [[ ! "$PUBLIC_BASE_URL" =~ /llm-routing ]]; then
-    PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}/llm-routing"
 fi
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://localhost:${ROUTER_PORT}}"
@@ -723,7 +720,7 @@ routing_domain = os.environ.get("ROUTING_DOMAIN") or "vendeuvre.lan"
 parsed = urlparse(public if "://" in public else f"https://{public}")
 scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "https"
 host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "") or routing_domain
-host_base = re.sub(r"^dashboard\.", "", host)
+host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host)
 host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
 print(os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host_base}")
 print(os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host_base}")
@@ -867,6 +864,7 @@ repl = {
     "REDIS_AUTH_PLACEHOLDER": os.environ["REDIS_AUTH"],
     "CLICKHOUSE_PASSWORD_PLACEHOLDER": os.environ["CLICKHOUSE_PASSWORD"],
     "PROXY_BASE_URL_PLACEHOLDER": proxy_base_url,
+    "SERVER_ROOT_PATH_PLACEHOLDER": os.environ.get("SERVER_ROOT_PATH", ""),
     "PUBLIC_BASE_URL_PLACEHOLDER": os.environ["PUBLIC_BASE_URL"].rstrip("/"),
     "ROUTING_DOMAIN_PLACEHOLDER": os.environ["ROUTING_DOMAIN"],
     "LLAMA_CLASSIFIER_URL_PLACEHOLDER": llama_classifier_url,

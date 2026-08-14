@@ -67,7 +67,7 @@ nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemo
 
 # 5. Verify end-to-end dashboard health
 # NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
-curl -k -s --resolve <prod-domain>:443:127.0.0.1 https://<prod-domain>/llm-routing/dashboard | head -5
+curl -k -s --resolve llm-routing.<prod-domain>:443:127.0.0.1 https://llm-routing.<prod-domain>/dashboard | head -5
 ```
 
 ### Deployment Guidelines & Data Integrity

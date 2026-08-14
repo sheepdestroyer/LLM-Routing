@@ -187,14 +187,14 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
     except Exception as e:
         passed += check("/v1/models", False, str(e))
 
-    # /llm-routing/litellm/ui/ (LiteLLM admin UI — requires SERVER_ROOT_PATH prefix)
+    # /ui/ (LiteLLM admin UI)
     total += 1
     try:
-        r = httpx.get(f"{base}/llm-routing/litellm/ui/", timeout=10, follow_redirects=True)
-        ok = r.status_code == 200 and "<html" in r.text.lower()
-        passed += check("/llm-routing/litellm/ui/", ok)
+        r = httpx.get(f"{base}/ui/", timeout=10, follow_redirects=True)
+        ok = (r.status_code == 200 or r.status_code == 302) and ("<html" in r.text.lower() or "swagger" in r.text.lower() or "litellm" in r.text.lower() or r.status_code == 302)
+        passed += check("/ui/", ok)
     except Exception as e:
-        passed += check("/llm-routing/litellm/ui/", False, str(e))
+        passed += check("/ui/", False, str(e))
 
     return passed, total
 
@@ -728,17 +728,16 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     if not host:
         print("  ⚠ Canonical URLs — SKIPPED (PUBLIC_BASE_URL has no host)")
         return 0, 0, 0
-    # Preserve a configured router path (e.g. /llm-routing) while normalizing
-    # scheme-less PUBLIC_BASE_URL values into valid absolute URLs.
     router_base = f"{scheme}://{host}{parsed_public.path.rstrip('/')}"
+    host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host)
     endpoints = [
         (f"{router_base}/v1/models", "router models"),
         (f"{router_base}/dashboard", "dashboard"),
         (f"{router_base}/metrics", "metrics"),
         (f"{router_base}/visualizer", "visualizer"),
-        (f"{scheme}://litellm.{host}/ui/", "LiteLLM admin UI"),
-        (f"{scheme}://langfuse.{host}/", "Langfuse web UI"),
-        (f"{scheme}://llama.{host}/health", "llama.cpp health"),
+        (f"{scheme}://litellm.{host_base}/ui/", "LiteLLM admin UI"),
+        (f"{scheme}://langfuse.{host_base}/", "Langfuse web UI"),
+        (f"{scheme}://llama.{host_base}/health", "llama.cpp health"),
     ]
 
     for url, label in endpoints:

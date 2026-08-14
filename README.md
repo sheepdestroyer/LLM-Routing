@@ -826,7 +826,7 @@ This script acts as an end-to-end routing smoke test by sending five sequential 
 LLM-Routing provides full compatibility with Home Assistant's `openai_conversation` official integration, supporting both legacy Chat Completions (`/v1/chat/completions`) and the OpenAI Responses API (`/v1/responses` and `/responses`).
 
 ### Configuration in Home Assistant
-* **Base URL**: `https://litellm.x570.vendeuvre.lan/v1` (Production) or `https://dev.vendeuvre.lan/v1` (Dev)
+* **Base URL**: `https://llm-routing.vendeuvre.lan/v1` (or direct `https://litellm.vendeuvre.lan/v1`) (Production) or `https://llm-routing.dev.vendeuvre.lan/v1` (Dev)
 * **API Key**: Any valid LiteLLM key or master key
 * **Supported Models for Home Assistant**:
   * `local-qwen-3.6-hass` (Recommended: local Qwen model with thinking disabled for fast Assist action responses)
@@ -880,7 +880,7 @@ Tests cover:
 | LiteLLM direct | 1 completion directly to LiteLLM |
 | Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests. The router remains under its configured path (for example `https://x570.vendeuvre.lan/llm-routing`), while the verifier derives service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification; production `.env` should include `PUBLIC_BASE_URL="https://x570.vendeuvre.lan/llm-routing"`. The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests (defaults to `https://llm-routing.vendeuvre.lan`). The router derives clean service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification (defaulting to `PUBLIC_BASE_URL="https://llm-routing.dev.vendeuvre.lan"`). The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
 
 ## Environment-isolated Quadlet deployment
 
