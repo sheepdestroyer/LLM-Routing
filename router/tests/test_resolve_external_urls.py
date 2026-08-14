@@ -52,6 +52,19 @@ def test_resolve_with_public_base_url_vaild_domain():
     assert lm == "https://llama.app.vendeuvre.lan/"
 
 
+def test_resolve_with_llm_routing_subdomain():
+    os.environ["ROUTING_DOMAIN"] = "vendeuvre.lan"
+    req = MockRequest(
+        base_host="llm-routing.vendeuvre.lan",
+        base_netloc="llm-routing.vendeuvre.lan",
+        url_scheme="https",
+    )
+    lf, ll, lm = resolve_external_urls(req)
+    assert lf == "https://langfuse.vendeuvre.lan"
+    assert ll == "https://litellm.vendeuvre.lan/ui/"
+    assert lm == "https://llama.vendeuvre.lan/"
+
+
 def test_resolve_with_valid_base_request():
     os.environ["ROUTING_DOMAIN"] = "vendeuvre.lan"
     os.environ["PUBLIC_BASE_URL"] = "http://[::1]:5000"
@@ -139,10 +152,10 @@ def test_local_fallback_ipv4():
 
 
 def test_resolve_llama_endpoints_canonical_https():
-    os.environ["PUBLIC_BASE_URL"] = "https://x570.vendeuvre.lan/llm-routing"
+    os.environ["PUBLIC_BASE_URL"] = "https://llm-routing.vendeuvre.lan"
     server_url, classifier_url = main._resolve_llama_endpoints()
-    assert server_url == "https://llama.x570.vendeuvre.lan"
-    assert classifier_url == "https://llama.x570.vendeuvre.lan/v1"
+    assert server_url == "https://llama.vendeuvre.lan"
+    assert classifier_url == "https://llama.vendeuvre.lan/v1"
 
 
 def test_resolve_llama_endpoints_local_fallback():
