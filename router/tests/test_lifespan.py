@@ -57,6 +57,37 @@ async def test_lifespan_timeout_path():
             pass
 
         assert mock_client.get.call_count == 180
-        assert mock_sleep.call_count == 180
+        # Does not sleep after the final attempt
+        assert mock_sleep.call_count == 179
         mock_warning.assert_any_call("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
+        mock_sync_roster.assert_not_called()
+        mock_register_openrouter.assert_not_called()
+        mock_register_ollama.assert_not_called()
 
+
+@pytest.mark.anyio
+async def test_lifespan_disabled_timeout_path():
+    app = FastAPI()
+
+    mock_client = AsyncMock()
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock), \
+         patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
+         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
+         patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
+         patch("router.main.push_aggregate_scores", new_callable=AsyncMock), \
+         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock), \
+         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
+         patch("router.main.logger.info") as mock_info, \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key", "LITELLM_READINESS_TIMEOUT": "0"}):
+
+        async with lifespan(app):
+            pass
+
+        mock_client.get.assert_not_called()
+        mock_sleep.assert_not_called()
+        mock_sync_roster.assert_not_called()
+        mock_register_openrouter.assert_not_called()
+        mock_register_ollama.assert_not_called()
+        mock_info.assert_any_call("ℹ️  LiteLLM readiness wait disabled (timeout <= 0) — skipping roster sync")
