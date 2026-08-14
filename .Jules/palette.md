@@ -13,3 +13,7 @@
 ## 2026-08-13 - Accessible Text Truncation & Hover Tooltips
 **Learning:** Heavily truncated text elements using CSS `text-overflow: ellipsis` (like long model IDs or descriptions) in dashboards can obscure content from visual users. Adding a `title` attribute provides a native hover tooltip for visual inspection. Do NOT add `tabindex="0"` or `role="button"` to non-interactive text elements, as screen readers naturally access the full DOM text string without extra tab stops or fake button semantics.
 **Action:** When truncating important information visually, apply a `title` attribute containing the full text to expose visual hover tooltips. Do not make non-interactive text focusable or assign button roles. Ensure JavaScript updating dynamic fields syncs the `.title` property.
+
+## 2026-08-14 - Keyboard Focus Parity for Hover Animations
+**Learning:** When interactive elements (like links or buttons) have child elements that animate on `:hover` (e.g., `.btn-arrow` translating horizontally), those child elements must also animate on `:focus-visible`. Otherwise, keyboard users miss out on visual interaction cues provided to mouse users.
+**Action:** When defining `:hover` state animations for child elements, always pair it with the corresponding `:focus-visible` selector on the parent (e.g., `.btn:hover .btn-arrow, .btn:focus-visible .btn-arrow`).
