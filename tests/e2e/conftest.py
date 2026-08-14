@@ -21,6 +21,12 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+@pytest.fixture
+def anyio_backend():
+    """Ensure anyio test runner uses the asyncio backend."""
+    return "asyncio"
+
+
 @pytest.fixture(scope="session")
 def live_server_url():
     """Start the FastAPI router in an isolated subprocess for end-to-end browser tests."""
@@ -38,6 +44,7 @@ def live_server_url():
     env["LITELLM_MASTER_KEY"] = "sk-litellm-testkey"
     env["ROUTER_API_KEY"] = "sk-router-testkey"
     env["ROUTER_PORT"] = str(port)
+    env["LITELLM_READINESS_TIMEOUT"] = "0"
 
     # Launch uvicorn in an isolated child process to prevent event loop / global state pollution
     proc = subprocess.Popen(

@@ -231,9 +231,9 @@ async def test_dashboard_pie_chart_gradients(page: Page, base_url: str):
     await page.evaluate("refreshStats()")
 
     tool_pie = page.locator("#tool-token-pie-chart")
-    if await tool_pie.count() > 0:
-        style = (await tool_pie.get_attribute("style")) or ""
-        assert "conic-gradient" in style
+    await expect(tool_pie).to_be_visible()
+    style = (await tool_pie.get_attribute("style")) or ""
+    assert "conic-gradient" in style
 
 
 @pytest.mark.anyio

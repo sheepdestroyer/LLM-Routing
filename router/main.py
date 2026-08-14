@@ -1340,8 +1340,12 @@ async def lifespan(app: FastAPI):
 
     litellm_ready_url = f"{LITELLM_URL}/health/readiness"
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
-    max_wait = 180
-    logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
+    try:
+        max_wait = int(os.getenv("LITELLM_READINESS_TIMEOUT", "180"))
+    except ValueError:
+        max_wait = 180
+    if max_wait > 0:
+        logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
     client = get_http_client()
     for i in range(max_wait):
         try:

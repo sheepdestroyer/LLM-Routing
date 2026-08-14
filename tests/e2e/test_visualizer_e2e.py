@@ -135,7 +135,10 @@ async def test_visualizer_human_annotation_interaction(page: Page, base_url: str
         ]
     }
 
+    save_requests = []
+
     async def handle_save(route):
+        save_requests.append(route.request)
         await route.fulfill(status=200, json={"status": "ok"})
 
     await page.route("**/dashboard/save-annotations*", handle_save)
@@ -158,6 +161,7 @@ async def test_visualizer_human_annotation_interaction(page: Page, base_url: str
 
     save_note_btn = page.locator(".annotation-bar button", has_text="Save Note")
     await save_note_btn.click()
+    assert len(save_requests) >= 1
 
     # Verify reviewed badge in list
     await expect(page.locator(".tag.human")).to_contain_text("REVIEWED")
