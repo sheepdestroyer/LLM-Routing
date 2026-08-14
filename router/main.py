@@ -40,7 +40,7 @@ except ImportError:
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
 LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
 
-GEMINI_OAUTH_CREDS_PATH = "/config/gemini_auth/oauth_creds.json"
+GEMINI_OAUTH_TOKEN_PATH = os.getenv("GEMINI_OAUTH_TOKEN_PATH", "/config/gemini_auth/antigravity-cli/antigravity-oauth-token")
 
 
 _redis_client = None
@@ -1624,25 +1624,64 @@ async def _read_json_file_async(file_path: str) -> dict:
 
 
 
+def _parse_oauth_token_info(data: dict) -> tuple[Optional[str], int]:
+    """Helper to extract access token and expiry epoch ms from varied token schemas."""
+    if not isinstance(data, dict):
+        return None, 0
+    token_info = data.get("token")
+    if isinstance(token_info, dict):
+        access_token = token_info.get("access_token")
+        expiry_val = token_info.get("expiry") or token_info.get("expiry_date")
+    else:
+        access_token = data.get("access_token")
+        expiry_val = data.get("expiry_date") or data.get("expiry")
+
+    expiry_ms = 0
+    if isinstance(expiry_val, (int, float)):
+        expiry_ms = int(expiry_val * 1000) if expiry_val < 10000000000 else int(expiry_val)
+    elif isinstance(expiry_val, str) and expiry_val.strip():
+        s = expiry_val.strip()
+        # Truncate fractional seconds to 6 digits (microseconds) for datetime.fromisoformat
+        normalized = re.sub(r"(\.\d{6})\d+", r"\1", s)
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            from datetime import datetime as dt_cls
+            expiry_dt = dt_cls.fromisoformat(normalized)
+            expiry_ms = int(expiry_dt.timestamp() * 1000)
+        except Exception:
+            expiry_ms = 0
+    return access_token, expiry_ms
+
+
 async def get_gemini_oauth_status() -> dict:
     """Returns structured OAuth status for the dashboard banner."""
     try:
-        if not await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_CREDS_PATH):
+        if not await asyncio.to_thread(os.path.exists, GEMINI_OAUTH_TOKEN_PATH):
             return {
                 "status": "missing",
-                "detail": "No oauth_creds.json found",
+                "detail": "No antigravity-oauth-token found",
                 "expiry_ms": 0,
             }
-        data = await _read_json_file_async(GEMINI_OAUTH_CREDS_PATH)
-        access_token = data.get("access_token")
-        expiry_ms = data.get("expiry_date", 0)
-        current_ms = int(time.time() * 1000)
+
+        data = await _read_json_file_async(GEMINI_OAUTH_TOKEN_PATH)
+        access_token, expiry_ms = _parse_oauth_token_info(data)
+
         if not access_token:
             return {
                 "status": "missing",
                 "detail": "No access token in file",
                 "expiry_ms": 0,
             }
+
+        if expiry_ms == 0:
+            return {
+                "status": "valid",
+                "detail": "OAuth token active",
+                "expiry_ms": 0,
+            }
+
+        current_ms = int(time.time() * 1000)
         diff_sec = (expiry_ms - current_ms) / 1000.0
         if diff_sec > 0:
             # Token is valid — compute human-readable remaining time

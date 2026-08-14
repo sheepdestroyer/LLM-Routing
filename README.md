@@ -222,7 +222,7 @@ All configurations, automation scripts, and databases are self-contained within 
 ├── pytest.ini           # Pytest configuration (test discovery, asyncio mode)
 ├── litellm/
 │   ├── config.yaml      # LiteLLM fallback chains, caching definitions & telemetry keys
-│   └── entrypoint.py    # LiteLLM startup wrapper (reads .env + oauth_creds.json)
+│   └── entrypoint.py    # LiteLLM startup wrapper (reads .env + antigravity-oauth-token)
 ├── router/
 │   ├── Dockerfile       # Container construction rules for the FastAPI server
 │   ├── config.yaml      # 5-tier classifier prompt + backend connection targets
@@ -378,18 +378,17 @@ For secure production deployments, the gateway services are configured to run un
    systemctl --user status llama-server.service
    ```
 2. **Antigravity CLI (agy) installed and authenticated**: The router delegates complex tasks to the
-   antigravity CLI (`agy`), which handles OAuth via the **system keyring** (not the file on disk).
+   antigravity CLI (`agy`), which stores and refreshes OAuth tokens automatically.
    Make sure you've launched antigravity and logged in at least once:
    ```bash
    agy --print "Hello"   # Should return a response
    ```
    The binary at `~/.local/bin/agy` is mounted into the router container via hostPath.
    
-   > **Note**: `agy` authenticates through the system keyring (GNOME Keyring / KDE Wallet), not
-   > from `~/.gemini/oauth_creds.json`. That file is a stale cache and may show an expired token
-   > even when `agy` works perfectly. To verify active auth status, check the cli.log:
+   > **Note**: `agy` authenticates and silently refreshes OAuth credentials stored in
+   > `~/.gemini/antigravity-cli/antigravity-oauth-token`. To verify active auth status, run:
    > ```bash
-   > grep "authenticated successfully" ~/.gemini/antigravity-cli/cli.log
+   > curl -s http://127.0.0.1:5005/health | jq .auth
    > ```
 
 ### 1. Launching the Stack
@@ -658,18 +657,19 @@ llm-routing-auto-agy    → classifier → if advanced: agy proxy → fallback L
                           if other tier: LiteLLM directly
 ```
 
-### Authentication: System Keyring (not oauth_creds.json)
+### Authentication: Antigravity OAuth Token
 
-`agy` authenticates via the **OS system keyring** (GNOME Keyring / KDE Wallet), not from the
-`~/.gemini/oauth_creds.json` file on disk. The file is a stale cache and may contain an expired
-token even when `agy` is fully authenticated.
+`agy` stores and silently refreshes active OAuth session credentials in
+`~/.gemini/antigravity-cli/antigravity-oauth-token`.
+
+The router and LiteLLM load credentials directly from this file (mounted inside the container
+at `/config/gemini_auth/antigravity-cli/antigravity-oauth-token`).
 
 Authentication flow (from `cli.log`):
-1. `Print mode: not authenticated, trying silent auth`
-2. `ChainedAuth: authenticated via keyring (effective: keyring)`
-3. `OAuth: authenticated successfully as user@gmail.com`
+1. `Print mode: checking token / performing silent refresh`
+2. `OAuth: authenticated successfully as user@gmail.com`
 
-The router container mounts `~/.gemini` to `/root/.gemini` and the `agy` binary from
+The router container mounts `~/.gemini` to `/root/.gemini` (and `/config/gemini_auth`) and the `agy` binary from
 `~/.local/bin/agy` to `/usr/local/bin/agy` via hostPath.
 
 ### Quota Architecture: Single Shared Daily Bucket

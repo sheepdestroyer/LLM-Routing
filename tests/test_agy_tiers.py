@@ -13,8 +13,9 @@ AGY = os.path.expanduser("~/.local/bin/agy")
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversations.json")
 
 TIERS = [
-    {"name": "Gemini 3.5 Flash",    "override": ""},
-    {"name": "Claude Opus 4.6",     "override": "claude-opus-4-6@default"},
+    {"name": "GPT-OSS 120B (Medium)", "override": "gpt-oss-120b-medium"},
+    {"name": "Gemini 3.5 Flash",      "override": ""},
+    {"name": "Claude Opus 4.6",       "override": "claude-opus-4-6@default"},
 ]
 
 async def run_tier_test(tier, prompt="say hello in one word", conversation_id=None):

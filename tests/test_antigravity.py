@@ -8,9 +8,9 @@ def test_antigravity_connection():
         import pytest
         pytest.skip("Skipping antigravity connection test in CI.")
 
-    creds_path = os.path.expanduser("~/.gemini/oauth_creds.json")
-    if not os.path.exists(creds_path):
-        print(f"Error: {creds_path} not found.")
+    cli_token_path = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
+    if not os.path.exists(cli_token_path):
+        print(f"Error: {cli_token_path} not found.")
         return
 
     print("--- Testing antigravity-cli connection with current OAuth ---")

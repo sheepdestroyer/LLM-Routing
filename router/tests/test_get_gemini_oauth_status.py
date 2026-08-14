@@ -7,7 +7,7 @@ from router import main
 async def test_get_gemini_oauth_status_missing_file():
     with patch("router.main.os.path.exists", return_value=False):
         result = await main.get_gemini_oauth_status()
-        assert result == {"status": "missing", "detail": "No oauth_creds.json found", "expiry_ms": 0}
+        assert result == {"status": "missing", "detail": "No antigravity-oauth-token found", "expiry_ms": 0}
 
 @pytest.mark.asyncio
 async def test_get_gemini_oauth_status_no_access_token():
@@ -41,3 +41,24 @@ async def test_get_gemini_oauth_status_exception():
     with patch("router.main.os.path.exists", side_effect=Exception("Test error")):
         result = await main.get_gemini_oauth_status()
         assert result == {"status": "error", "detail": "Test error", "expiry_ms": 0}
+
+@pytest.mark.asyncio
+async def test_get_gemini_oauth_status_from_cli_token_file():
+    mock_cli_data = {
+        "auth_method": "consumer",
+        "token": {
+            "access_token": "cli_test_token",
+            "refresh_token": "cli_refresh_token",
+            "token_type": "Bearer",
+            "expiry": "2026-08-14T15:45:24.092546+02:00"
+        }
+    }
+    with patch("router.main.os.path.exists", return_value=True), \
+         patch("router.main._read_json_file_async", new_callable=AsyncMock, return_value=mock_cli_data), \
+         patch("time.time", return_value=1786715000.0):
+        result = await main.get_gemini_oauth_status()
+        assert result["status"] == "valid"
+        assert "Expires in" in result["detail"]
+        assert result["expiry_ms"] == 1786715124092
+
+
