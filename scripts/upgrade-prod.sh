@@ -150,6 +150,7 @@ rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
 rsync -a "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml"
 rsync -a "$TEMP_DIR/docker-compose.yml" "$PROD_DIR/docker-compose.yml"
 rsync -a "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh"
+echo "$TAG" > "$PROD_DIR/.release_version"
 
 echo "✓ Runtime files synced from $TAG"
 
