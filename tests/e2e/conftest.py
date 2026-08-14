@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import socket
+import tempfile
 import subprocess
 from contextlib import closing
 from pathlib import Path
@@ -46,7 +47,9 @@ def live_server_url():
     env["ROUTER_PORT"] = str(port)
     env["LITELLM_READINESS_TIMEOUT"] = "0"
 
-    # Launch uvicorn in an isolated child process to prevent event loop / global state pollution
+    log_file = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+
+    # Launch uvicorn in an isolated child process with file redirection to prevent pipe buffer deadlocks
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -62,8 +65,8 @@ def live_server_url():
         ],
         cwd=str(root),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_file,
+        stderr=log_file,
     )
 
     # Wait for server to respond
@@ -71,9 +74,11 @@ def live_server_url():
     ready = False
     while time.time() - start_time < 15:
         if proc.poll() is not None:
-            _, stderr = proc.communicate()
+            log_file.seek(0)
+            logs = log_file.read()
+            log_file.close()
             raise RuntimeError(
-                f"Server process terminated early with code {proc.returncode}:\n{stderr.decode()}"
+                f"Server process terminated early with code {proc.returncode}:\n{logs}"
             )
         try:
             resp = httpx.get(f"{base_url}/favicon.ico", timeout=1.0)
@@ -86,7 +91,12 @@ def live_server_url():
     if not ready:
         proc.terminate()
         proc.kill()
-        raise RuntimeError(f"Live test server failed to respond on {base_url} within 15 seconds")
+        log_file.seek(0)
+        logs = log_file.read()
+        log_file.close()
+        raise RuntimeError(
+            f"Live test server failed to respond on {base_url} within 15 seconds:\n{logs}"
+        )
 
     yield base_url
 
@@ -96,6 +106,12 @@ def live_server_url():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+    finally:
+        log_file.close()
+        try:
+            os.unlink(log_file.name)
+        except OSError:
+            pass
 
 
 @pytest.fixture(scope="session")
