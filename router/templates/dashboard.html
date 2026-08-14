@@ -96,11 +96,13 @@
             font-size: 11px;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.3s;
+            transition: opacity 0.3s, visibility 0.3s;
+            visibility: hidden;
         }
 
         .oauth-banner-cmd .copied-tooltip.show {
             opacity: 1;
+            visibility: visible;
         }
 
         @keyframes bannerPulse {
@@ -396,7 +398,7 @@
             border: 0;
         }
 
-        .btn:hover .btn-arrow {
+        .btn:hover .btn-arrow, .btn:focus-visible .btn-arrow {
             transform: translateX(3px);
         }
 
@@ -493,11 +495,12 @@
                     bestFreeModelContainer.innerHTML = `
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <span style="font-weight: 800; font-size: 16px; color: #fff;">${m.name}</span>
-                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ ${m.score.toFixed(1)}</span>
+                            <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> ${m.score.toFixed(1)}</span>
                         </div>
-                        <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: ${m.id}">
+                        <button type="button" class="oauth-banner-cmd" title="${m.id}" style="font-size: 11px; padding: 4px 8px; margin-bottom: 8px; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" aria-label="Copy model ID" onclick="navigator.clipboard.writeText('${m.id}').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }).catch(err => console.error('Failed to copy to clipboard:', err));">
+                            <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
                             ID: ${m.id}
-                        </div>
+                        </button>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
                             <span>📐 context ${m.context_length.toLocaleString()} tok</span>
                             <span style="color: #34d399; font-weight: bold;">${statusLabel}</span>
@@ -733,11 +736,12 @@
                 <div id="best-free-model-container" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 18px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
-                        <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);">⚡ {{ "%.1f"|format(data.best_free_model.score) }}</span>
+                        <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> {{ "%.1f"|format(data.best_free_model.score) }}</span>
                     </div>
-                    <div style="font-size: 12px; font-family: monospace; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 8px;" title="ID: {{ data.best_free_model.id }}">
+                    <button type="button" class="oauth-banner-cmd" title="{{ data.best_free_model.id }}" style="font-size: 11px; padding: 4px 8px; margin-bottom: 8px; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" aria-label="Copy model ID" onclick="navigator.clipboard.writeText('{{ data.best_free_model.id }}').then(() => { const t = this.querySelector('.copied-tooltip'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500); }).catch(err => console.error('Failed to copy to clipboard:', err));">
+                        <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
                         ID: {{ data.best_free_model.id }}
-                    </div>
+                    </button>
                     <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
                         <span>📐 context {{ "{:,}".format(data.best_free_model.context_length) }} tok</span>
                         <span style="color: #34d399; font-weight: bold;">{% if not data.best_free_model.is_fallback %}LIVE{% else %}FALLBACK{% endif %}</span>
@@ -776,7 +780,7 @@
                 <div class="btn-group">
                     <!-- Goose Dashboard local -->
                     <a href="https://t.me/SheepBot?start=goose" target="_blank" rel="noopener noreferrer" class="btn" style="background: rgba(251, 191, 36, 0.05); border-color: rgba(251, 191, 36, 0.2);" aria-describedby="new-tab-desc">
-                        <span>{{ src_badge("GOOSE", "#fbbf24") | safe }} 🦢 Goose Telegram Bot</span>
+                        <span>{{ src_badge("GOOSE", "#fbbf24") | safe }} <span aria-hidden="true">🦢</span> Goose Telegram Bot</span>
                         <span class="btn-arrow" aria-hidden="true">→</span>
                     </a>
                 </div>
