@@ -1344,25 +1344,31 @@ async def lifespan(app: FastAPI):
         max_wait = int(os.getenv("LITELLM_READINESS_TIMEOUT", "180"))
     except ValueError:
         max_wait = 180
-    if max_wait > 0:
-        logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
-    client = get_http_client()
-    for i in range(max_wait):
-        try:
-            r = await client.get(litellm_ready_url, timeout=2.0)
-            if r.status_code == 200:
-                logger.info(f"✅ LiteLLM ready after {i + 1}s")
-                break
-        except Exception:
-            pass
-        await asyncio.sleep(1)
-    else:
-        logger.warning(
-            "⚠️  LiteLLM not ready within timeout — proceeding without roster sync"
-        )
 
-    # Sync free-model roster into LiteLLM (non-fatal if it fails)
-    if litellm_master_key:
+    is_ready = False
+    if max_wait <= 0:
+        logger.info("ℹ️  LiteLLM readiness wait disabled (timeout <= 0) — skipping roster sync")
+    else:
+        logger.info(f"⏳ Waiting for LiteLLM on {LITELLM_URL} (max {max_wait}s)...")
+        client = get_http_client()
+        for i in range(max_wait):
+            try:
+                r = await client.get(litellm_ready_url, timeout=2.0)
+                if r.status_code == 200:
+                    logger.info(f"✅ LiteLLM ready after {i + 1}s")
+                    is_ready = True
+                    break
+            except Exception:
+                pass
+            if i < max_wait - 1:
+                await asyncio.sleep(1)
+        else:
+            logger.warning(
+                "⚠️  LiteLLM not ready within timeout — proceeding without roster sync"
+            )
+
+    # Sync free-model roster into LiteLLM only when ready (non-fatal if it fails)
+    if is_ready and litellm_master_key:
         try:
             await sync_adaptive_router_roster(litellm_master_key)
         except Exception as e:
