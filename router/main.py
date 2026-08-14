@@ -386,9 +386,9 @@ async def save_stats_to_valkey() -> None:
             "tool_tokens": stats.get("tool_tokens", {}),
             "routing_paths": stats.get("routing_paths", {}),
         }
-        await redis.set("router:stats", orjson.dumps(data_to_store).decode('utf-8'))
-        if "timeline" in stats and stats["timeline"]:
-            await redis.set("router:timeline", orjson.dumps(stats["timeline"]).decode('utf-8'))
+        await redis.set("router:stats", orjson.dumps(data_to_store))
+        if stats.get("timeline"):
+            await redis.set("router:timeline", orjson.dumps(stats["timeline"]))
     except Exception as e:
         logger.warning(f"Failed to save stats to Valkey: {e}")
         global _redis_client, _redis_last_init_attempt
