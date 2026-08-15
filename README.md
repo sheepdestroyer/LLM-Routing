@@ -17,7 +17,7 @@ graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
 
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
-        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - qwen-4b-routing)"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - local-qwen-routing)"]
         Router -->|"2. agy Proxy (Gemini/Claude)"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
 
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
@@ -109,7 +109,7 @@ sequenceDiagram
     Router->>Router: Check model name → decide route
 
     alt Model = llm-routing-auto-free / auto-agy / auto-ollama / auto-agy-ollama
-        Router->>Llama: POST /v1/chat/completions (Complexity triage via qwen-4b-routing)
+        Router->>Llama: POST /v1/chat/completions (Complexity triage via local-qwen-routing)
         Llama-->>Router: JSON Response (5-tier: simple / medium / complex / reasoning / advanced)
     else Model = direct tier (agent-*-core / llm-routing-agy / llm-routing-ollama)
         Note over Router: Skip classifier, use model as tier
@@ -266,7 +266,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
-| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto` | 262K |
+| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen` → `llm-routing-ollama` → `openrouter-auto` | 262K |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 262K |
@@ -286,7 +286,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
-  Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen-3.6`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
+  Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
   ```mermaid
   graph TD
@@ -304,7 +304,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           SM --> SC[agent-complex-core]:::complex
           SC --> SR[agent-reasoning-core]:::reasoning
           SR --> SA[agent-advanced-core]:::advanced
-          SA --> SL[local-qwen-3.6]:::local
+          SA --> SL[local-qwen]:::local
           SL --> SO1[llm-routing-ollama]:::premium
           SO1 --> SAU[openrouter-auto]:::auto
       end
@@ -313,7 +313,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
           M[agent-medium-core]:::medium --> MC[agent-complex-core]:::complex
           MC --> MR[agent-reasoning-core]:::reasoning
           MR --> MA[agent-advanced-core]:::advanced
-          MA --> ML[local-qwen-3.6]:::local
+          MA --> ML[local-qwen]:::local
           ML --> MO1[llm-routing-ollama]:::premium
           MO1 --> MAU[openrouter-auto]:::auto
       end
@@ -321,30 +321,30 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
       subgraph Complex["agent-complex-core Fallback Tree"]
           C[agent-complex-core]:::complex --> CR[agent-reasoning-core]:::reasoning
           CR --> CA[agent-advanced-core]:::advanced
-          CA --> CL[local-qwen-3.6]:::local
+          CA --> CL[local-qwen]:::local
           CL --> CO1[llm-routing-ollama]:::premium
           CO1 --> CAU[openrouter-auto]:::auto
       end
 
       subgraph Reasoning["agent-reasoning-core Fallback Tree"]
           R[agent-reasoning-core]:::reasoning --> RA[agent-advanced-core]:::advanced
-          RA --> RL[local-qwen-3.6]:::local
+          RA --> RL[local-qwen]:::local
           RL --> RO1[llm-routing-ollama]:::premium
           RO1 --> RAU[openrouter-auto]:::auto
       end
 
       subgraph Advanced["agent-advanced-core Fallback Tree"]
-          A[agent-advanced-core]:::advanced --> AL[local-qwen-3.6]:::local
+          A[agent-advanced-core]:::advanced --> AL[local-qwen]:::local
           AL --> AO1[llm-routing-ollama]:::premium
           AO1 --> AAU[openrouter-auto]:::auto
       end
   ```
 
-  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-reasoning-core`**: advanced-core → `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
-  - **`agent-advanced-core`**: `local-qwen-3.6` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-simple-core`**: medium-core → complex-core → reasoning-core → advanced-core → `local-qwen` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-medium-core`**: complex-core → reasoning-core → advanced-core → `local-qwen` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-complex-core`**: reasoning-core → advanced-core → `local-qwen` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-reasoning-core`**: advanced-core → `local-qwen` → `llm-routing-ollama` → `openrouter-auto`
+  - **`agent-advanced-core`**: `local-qwen` → `llm-routing-ollama` → `openrouter-auto`
   - **`llm-routing-ollama`** (classifier-gated proxy): `reasoning & advanced` → `ollama-deepseek-v4-pro`, `complex & below` → `ollama-deepseek-v4-flash`. Note: Ollama cooldowns are managed by the triage router internally (5-minute window on failure); during cooldown the router returns 429 immediately so LiteLLM skips to `openrouter-auto`.
   All tiers ultimately land on OpenRouter auto/free model pools or the local Speculative MoE when enabled.
 *Note: Premium routing is controlled by the model name, not by the tier. `llm-routing-agy` and `llm-routing-auto-agy` trigger the agy proxy (Google/Claude via Cloud Code Assist) — but auto models only trigger agy if the classifier returns `agent-advanced-core`. `llm-routing-ollama` and `llm-routing-auto-ollama` route through Ollama.com (deepseek-v4-pro via LiteLLM's ollama_chat provider) — same gating for auto models. `llm-routing-auto-agy-ollama` chains both: agy first, then Ollama if agy is exhausted, both gated on advanced classification. The `agent-advanced-core` tier itself is a plain LiteLLM tier with no premium trigger. See §2 for the full routing table.*
@@ -829,10 +829,10 @@ LLM-Routing provides full compatibility with Home Assistant's `openai_conversati
 * **Base URL**: `https://llm-routing.vendeuvre.lan/v1` (or direct `https://litellm.vendeuvre.lan/v1`) (Production) or `https://llm-routing.dev.vendeuvre.lan/v1` (Dev)
 * **API Key**: Any valid LiteLLM key or master key
 * **Supported Models for Home Assistant**:
-  * `local-qwen-3.6-hass` (Recommended: local Qwen model with thinking disabled for fast Assist action responses)
-  * `local-qwen-3.6` (Local Qwen model with preserve_thinking enabled)
-  * `gpt-4o-mini` (Model alias provided for Home Assistant configuration flows & AI task options)
-  * `gpt-4o` (Model alias provided for high-capability task options)
+  * `local-qwen-hass` (Recommended: dedicated local Qwen model with thinking disabled for fast Assist action responses)
+  * `local-qwen` (Local Qwen model with preserve_thinking enabled)
+  * `gpt-4o-mini` (Model alias routed to local-qwen-hass with thinking disabled for fast Home Assistant Assist actions & AI configuration flows)
+  * `gpt-4o` (Model alias routed to local-qwen-hass with thinking disabled for high-capability task options)
   * `llm-routing-auto-free` (Automatic complexity classification across free tiers)
 
 ### Responses API & Tools Compatibility

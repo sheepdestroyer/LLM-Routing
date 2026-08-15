@@ -695,7 +695,7 @@ if router_api_key.startswith("os.environ/"):
             router_api_key = "local-token"
         else:
             raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
-router_model_name = router_model_conf.get("model", "qwen-4b-routing")
+router_model_name = router_model_conf.get("model", "local-qwen-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
@@ -2476,7 +2476,7 @@ async def responses_api(request: Request):
 
     Proxies requests to LiteLLM's /v1/responses endpoint, performing triage classification
     when an auto model (e.g. llm-routing-auto-free) is requested, while supporting model aliases
-    (such as gpt-4o-mini, local-qwen-3.6-hass) and tool/streaming executions.
+    (such as gpt-4o-mini, local-qwen) and tool/streaming executions.
     """
     # Enforce client authentication
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
@@ -2761,8 +2761,9 @@ async def chat_completions(request: Request):
         "agent-reasoning-core",
         "agent-advanced-core",
         "llm-routing-agy",
-        "local-qwen-3.6",
-        "local-qwen-3.6-hass",
+        "local-qwen",
+        "local-qwen-hass",
+        "local-qwen-routing",
         "gpt-4o-mini",
         "gpt-4o",
     }

@@ -304,7 +304,7 @@ def test_e2e_chat(cfg: dict) -> tuple[int, int]:
 
 
 def test_ha_tool_calling(cfg: dict) -> tuple[int, int]:
-    """Verify E2E tool calls for Home Assistant models (local-qwen-3.6-hass, gpt-4o-mini, gpt-4o). Returns (passed, total)."""
+    """Verify E2E tool calls for Home Assistant models (local-qwen-hass, gpt-4o-mini, gpt-4o). Returns (passed, total)."""
     base = f"http://127.0.0.1:{cfg['router_port']}"
     key = cfg["router_api_key"]
     headers = {
@@ -315,7 +315,7 @@ def test_ha_tool_calling(cfg: dict) -> tuple[int, int]:
 
     print(f"\n── E2E Home Assistant tool calling ({base}/v1/responses & /v1/chat/completions) ──")
 
-    models = ["local-qwen-3.6-hass", "gpt-4o-mini", "gpt-4o"]
+    models = ["local-qwen-hass", "gpt-4o-mini", "gpt-4o"]
 
     # 1. Responses API tool calling format
     ha_tools_responses = [

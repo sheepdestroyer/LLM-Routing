@@ -3,10 +3,10 @@ general_settings:
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → local-qwen-3.6 → ollama → openrouter-auto
-  # Static entries chain-route upward — only advanced-core hits local-qwen-3.6 directly.
+  # Simple → medium → complex → reasoning → advanced → local-qwen → ollama → openrouter-auto
+  # Static entries chain-route upward — only advanced-core hits local-qwen directly.
   # When one tier fails, LiteLLM tries the next model in the chain.
-  # Static safety-net entries in model_list (local-qwen-3.6 per tier) guarantee
+  # Static safety-net entries in model_list (local-qwen per tier) guarantee
   # each agent tier has at least one deployment even during OpenRouter outages.
   # -------------------------------------------------------------------------
   cache: true
@@ -35,8 +35,9 @@ litellm_settings:
     - gpt-4o-mini-transcribe
     - gpt-4o-mini-tts
     - tts-1
-    - local-qwen-3.6
-    - local-qwen-3.6-hass
+    - local-qwen
+    - local-qwen-hass
+    - local-qwen-routing
     - gpt-4o-mini
     - gpt-4o
   fallbacks:
@@ -63,7 +64,7 @@ litellm_settings:
     - llm-routing-ollama
     - openrouter-auto
   - agent-advanced-core:
-    - local-qwen-3.6
+    - local-qwen
     - llm-routing-ollama
     - openrouter-auto
 
@@ -98,12 +99,12 @@ model_list:
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-3.6
+    model: openai/local-qwen
     extra_body:
       chat_template_kwargs:
         preserve_thinking: true
     request_timeout: 600
-  model_name: local-qwen-3.6
+  model_name: local-qwen
   model_info:
     supports_vision: true
     supports_reasoning: true
@@ -115,12 +116,12 @@ model_list:
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-3.6-hass
+    model: openai/local-qwen
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
     request_timeout: 600
-  model_name: local-qwen-3.6-hass
+  model_name: local-qwen-hass
   model_info:
     supports_vision: true
     supports_reasoning: false
@@ -132,7 +133,21 @@ model_list:
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-3.6-hass
+    model: openai/local-qwen-routing
+    request_timeout: 60
+  model_name: local-qwen-routing
+  model_info:
+    supports_vision: false
+    supports_reasoning: false
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 4096
+    max_input_tokens: 4096
+    is_public_model_group: true
+- litellm_params:
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -149,7 +164,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-3.6-hass
+    model: openai/local-qwen
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -219,7 +234,7 @@ model_list:
 # ================================================================================
 # AGENT TIER STATIC SAFETY-NET — chain-routed, one deployment per tier.
 # Each tier has exactly ONE static deployment routing to the next tier up:
-#   simple → medium → complex → reasoning → advanced → local-qwen-3.6
+#   simple → medium → complex → reasoning → advanced → local-qwen
 # This guarantees no tier is ever empty (prevents ModelNotFoundError on
 # cold start) while avoiding redundant fallback loops — only advanced-core
 # points directly to the local classifier. The dynamic roster sync
@@ -230,7 +245,7 @@ model_list:
   litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-3.6
+    model: openai/local-qwen
     request_timeout: 120
   model_info:
     mode: chat
