@@ -1620,7 +1620,7 @@ async def _read_json_file_async(file_path: str) -> dict:
     """Helper to read JSON files asynchronously."""
     async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
         content = await f.read()
-        return json.loads(content)
+        return orjson.loads(content)
 
 
 

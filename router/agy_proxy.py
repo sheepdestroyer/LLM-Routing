@@ -20,6 +20,7 @@ Fallback Tiers (same conversation, different model):
 """
 
 import json
+import orjson
 import aiofiles
 import logging
 import os
@@ -386,7 +387,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     continue
                     
                 try:
-                    first_data = json.loads(first_line)
+                    first_data = orjson.loads(first_line)
                 except Exception:
                     await r.aclose()
                     logger.error(f"agy proxy: invalid JSON from daemon: {first_line}")
@@ -423,7 +424,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
                     try:
                         # Yield the initial token if it was a token
-                        init_data = json.loads(initial_line)
+                        init_data = orjson.loads(initial_line)
                         if init_data.get("type") == "token" and init_data.get("content"):
                             yield init_data["content"]
                         elif init_data.get("type") == "conversation_id" and init_data.get("id"):
@@ -438,7 +439,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                         async for line in lines_iter:
                             if not line.strip():
                                 continue
-                            data = json.loads(line)
+                            data = orjson.loads(line)
                             if data.get("type") == "token" and data.get("content"):
                                 yield data["content"]
                             elif data.get("type") == "conversation_id" and data.get("id"):
