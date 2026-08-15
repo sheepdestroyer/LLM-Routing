@@ -2762,6 +2762,7 @@ async def chat_completions(request: Request):
         "agent-advanced-core",
         "llm-routing-agy",
         "local-qwen",
+        "local-qwen-hass",
         "local-qwen-routing",
         "gpt-4o-mini",
         "gpt-4o",
