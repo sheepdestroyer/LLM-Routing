@@ -7,7 +7,7 @@ router:
   router_model:
     api_base: "os.environ/LLAMA_CLASSIFIER_URL"
     api_key: "os.environ/ROUTER_API_KEY"
-    model: "qwen-4b-routing"
+    model: "local-qwen-routing"
 
 llama_server_url: "os.environ/LLAMA_SERVER_URL"
 

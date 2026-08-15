@@ -66,8 +66,8 @@ async def test_register_openrouter_models_from_config(mock_purge, mock_get_clien
                 "litellm_params": {"model": "openrouter/openai/tts-1"}
             },
             {
-                "model_name": "local-qwen-3.6",
-                "litellm_params": {"model": "openai/local-qwen-3.6"}
+                "model_name": "local-qwen",
+                "litellm_params": {"model": "openai/local-qwen"}
             }
         ]
     }

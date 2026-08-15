@@ -647,8 +647,8 @@ router_settings:
   num_retries: 1          # 1 retry (was 2) — each retry tries a different deployment
   routing_strategy: "latency-based-routing"
   fallbacks:
-    - agent-complex-core: ["local-qwen-3.6"]
-    - agent-simple-core: ["local-qwen-3.6"]
+    - agent-complex-core: ["local-qwen"]
+    - agent-simple-core: ["local-qwen"]
   # --- NEW: Pre-call health checks ---
   enable_pre_call_checks: true
 ```
@@ -809,10 +809,10 @@ if target_model == "agent-reasoning-core":
 ```yaml
 router_settings:
   fallbacks:
-    - agent-reasoning-core: ["agent-code-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-code-core: ["agent-shell-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-shell-core: ["agent-simple-core", "openrouter-auto", "local-qwen-3.6"]
-    - agent-simple-core: ["openrouter-auto", "local-qwen-3.6"]
+    - agent-reasoning-core: ["agent-code-core", "openrouter-auto", "local-qwen"]
+    - agent-code-core: ["agent-shell-core", "openrouter-auto", "local-qwen"]
+    - agent-shell-core: ["agent-simple-core", "openrouter-auto", "local-qwen"]
+    - agent-simple-core: ["openrouter-auto", "local-qwen"]
 ```
 
 ---
@@ -1054,8 +1054,8 @@ Update fallbacks:
 ```yaml
 router_settings:
   fallbacks:
-    - agent-complex-core: ["openrouter-auto", "paid-fallback", "local-qwen-3.6"]
-    - agent-simple-core: ["openrouter-auto", "paid-fallback", "local-qwen-3.6"]
+    - agent-complex-core: ["openrouter-auto", "paid-fallback", "local-qwen"]
+    - agent-simple-core: ["openrouter-auto", "paid-fallback", "local-qwen"]
 ```
 
 ### Task J2: Add openrouter/auto fallback to LiteLLM model list
@@ -1081,7 +1081,7 @@ Triage Router classifies → sends to LiteLLM as agent-*-core
   └── LiteLLM latency-based-routing across dynamic OpenRouter free roster (5 models)
       ├── openrouter/auto (OpenRouter's own smart router — any model, any price)
       ├── paid-fallback (e.g., gemini-2.5-flash-lite, ~$0.00015/1K tokens)
-      └── local-qwen-3.6 (Vulkan-accelerated Ryzen APU — last resort)
+      └── local-qwen (Vulkan-accelerated Ryzen APU — last resort)
 ```
 
 > **Note:** This requires `OPENROUTER_API_KEY` already set in `.env` and a small credit balance on OpenRouter. Even $1 covers ~6M tokens at this model's pricing.
