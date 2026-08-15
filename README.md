@@ -17,7 +17,7 @@ graph TD
     Client["goose-cli Client"] -->|Port 5000| Router["FastAPI Triage Router"]
 
     subgraph FastAPIRouter ["FastAPI Router Pod Context"]
-        Router -->|1. Complexity Triage| LlamaServer["Local Llama-Server\n(Port 8080 - local-qwen-routing)"]
+        Router -->|1. Complexity Triage| LlamaServer["Local Llama Classifier\n(Port 8086 - local-qwen-routing)"]
         Router -->|"2. agy Proxy (Gemini/Claude)"| AgyProxy["agy Proxy Module\n(agy_proxy.py)"]
 
         AgyProxy -->|Tier 1| AgyGemini["agy --print\n(Gemini 3.5 Flash)"]
@@ -41,7 +41,7 @@ graph TD
         LiteLLM -->|Tier 2 - Paid Ollama| OllamaTier["ollama_chat Provider\n(deepseek-v4-pro)"]
         OpenRouter -.->|API Call| OpenRouterAPI["api.openrouter.ai"]
         OllamaTier -.->|API Call| OllamaAPI["api.ollama.com"]
-        LiteLLM -.->|"DISABLED (23GB RAM)"| QwenLocal["Local Qwen 35B\n(qwen-35b-q4ks)\n(llama.cpp :8080)"]
+        LiteLLM -.->|"Local GPU Safety Net"| QwenLocal["Local Qwen\n(local-qwen)\n(llama.cpp :8083)"]
     end
 
     subgraph Observability ["Observability Backend (Langfuse v3)"]
@@ -99,7 +99,7 @@ sequenceDiagram
     autonumber
     actor Client as "goose-cli Client"
     participant Router as "Triage Router (Port 5000)"
-    participant Llama as "Llama-Server (Port 8080)"
+    participant Llama as "Llama Classifier (Port 8086)"
     participant Agy as "agy CLI (keyring auth)"
     participant Proxy as "LiteLLM (Port 4000)"
     participant Cache as "Valkey (Port 6379)"
@@ -572,7 +572,8 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 | **System Control Dashboard** | [http://localhost:5000/dashboard](http://localhost:5000/dashboard) | `5000` | Real-time health-checks, triage stats, cache hits, and navigation shortcuts. |
 | **Langfuse Monitoring UI** | [http://localhost:3001](http://localhost:3001) | `3001` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
 | **LiteLLM Admin Console** | [http://localhost:4000/ui](http://localhost:4000/ui) | `4000` | Gateway fallback configurations, models inventory, and active proxy stats. |
-| **Llama-Server Playground** | [http://localhost:8080](http://localhost:8080) | `8080` | Local llama.cpp prompt sandbox, dynamic model stats, and API endpoint details. |
+| **Llama-Server GPU UI** | [http://localhost:8083](http://localhost:8083) | `8083` | Local llama.cpp GPU prompt sandbox, dynamic model stats, and API endpoint details. |
+| **Llama-Classifier API** | [http://localhost:8086/health](http://localhost:8086/health) | `8086` | Dedicated local CPU classifier endpoint (`local-qwen-routing`). |
 | **Minio S3 Console** | [http://localhost:9001](http://localhost:9001) | `9001` | S3-compatible object storage browser (Langfuse v3 event upload target). |
 | **ClickHouse HTTP** | [http://localhost:8123](http://localhost:8123) | `8123` | ClickHouse HTTP interface (Langfuse v3 trace/observation storage). |
 | **Host agy Daemon** | [http://127.0.0.1:5005/run](http://127.0.0.1:5005/run) | `5005` | Host-side PTY execution bridge for `agy` CLI proxy routes. Runs as a systemd user service (`agy-daemon.service`) with security hardening. |
@@ -880,7 +881,7 @@ Tests cover:
 | LiteLLM direct | 1 completion directly to LiteLLM |
 | Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests (defaults to `https://llm-routing.vendeuvre.lan`). The router derives clean service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification (defaulting to `PUBLIC_BASE_URL="https://llm-routing.dev.vendeuvre.lan"`). The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8083/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests (defaults to `https://llm-routing.vendeuvre.lan`). The router derives clean service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification (defaulting to `PUBLIC_BASE_URL="https://llm-routing.dev.vendeuvre.lan"`). The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8086/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
 
 ## Environment-isolated Quadlet deployment
 
