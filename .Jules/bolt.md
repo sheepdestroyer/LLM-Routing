@@ -4,3 +4,6 @@
 ## 2024-08-14 - [Orjson Refactoring]
 **Learning:** When migrating from `json.dumps` to `orjson.dumps`, you must handle the fact that `orjson.dumps` returns `bytes` instead of a string. In contexts that expect a string (like `sys.stdout.write` or assigning to a dict key that is eventually serialized differently), you must append `.decode('utf-8')`. Additionally, `orjson` raises its own `orjson.JSONDecodeError`, so you must update exception handlers (e.g. from `except json.JSONDecodeError`) to avoid uncaught parse errors.
 **Action:** Always append `.decode('utf-8')` when replacing `json.dumps` if the target expects a string, and audit `try-except` blocks around deserialization logic to catch `orjson.JSONDecodeError`.
+## 2024-08-15 - Migrate from json.loads to orjson.loads
+**Learning:** `orjson.loads` is significantly faster than `json.loads` (~4x faster on a sample string) and is already available as a dependency in the project (imported in `router/main.py`). The project is actively doing loads in hot paths (e.g. processing streaming JSON responses).
+**Action:** Replace `json.loads` with `orjson.loads` globally where performance is critical, and ensure correct byte/string types are handled.

@@ -1,3 +1,4 @@
+import orjson
 import json
 from unittest.mock import patch, AsyncMock
 import pytest
@@ -21,8 +22,8 @@ async def test_read_json_file_async_success():
     [
         (
             {"return_value": AsyncMock(__aenter__=AsyncMock(return_value=AsyncMock(read=AsyncMock(return_value='{"key": "value"'))))},
-            json.JSONDecodeError,
-            r"Unterminated string starting at|Expecting",
+            (json.JSONDecodeError, orjson.JSONDecodeError),
+            r"unexpected end of data|string is not terminated|Unterminated string starting at|Expecting",
         ),
         (
             {"side_effect": FileNotFoundError("No such file or directory: 'dummy_path.json'")},
