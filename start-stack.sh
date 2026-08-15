@@ -878,7 +878,7 @@ repl = {
 def extract_manifest_images():
     imgs = {}
     workdir = os.environ["WORKDIR"]
-    manifests = [os.path.join(workdir, "docker-compose.yml"), os.path.join(workdir, "pod.yaml")]
+    manifests = [os.path.join(workdir, "pod.yaml"), os.path.join(workdir, "docker-compose.yml")]
     found_any = False
     for manifest in manifests:
         if os.path.exists(manifest):
