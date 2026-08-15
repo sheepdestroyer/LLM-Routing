@@ -97,7 +97,7 @@ model_list:
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
     extra_body:
@@ -114,7 +114,7 @@ model_list:
     max_input_tokens: 524288
     is_public_model_group: true
 - litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
     extra_body:
@@ -145,7 +145,7 @@ model_list:
     max_input_tokens: 4096
     is_public_model_group: true
 - litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
     extra_body:
@@ -162,7 +162,7 @@ model_list:
     max_input_tokens: 524288
     is_public_model_group: true
 - litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
     extra_body:
@@ -179,7 +179,7 @@ model_list:
     max_input_tokens: 524288
     is_public_model_group: true
 - litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/nomic-embed-text-v1.5-Q4_K_M
     request_timeout: 30
@@ -243,7 +243,7 @@ model_list:
 
 - model_name: agent-advanced-core
   litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
     request_timeout: 120

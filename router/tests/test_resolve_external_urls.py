@@ -155,7 +155,7 @@ def test_resolve_llama_endpoints_canonical_https():
     os.environ["PUBLIC_BASE_URL"] = "https://llm-routing.vendeuvre.lan"
     server_url, classifier_url = main._resolve_llama_endpoints()
     assert server_url == "https://llama.vendeuvre.lan"
-    assert classifier_url == "https://llama.vendeuvre.lan/v1"
+    assert classifier_url == "https://llama-classifier.vendeuvre.lan/v1"
 
 
 def test_resolve_llama_endpoints_local_fallback():

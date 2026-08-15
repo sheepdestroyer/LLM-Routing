@@ -710,11 +710,11 @@ parsed = urlparse(public if "://" in public else f"https://{public}")
 scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "https"
 host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "") or routing_domain
 host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host)
-host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+host_base = re.sub(r"^(?:litellm|langfuse|llama|llama-classifier)\.", "", host_base)
 print(os.environ.get("PROXY_BASE_URL") or f"{scheme}://litellm.{host_base}")
 print(os.environ.get("NEXTAUTH_URL") or f"{scheme}://langfuse.{host_base}")
 print(os.environ.get("LLAMA_SERVER_URL") or f"{scheme}://llama.{host_base}")
-print(os.environ.get("LLAMA_CLASSIFIER_URL") or f"{scheme}://llama.{host_base}/v1")
+print(os.environ.get("LLAMA_CLASSIFIER_URL") or f"{scheme}://llama-classifier.{host_base}/v1")
 ') || return 1
     PROXY_BASE_URL_DERIVED=$(echo "$values" | sed -n '1p')
     NEXTAUTH_URL_DERIVED=$(echo "$values" | sed -n '2p')
@@ -753,12 +753,22 @@ render_litellm_config() {
     local rendered_dir="${DATA_ROOT}/litellm-rendered"
     mkdir -p "$rendered_dir"
     derive_external_service_urls
+
+    local server_url="${LLAMA_SERVER_URL_DERIVED:-$LLAMA_SERVER_URL}"
+    server_url="${server_url%/}"
+    [[ "$server_url" != */v1 ]] && server_url="${server_url}/v1"
+
+    local classifier_url="${LLAMA_CLASSIFIER_URL_DERIVED:-$LLAMA_CLASSIFIER_URL}"
+    classifier_url="${classifier_url%/}"
+    [[ "$classifier_url" != */v1 ]] && classifier_url="${classifier_url}/v1"
+
     sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
-        -e "s|LLAMA_CLASSIFIER_URL_PLACEHOLDER|${LLAMA_CLASSIFIER_URL_DERIVED:-$LLAMA_CLASSIFIER_URL}|g" \
+        -e "s|LLAMA_SERVER_URL_PLACEHOLDER|${server_url}|g" \
+        -e "s|LLAMA_CLASSIFIER_URL_PLACEHOLDER|${classifier_url}|g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
     # Validate no unresolved placeholders remain
-    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_SERVER_URL_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
         echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
         exit 1
     fi
@@ -828,7 +838,7 @@ encoded_pg = urllib.parse.quote(os.environ['POSTGRES_PASSWORD'], safe="")
 proxy_base_url = os.environ.get("PROXY_BASE_URL_DERIVED") or os.environ.get("PROXY_BASE_URL", "https://litellm.vendeuvre.lan")
 nextauth_url = os.environ.get("NEXTAUTH_URL_DERIVED") or os.environ.get("NEXTAUTH_URL", "https://langfuse.vendeuvre.lan")
 llama_server_url = os.environ.get("LLAMA_SERVER_URL_DERIVED") or os.environ.get("LLAMA_SERVER_URL", "https://llama.vendeuvre.lan")
-llama_classifier_url = os.environ.get("LLAMA_CLASSIFIER_URL_DERIVED") or os.environ.get("LLAMA_CLASSIFIER_URL", "https://llama.vendeuvre.lan/v1")
+llama_classifier_url = os.environ.get("LLAMA_CLASSIFIER_URL_DERIVED") or os.environ.get("LLAMA_CLASSIFIER_URL", "https://llama-classifier.vendeuvre.lan/v1")
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
