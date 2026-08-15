@@ -124,9 +124,18 @@ def base_url(live_server_url):
 async def page():
     """Async browser page fixture per test using async_playwright."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ],
+        )
         context = await browser.new_context()
         page = await context.new_page()
+        page.set_default_timeout(10000)
         try:
             yield page
         finally:
