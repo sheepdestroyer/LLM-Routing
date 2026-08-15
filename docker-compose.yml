@@ -5,7 +5,7 @@ services:
   valkey-cache:
     image: valkey/valkey:9.1.1
   litellm-gateway:
-    image: ghcr.io/berriai/litellm:v1.96.0
+    image: ghcr.io/berriai/litellm:v1.96.2
   postgres-db:
     image: pgvector/pgvector:0.8.6-pg18
   clickhouse-db:
@@ -13,8 +13,8 @@ services:
   valkey-lf:
     image: valkey/valkey:9.1.1
   langfuse-web:
-    image: langfuse/langfuse:4.9.0
+    image: langfuse/langfuse:4.11.0
   langfuse-worker:
-    image: langfuse/langfuse-worker:4.9.0
+    image: langfuse/langfuse-worker:4.11.0
   minio-s3:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
