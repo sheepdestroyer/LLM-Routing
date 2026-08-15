@@ -41,6 +41,8 @@ updates:
       valkey:
         patterns:
           - "valkey/valkey"
+    cooldown:
+      default-days: 1
 
 
   # Dockerfiles (keeps Dockerfile FROM lines updated)
