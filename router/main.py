@@ -642,9 +642,9 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
         host = parsed.hostname or (parsed.netloc.split(":")[0] if parsed.netloc else "")
         if host and host not in ("localhost", "127.0.0.1", "::1"):
             host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host)
-            host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
+            host_base = re.sub(r"^(?:litellm|langfuse|llama|llama-classifier)\.", "", host_base)
             canonical_server = f"{scheme}://llama.{host_base}"
-            canonical_classifier = f"{scheme}://llama.{host_base}/v1"
+            canonical_classifier = f"{scheme}://llama-classifier.{host_base}/v1"
 
     # Resolve server URL
     if env_server:
