@@ -73,6 +73,9 @@ curl -k -s --resolve llm-routing.<prod-domain>:443:127.0.0.1 https://llm-routing
 ### Deployment Guidelines & Data Integrity
 - **Non-Destructive Deployments**: Never execute `rm -rf <prod-home>/LLM-Routing` during production updates. Unpack release archives directly or use `start-stack.sh --pull` to preserve persistent volume data in `<prod-home>/LLM-Routing/data` and database backups in `<prod-home>/LLM-Routing/backups/`.
 - **Pre-Deploy Backups**: `start-stack.sh` automatically runs `./scripts/backup.sh` before modifying any container or configuration. Backups are stored in `LLM-Routing/backups/` and retained for 14 days.
+- **Lockstep Dev/Prod Deployments**: When releasing and deploying updates to production, always redeploy the dev stack (`dev-router-pod` via `DEV_ENV_FILE=.env.dev ./start-stack.sh --replace`) so dev and prod run identical image tags in lockstep.
+- **Container Manifest Synchronization**: `pod.yaml` is the primary manifest of record for container images. Whenever container tags are bumped in `pod.yaml` (via Dependabot or manual edits), ensure `docker-compose.yml` is updated in lockstep so `start-stack.sh` and What's Up Docker (WUD) remain consistent.
+- **Python Environment Parity**: Maintain global Python version consistency (Python 3.14) across `.github/workflows/test.yml`, `router/Dockerfile`, and local development environments.
 - **Database Restoration**: If a volume reset is ever required, restore database dumps using:
   - `podman exec -i prod-router-pod-postgres-db pg_restore -U postgres -d postgres --clean --if-exists < backups/postgres_db_<TIMESTAMP>.dump`
   - `podman exec -i prod-router-pod-postgres-db pg_restore -U postgres -d langfuse --clean --if-exists < backups/langfuse_db_<TIMESTAMP>.dump`
