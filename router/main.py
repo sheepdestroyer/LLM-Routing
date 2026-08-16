@@ -2486,22 +2486,13 @@ async def responses_api(request: Request):
     if not client_token:
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
-    valid_keys_list = [
-        os.getenv("ROUTER_API_KEY"),
-        os.getenv("LITELLM_MASTER_KEY"),
-        os.getenv("GATEWAY_KEY"),
-    ]
-    if "pytest" in sys.modules:
-        valid_keys_list.extend([
-            "gateway-pass",
-            "local-token",
-            "test-key",
-            "test-token",
-            "test-master-key",
-        ])
-
     valid_keys = {
-        k.strip() for k in valid_keys_list
+        k.strip()
+        for k in [
+            os.getenv("ROUTER_API_KEY"),
+            os.getenv("LITELLM_MASTER_KEY"),
+            os.getenv("GATEWAY_KEY"),
+        ]
         if k and str(k).strip() not in _INVALID_MASTER_KEYS
     }
 
