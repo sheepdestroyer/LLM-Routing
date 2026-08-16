@@ -244,7 +244,7 @@
             margin-bottom: 30px;
         }
 
-        .glass-card:hover {
+        .glass-card:hover, .glass-card:focus-within {
             border-color: rgba(255, 255, 255, 0.15);
         }
 
@@ -549,7 +549,7 @@
                             <span style="font-weight: 800; font-size: 16px; color: #fff;">${escapeHtml(m.name || "")}</span>
                             <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> ${m.score.toFixed(1)}</span>
                         </div>
-                        <button type="button" class="model-id-copy-btn" data-model-id="${safeId}" title="${safeId}" aria-label="Copy model ID" onclick="copyModelId(this)">
+                        <button type="button" class="model-id-copy-btn" data-model-id="${safeId}" title="${safeId}" aria-label="Copy model ID: ${safeId}" onclick="copyModelId(this)">
                             <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
                             ID: ${safeId}
                         </button>
@@ -811,7 +811,7 @@
                         <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
                         <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> {{ "%.1f"|format(data.best_free_model.score) }}</span>
                     </div>
-                    <button type="button" class="model-id-copy-btn" data-model-id="{{ data.best_free_model.id }}" title="{{ data.best_free_model.id }}" aria-label="Copy model ID" onclick="copyModelId(this)">
+                    <button type="button" class="model-id-copy-btn" data-model-id="{{ data.best_free_model.id }}" title="{{ data.best_free_model.id }}" aria-label="Copy model ID: {{ data.best_free_model.id }}" onclick="copyModelId(this)">
                         <span class="copied-tooltip" role="status" aria-live="polite">Copied!</span>
                         ID: {{ data.best_free_model.id }}
                     </button>

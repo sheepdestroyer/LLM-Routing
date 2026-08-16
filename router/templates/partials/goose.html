@@ -1,6 +1,6 @@
 {% if not data.goose_sessions %}
         <div style="background: rgba(255,255,255,0.02); border-radius: 12px; padding: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.05); font-size: 14px; opacity: 0.6;">
-            ⚠️ No active Goose session database detected at mountpoint.
+            <span aria-hidden="true">⚠️</span> No active Goose session database detected at mountpoint.
         </div>
     {% else %}
         {% for sess in data.goose_sessions %}
@@ -21,7 +21,7 @@
                     {{ sess.description or sess.name or 'Interactive session' }}
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5; margin-top: 4px;">
-                    <span>📅 {{ sess.updated_at }}</span>
+                    <span><span aria-hidden="true">📅</span> {{ sess.updated_at }}</span>
                     <span style="font-weight: bold; color: #a5b4fc;">{{ "{:,}".format(sess.accumulated_total_tokens or 0) }} total tokens</span>
                 </div>
             </div>
