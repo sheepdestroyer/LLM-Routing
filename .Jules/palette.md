@@ -21,3 +21,6 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+## 2026-08-16 - Ensure layout animations apply to inline elements
+**Learning:** `<a>` tags and other default `inline` elements cannot be visually animated with CSS `transform` (like `transform: translateX`) because the `transform` property is ignored on non-replaced inline boxes by the browser engine.
+**Action:** Always add `display: inline-block;` (or `block`) to interactive inline elements when applying layout animations (like hover or focus states) to ensure the animation actually renders.
