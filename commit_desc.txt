@@ -1,4 +1,0 @@
-💡 What: Added `aria-hidden="true"` to decorative emojis in the OAuth status banner.
-🎯 Why: Without it, screen readers would unnecessarily read out the literal names of the emojis (e.g., "warning sign Gemini OAuth Token Expired"). Hiding these decorative elements provides a much cleaner, less redundant experience for users utilizing assistive technologies.
-📸 Before/After: Visual changes are not applicable as this only modifies screen reader behaviors.
-♿ Accessibility: Yes, explicitly hides decorative icons from assistive technology to reduce cognitive load and redundancy.
