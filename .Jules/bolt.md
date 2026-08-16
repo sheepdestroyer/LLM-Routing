@@ -7,3 +7,7 @@
 ## 2024-08-15 - Migrate from json.loads to orjson.loads
 **Learning:** `orjson.loads` is significantly faster than `json.loads` (~4x faster on a sample string) and is already available as a dependency in the project (imported in `router/main.py`). The project is actively doing loads in hot paths (e.g. processing streaming JSON responses).
 **Action:** Replace `json.loads` with `orjson.loads` globally where performance is critical, and ensure correct byte/string types are handled.
+## 2024-08-16 - Clean up Prometheus metrics generation
+**Learning:** Initializing metrics output in a single list literal is cleaner and more readable than multiple sequential `.append()` calls.
+**Action:** Combined Prometheus metrics string generation into a single list literal in `metrics()` for improved readability and compactness.
+
