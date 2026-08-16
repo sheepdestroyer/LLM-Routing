@@ -3777,9 +3777,7 @@ async def metrics():
     _now_mono = time.monotonic()
     _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
 
-    # ⚡ Bolt Optimization: Replaced multiple lines.append() with a single list literal.
-    # This avoids dynamic array resizing overhead and repeated function calls,
-    # making the metrics endpoint slightly faster for hot-path scraping.
+    # Initialize metrics output using a single list literal for readability and easier maintenance.
     lines = [
         "# HELP triage_requests_total Total number of requests processed",
         "# TYPE triage_requests_total gauge",
@@ -4369,5 +4367,3 @@ if __name__ == "__main__":
 
     logger.info(f"Starting LLM Triage Router on {host}:{port}...")
     uvicorn.run(app, host=host, port=port)
-
-# Trigger new commit
