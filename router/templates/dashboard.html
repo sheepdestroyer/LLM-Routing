@@ -132,6 +132,8 @@
         .model-id-copy-btn:focus-visible {
             outline: 2px solid #818cf8;
             outline-offset: 2px;
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
         }
 
         .model-id-copy-btn .copied-tooltip {
@@ -412,7 +414,7 @@
         }
 
 
-        .btn:hover {
+        .btn:hover, #visualizer-link:hover {
             background: rgba(255, 255, 255, 0.06);
             border-color: rgba(129, 140, 248, 0.3);
             transform: translateX(4px);
@@ -624,7 +626,7 @@
         </div>
         <div class="dashboard-title">System Control Center</div>
         <div style="margin-top:8px;font-size:12px;opacity:0.6;">
-            <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;border-radius:4px;padding:2px 4px;margin-left:-4px;"><span aria-hidden="true">📊</span> Dataset Visualizer</a>
+            <a id="visualizer-link" href="visualizer" style="color:#818cf8;text-decoration:none;border-radius:4px;padding:2px 4px;margin-left:-4px;display:inline-block;transition:transform 0.2s, background 0.2s;"><span aria-hidden="true">📊</span> Dataset Visualizer</a>
         </div>
     </header>
 
