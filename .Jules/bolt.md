@@ -7,6 +7,3 @@
 ## 2024-08-15 - Migrate from json.loads to orjson.loads
 **Learning:** `orjson.loads` is significantly faster than `json.loads` (~4x faster on a sample string) and is already available as a dependency in the project (imported in `router/main.py`). The project is actively doing loads in hot paths (e.g. processing streaming JSON responses).
 **Action:** Replace `json.loads` with `orjson.loads` globally where performance is critical, and ensure correct byte/string types are handled.
-## 2024-05-17 - Use list literals over repeated list.append()
-**Learning:** For Python performance optimization in hot paths (e.g., generating Prometheus metrics), prefer a single list literal initialization over multiple consecutive list.append() calls to avoid dynamic array resizing and repeated function call overhead.
-**Action:** When initializing lists with known elements, use a list literal [...] instead of creating an empty list and calling .append() repeatedly.

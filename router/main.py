@@ -3780,7 +3780,9 @@ async def metrics():
     _now_mono = time.monotonic()
     _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
 
-    lines = [ # Optimized: Use a single list literal initialization instead of multiple .append() calls to avoid dynamic array resizing and repeated function call overhead.
+    # Optimized: Use a single list literal initialization instead of multiple
+    # .append() calls to avoid dynamic array resizing and repeated function call overhead.
+    lines = [
         # Triage request counters
         "# HELP triage_requests_total Total number of requests processed",
         "# TYPE triage_requests_total gauge",
