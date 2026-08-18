@@ -15,7 +15,7 @@ Session Architecture:
 
 Fallback Tiers (same conversation, different model):
   Tier 1: Default → Gemini 3.5 Flash  (Cloud Code Assist quota)
-  Tier 2: claude-opus-4-6@default     (premium tier)
+  Tier 2: claude-opus-4@default     (premium tier)
   Fallback: Existing LiteLLM chain (OpenRouter free → local Qwen)
 """
 
@@ -62,7 +62,7 @@ if not os.path.exists(AGY_BINARY):
 # Ordered fallback tiers
 AGY_FALLBACK_TIERS = [
     {"model_name": "gemini-3.5-flash",  "env_override": ""},                             # Tier 1: default
-    {"model_name": "claude-opus-4.6",   "env_override": "claude-opus-4-6@default"},      # Tier 2
+    {"model_name": "claude-opus-4",     "env_override": "claude-opus-4@default"},        # Tier 2 (Downgraded due to CAPI error)
 ]
 
 AGY_TIMEOUT_SECS = 120
@@ -263,13 +263,13 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
     cooldown_persistence = request.cooldown_persistence
     # Select model chain based on target tier
     # Reasoning: single tier, gemini-3.5-flash with low thinking
-    # Advanced: full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
+    # Advanced: full 2-tier chain (gemini-3.5-flash → claude-opus-4)
     if target_tier == "agent-reasoning-core":
         agy_tiers = [
             {"model_name": "gemini-3.5-flash", "env_override": ""},  # low thinking default
         ]
     else:
-        agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
+        agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4
 
     should_close_client = False
     if client is None:
@@ -338,7 +338,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
 
             # Determine which breaker to use for this tier
             # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
-            # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
+            # Tier 1 (idx 1): claude-opus-4  → vendor_breaker
             is_google_tier = "gemini" in tier.get("model_name", "").lower()
             tier_breaker = google_breaker if is_google_tier else vendor_breaker
 
