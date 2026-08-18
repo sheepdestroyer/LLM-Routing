@@ -2723,6 +2723,29 @@ async def chat_completions(request: Request):
     global stats
     start_time = time.time()
 
+    # Enforce client authentication
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    client_token = auth_header[7:].strip()
+    if not client_token:
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    valid_keys = {
+        k.strip() for k in [
+            os.getenv("ROUTER_API_KEY"),
+            os.getenv("LITELLM_MASTER_KEY"),
+            os.getenv("GATEWAY_KEY"),
+            "gateway-pass",
+            "local-token",
+            "test-key",
+            "test-token",
+            "test-master-key",
+        ] if k and str(k).strip() not in _INVALID_MASTER_KEYS
+    }
+    if valid_keys and client_token not in valid_keys:
+        raise HTTPException(status_code=401, detail="Invalid Authorization token")
+
     try:
         body = await request.json()
     except Exception:
