@@ -174,3 +174,30 @@ async def test_classify_request_langfuse_exceptions():
         assert decision == "agent-advanced-core"
         assert raw_result == "advanced (fallback)"
         mock_span.end.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_chat_completions_missing_auth():
+    """Verify that /v1/chat/completions requires a valid Authorization header."""
+    client = TestClient(app)
+
+    # 1. Missing Authorization header
+    response = client.post("/v1/chat/completions", json={"model": "test", "messages": [{"role": "user", "content": "hi"}]})
+    assert response.status_code == 401
+    assert "Missing or invalid Authorization header" in response.text
+
+    # 2. Invalid token
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer invalid-token"}
+    )
+    assert response.status_code == 401
+    assert "Invalid Authorization token" in response.text
+
+    # 3. Valid token (should not return 401, will probably hit another error like empty payload or routing but not 401)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer test-key"}
+    )
+    assert response.status_code != 401
