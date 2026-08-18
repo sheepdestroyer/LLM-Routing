@@ -236,6 +236,14 @@ function render() {
   
   // List
   const listEl = document.getElementById('list');
+  if (filtered.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty-state" style="padding: 40px 20px;">
+        <h2 style="margin-bottom: 8px;">No matching prompts</h2>
+        <p>Try changing the filter</p>
+      </div>
+    `;
+  } else {
   listEl.innerHTML = filtered.map(i => {
     const p = dataset[i];
     const llm = p.llm_tier || p.tier || '?';
@@ -258,9 +266,17 @@ function render() {
       <div class="tags">${tags}</div>
     </div>`;
   }).join('');
+  }
   
   if (selectedIdx >= 0) {
     renderDetail(selectedIdx);
+  } else {
+    document.getElementById('detail').innerHTML = `
+      <div class="empty-state">
+        <h2 style="margin-bottom: 8px;">Select a prompt from the list</h2>
+        <p>LLM evaluation vs classifier prediction side by side</p>
+      </div>
+    `;
   }
 }
 
@@ -322,10 +338,10 @@ function renderDetail(idx) {
         <span><span class="dot hum"></span> Human selection</span>
       </div>
       <div class="annotation-bar">
-        <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
+        <input type="text" id="note-input" aria-label="Review Note" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6"><span aria-hidden="true">✓</span> Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="event.preventDefault(); clearAnnotation(${idx})" style="color:#f44336" aria-label="Clear annotation">clear</a></div>` : ''}
     </div>
   `;
 }

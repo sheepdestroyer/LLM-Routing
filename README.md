@@ -261,7 +261,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | Model | Classifier | Premium backend | Fallback | Context Length |
 |:---|---:|:---|:---|:---|
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 262K |
-| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 262K |
+| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4) | LiteLLM with classified tier | 262K |
 | `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 512K |
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
@@ -704,7 +704,7 @@ the same goose conversation reuse the same agy conversation.
 Tier 1: agy --print (Default)                → Gemini 3.5 Flash (Cloud Code Assist quota)
         ↓ (quota exhausted / fail)
 Tier 2: CASCADE_DEFAULT_MODEL_OVERRIDE=      
-        claude-opus-4-6@default               → Claude Opus 4.6 (Premium Anthropic Tier)
+        claude-opus-4@default                 → Claude Opus 4 (Premium Anthropic Tier)
         ↓ (all agy tiers exhausted)
 Tier 3: LiteLLM Gateway Fallback Chain        → OpenRouter Dynamic Free / Kimi K2.6 → Local speculative MoE Qwen
 ```
@@ -741,7 +741,7 @@ Additional mounts required in `pod.yaml`:
 agy --print "Hello"
 
 # Test Claude model override
-CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-4-6@default agy --print "Hello"
+CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-4@default agy --print "Hello"
 
 # Test session continuation
 agy --print "First message"                    # creates conversation
