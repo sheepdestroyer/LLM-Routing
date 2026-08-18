@@ -216,21 +216,26 @@ METADATA_OVERHEAD = 50
 
 
 def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
-    """
+    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content."""
     total = 0.0
-    for msg in body.get("messages", []):
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content") or ""
-        if isinstance(content, str):
-            total += _count_tokens_heuristic(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block.get("text")
-                    if isinstance(text, str):
-                        total += _count_tokens_heuristic(text)
+    messages = body.get("messages")
+    if type(messages) is list:
+        for msg in messages:
+            if type(msg) is not dict:
+                continue
+            content = msg.get("content")
+            if not content:
+                continue
+
+            t = type(content)
+            if t is str:
+                total += _count_tokens_heuristic(content)
+            elif t is list:
+                for block in content:
+                    if type(block) is dict and block.get("type") == "text":
+                        text = block.get("text")
+                        if type(text) is str:
+                            total += _count_tokens_heuristic(text)
 
     # Include a flat estimate for system prompt / metadata overhead.
     # Use rounding to avoid truncation bias (e.g., 1.9 -> 1).
