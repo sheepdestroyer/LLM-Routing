@@ -412,10 +412,10 @@
         }
 
 
-        .btn:hover {
+        .btn:hover, #visualizer-link:hover {
             background: rgba(255, 255, 255, 0.06);
             border-color: rgba(129, 140, 248, 0.3);
-            transform: translateX(4px);
+            transform: translateY(-2px);
         }
 
         .btn:focus-visible, #visualizer-link:focus-visible {
@@ -423,7 +423,12 @@
             outline-offset: 2px;
             background: rgba(255, 255, 255, 0.06);
             border-color: rgba(129, 140, 248, 0.5);
-            transform: translateX(4px);
+            transform: translateY(-2px);
+        }
+
+        #visualizer-link {
+            display: inline-block;
+            transition: all 0.3s ease;
         }
 
         #visualizer-link:focus-visible {
