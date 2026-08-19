@@ -16,7 +16,7 @@ async def test_responses_api_direct_model_non_streaming():
         "model": "gpt-4o-mini",
         "input": "Hello from Home Assistant config flow!"
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -42,7 +42,7 @@ async def test_responses_api_direct_model_non_streaming():
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, Response)
         assert response.status_code == 200
@@ -60,7 +60,7 @@ async def test_responses_api_auto_model_triage():
         "model": "llm-routing-auto-free",
         "input": "Fix typo in variable name x = 1"
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -79,7 +79,7 @@ async def test_responses_api_auto_model_triage():
     with patch("router.main.classify_request", new=AsyncMock(return_value=("agent-simple-core", 10.0, False, "simple"))), \
          patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, Response)
         assert response.status_code == 200
@@ -110,7 +110,7 @@ async def test_responses_api_with_tools(model_alias):
             {"type": "web_search"}
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -136,7 +136,7 @@ async def test_responses_api_with_tools(model_alias):
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, Response)
         assert response.status_code == 200
@@ -167,7 +167,7 @@ async def test_responses_api_streaming_tool_calls(model_alias):
             }
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     sse_data = json.dumps({
         "type": "response.output_item.done",
@@ -194,7 +194,7 @@ async def test_responses_api_streaming_tool_calls(model_alias):
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, StreamingResponse)
 
@@ -216,7 +216,7 @@ async def test_responses_api_invalid_json():
     """Test POST /v1/responses with malformed JSON body."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     with pytest.raises(HTTPException) as exc_info:
         await responses_api(mock_request)
@@ -233,7 +233,7 @@ async def test_responses_api_streaming():
         "input": "Stream test",
         "stream": True
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     async def mock_aiter_bytes():
         yield b'data: {"type":"response.created"}\n\n'
@@ -250,7 +250,7 @@ async def test_responses_api_streaming():
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, StreamingResponse)
         assert response.media_type == "text/event-stream"
@@ -267,7 +267,7 @@ async def test_responses_api_streaming_error():
         "input": "Stream error test",
         "stream": True
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     mock_resp = MagicMock()
     mock_resp.status_code = 500
@@ -280,7 +280,7 @@ async def test_responses_api_streaming_error():
 
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         with pytest.raises(HTTPException) as exc_info:
             await responses_api(mock_request)
         assert exc_info.value.status_code == 500
@@ -313,7 +313,7 @@ async def test_responses_api_input_text_extraction():
             }
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -328,7 +328,7 @@ async def test_responses_api_input_text_extraction():
     with patch("router.main.classify_request", classify_mock), \
          patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()), \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key"}):
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         response = await responses_api(mock_request)
         assert isinstance(response, Response)
         # Verify classify_request was called with extracted last user turn: "Part 1 Part 2"
@@ -368,7 +368,7 @@ async def test_responses_api_invalid_master_key_fail_fast(invalid_master_key):
     """Verify POST /v1/responses fails fast with 500 if server LITELLM_MASTER_KEY is unconfigured or placeholder."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(return_value={"model": "gpt-4o-mini", "input": "hi"})
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer gateway-pass"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-key"}
 
     with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key}), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):

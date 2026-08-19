@@ -7,7 +7,7 @@ os.environ.setdefault("CONFIG_PATH", "router/config.yaml")
 os.environ.setdefault("ROUTER_API_KEY", "test-key")
 os.environ.setdefault("ROUTER_API_BASE", "http://localhost:8080/v1")
 os.environ.setdefault("ROUTER_MODEL_NAME", "qwen-test")
-os.environ.setdefault("LITELLM_MASTER_KEY", "test-master-key")
+os.environ.setdefault("LITELLM_MASTER_KEY", "test-key")
 
 from router.main import app, classify_request
 
