@@ -195,11 +195,11 @@ def _count_tokens_heuristic(text: Any) -> float:
     # Expected impact: ~4-8% faster execution for the word counting stage based on internal benchmarks.
     word_total = 0.0
     for w in WORD_RE.findall(text):
-        l = len(w)
-        if l <= 8:
+        word_len = len(w)
+        if word_len <= 8:
             word_total += 1.2
         else:
-            word_total += l * 0.25
+            word_total += word_len * 0.25
 
     # 2. Non-ASCII characters (CJK/Emoji)
     # Each character is weighted at 0.35 tokens.
