@@ -15,42 +15,56 @@ def reset_last_save():
 @pytest.mark.anyio
 async def test_save_persisted_stats_force():
     """Test that force=True bypasses the throttle and saves stats."""
-    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
+    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write, \
+         patch("router.main.save_stats_to_valkey", new_callable=AsyncMock) as mock_valkey:
         main._last_stats_save = time.monotonic()
         start_time = time.monotonic()
         await save_persisted_stats(force=True)
+        mock_valkey.assert_called_once()
         mock_write.assert_called_once_with(main.STATS_JSON_PATH, main.stats)
         assert main._last_stats_save >= start_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_throttle():
     """Test that disk writes are throttled when time hasn't passed."""
-    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
+    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write, \
+         patch("router.main.save_stats_to_valkey", new_callable=AsyncMock) as mock_valkey:
         initial_save_time = time.monotonic()
         main._last_stats_save = initial_save_time
         await save_persisted_stats(force=False)
+        mock_valkey.assert_called_once()
         mock_write.assert_not_called()
         assert main._last_stats_save == initial_save_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_time_passed():
     """Test that stats are saved when the throttle interval has passed."""
-    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
+    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write, \
+         patch("router.main.save_stats_to_valkey", new_callable=AsyncMock) as mock_valkey:
         main._last_stats_save = time.monotonic() - 3.0 # More than 2.0 seconds ago
         start_time = time.monotonic()
         await save_persisted_stats(force=False)
+        mock_valkey.assert_called_once()
         mock_write.assert_called_once_with(main.STATS_JSON_PATH, main.stats)
         assert main._last_stats_save >= start_time
 
 @pytest.mark.anyio
 async def test_save_persisted_stats_exception():
     """Test that _last_stats_save is reset on failure to allow immediate retry."""
-    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write:
+    with patch("router.main._atomic_write_json_async", new_callable=AsyncMock) as mock_write, \
+         patch("router.main.save_stats_to_valkey", new_callable=AsyncMock) as mock_valkey, \
+         patch("router.main.logger.error") as mock_logger:
+
         mock_write.side_effect = Exception("Write failed")
 
         main._last_stats_save = time.monotonic() - 3.0
 
         await save_persisted_stats(force=False)
 
+        mock_valkey.assert_called_once()
         # Verify it was reset on exception
         assert main._last_stats_save == 0.0
+
+        # Verify the exception was logged
+        mock_logger.assert_called_once()
+        assert "Failed to persist stats to disk: Write failed" in mock_logger.call_args[0][0]
