@@ -13,6 +13,8 @@ import logging
 import copy
 import tempfile
 import yaml
+import time
+
 import httpx
 import markupsafe
 import redis.asyncio as aioredis
@@ -23,8 +25,6 @@ _litellm_config_cache_time = {}
 def _load_yaml_cached(p):
     if not os.path.exists(p):
         return None
-    import time
-    import copy
     now = time.monotonic()
     if p in _litellm_config_cache and (now - _litellm_config_cache_time.get(p, 0)) < 60:
         return copy.deepcopy(_litellm_config_cache[p])
