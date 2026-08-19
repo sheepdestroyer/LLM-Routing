@@ -1312,7 +1312,9 @@ async def _register_ollama_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in ollama_models:
+
+    async def register_model(payload):
+        nonlocal registered, failed
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
@@ -1327,6 +1329,8 @@ async def _register_ollama_models_in_db(master_key: str):
         except Exception as e:
             failed += 1
             logger.warning(f"Failed to register {payload['model_name']}: {e}")
+
+    await asyncio.gather(*(register_model(p) for p in ollama_models))
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
