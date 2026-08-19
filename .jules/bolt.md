@@ -1,3 +1,6 @@
 ## 2024-05-20 - [O(1) LRU Eviction using Python Dict Insertion Order]
 **Learning:** Python 3.7+ dictionaries maintain insertion order. For caches where hits don't update the timestamp (like our `triage_cache`), the dictionary is naturally ordered from oldest to newest. We can avoid O(N log N) sorting for TTL and LRU evictions by popping elements off the front using `list(dict.keys())[:excess]`.
 **Action:** Always consider dictionary insertion order before using `sorted()` or `heapq` for eviction logic in TTL caches without touch-on-read mechanics.
+## 2024-08-19 - Concurrent Model Registration with asyncio.gather
+**Learning:** In Python's `asyncio` event loop, context switches only occur at `await` boundaries.
+**Action:** When refactoring serial asynchronous HTTP requests (N+1 bottleneck) to run concurrently using `asyncio.gather()`, you can safely use variables to track success/failure counters inside a nested `async def`. It is safe to use synchronous operations like `registered += 1` inside an async function because without locks they are thread-safe as long as they don't hit an await during the operation. Even safer, return tuples representing success and do the counting synchronously after the gather is complete.

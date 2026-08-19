@@ -343,7 +343,7 @@ async def test_sync_adaptive_router_roster_litellm_post_failure():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify warning for failed post
-        assert any("model/new model-1" in call[0][0] for call in mock_warning.call_args_list)
+        assert any("Failed to register model-1 under" in call[0][0] for call in mock_warning.call_args_list)
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_compute_score_exception():
