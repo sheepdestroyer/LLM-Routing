@@ -13,9 +13,27 @@ import logging
 import copy
 import tempfile
 import yaml
+import time
+
 import httpx
 import markupsafe
 import redis.asyncio as aioredis
+
+_litellm_config_cache = {}
+_litellm_config_cache_time = {}
+
+def _load_yaml_cached(p):
+    if not os.path.exists(p):
+        return None
+    now = time.monotonic()
+    if p in _litellm_config_cache and (now - _litellm_config_cache_time.get(p, 0)) < 60:
+        return copy.deepcopy(_litellm_config_cache[p])
+    with open(p, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        _litellm_config_cache[p] = data
+        _litellm_config_cache_time[p] = now
+        return copy.deepcopy(data)
+
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 
@@ -1083,17 +1101,13 @@ async def _register_openrouter_models_in_db(master_key: str):
         "./litellm/config.yaml",
     ]
 
-    def _load_yaml(p):
-        if not os.path.exists(p):
-            return None
-        with open(p, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+
 
     loaded_from_config = False
     for path in config_paths_to_try:
         if path:
             try:
-                litellm_config = await asyncio.to_thread(_load_yaml, path)
+                litellm_config = await asyncio.to_thread(_load_yaml_cached, path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
@@ -1216,18 +1230,13 @@ async def _register_ollama_models_in_db(master_key: str):
         "./litellm/config.yaml",
     ]
 
-    def _load_yaml(p):
-        """Helper to load a YAML file safely."""
-        if not os.path.exists(p):
-            return None
-        with open(p, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+
 
     loaded_from_config = False
     for path in config_paths_to_try:
         if path:
             try:
-                litellm_config = await asyncio.to_thread(_load_yaml, path)
+                litellm_config = await asyncio.to_thread(_load_yaml_cached, path)
                 if isinstance(litellm_config, dict) and isinstance(litellm_config.get("model_list"), list):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
