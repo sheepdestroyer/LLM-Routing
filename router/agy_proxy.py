@@ -25,6 +25,7 @@ import aiofiles
 import logging
 import os
 import time
+import uuid
 import httpx
 from typing import Optional, Protocol, runtime_checkable
 from dataclasses import dataclass
@@ -216,7 +217,7 @@ def _wrap_response(text: str, model_name: str, prompt: str) -> dict:
     prompt_tokens = len(prompt) // 4
     completion_tokens = len(text) // 4
     return {
-        "id": "chatcmpl-agy-proxy",
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": f"{model_name} (via agy)",

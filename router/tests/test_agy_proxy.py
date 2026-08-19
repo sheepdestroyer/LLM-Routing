@@ -13,11 +13,13 @@ from router.agy_proxy import _wrap_response, _is_quota_exhausted
     ids=["basic", "empty_strings", "long_strings", "special_chars"],
 )
 def test_wrap_response(text, model_name, prompt, expected_prompt_tokens, expected_completion_tokens):
+    mock_uuid_hex = "mockuuid12345"
     mock_time = 1620000000
-    with patch("time.time", return_value=mock_time):
+    with patch("time.time", return_value=mock_time), patch("uuid.uuid4") as mock_uuid:
+        mock_uuid.return_value.hex = mock_uuid_hex
         result = _wrap_response(text, model_name, prompt)
 
-    assert result["id"] == "chatcmpl-agy-proxy"
+    assert result["id"] == f"chatcmpl-{mock_uuid_hex}"
     assert result["object"] == "chat.completion"
     assert result["created"] == mock_time
     assert result["model"] == f"{model_name} (via agy)"
@@ -107,3 +109,9 @@ async def test_is_quota_exhausted_empty_seek_oserror(mock_time, mock_open):
     with patch("router.agy_proxy._last_log_check", 0):
         # OSError swallowed by outer except → falls back to True
         assert await _is_quota_exhausted(0, "", "") is True
+
+def test_wrap_response_openai_schema():
+    from openai.types.chat import ChatCompletion
+    result = _wrap_response("This is a mock response", "test-model", "Test prompt")
+    # This will raise a ValidationError if the schema is incorrect
+    ChatCompletion.model_validate(result)
