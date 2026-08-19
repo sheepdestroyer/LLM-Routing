@@ -155,7 +155,6 @@ async def handle_remember_memory(args: dict) -> str:
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.post(API_URL, json={"key": key, "value": value})
         if r.status_code == 200:
-            res = r.json()
             scope_label = "global" if is_global else "local"
             tag_str = f" with tags {tags}" if tags else ""
             return (
