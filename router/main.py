@@ -1030,6 +1030,17 @@ async def sync_adaptive_router_roster(master_key: str):
     admin_url = LITELLM_URL
     client = get_http_client()
 
+    async def _register_tier_model(tier_name, mid, payload):
+        try:
+            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
+            if r.status_code in (200, 201):
+                return True, tier_name, mid, None
+            else:
+                return False, tier_name, mid, f"HTTP {r.status_code} — {r.text[:200]}"
+        except Exception as e:
+            return False, tier_name, mid, str(e)
+
+    tasks = []
     for tier_name, model_ids in tier_assignments.items():
         for mid in model_ids:
             ctx_len = model_contexts.get(mid, 262144)
@@ -1047,17 +1058,18 @@ async def sync_adaptive_router_roster(master_key: str):
                     "is_public_model_group": True,
                 },
             }
-            try:
-                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
-                if r.status_code in (200, 201):
-                    registered += 1
-                    _registered_free_models[tier_name].add(mid)
-                else:
-                    failed += 1
-                    logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
-            except Exception as e:
+            tasks.append(_register_tier_model(tier_name, mid, payload))
+
+    if tasks:
+        results = await asyncio.gather(*tasks)
+        for success, tier_name, mid, error_msg in results:
+            if success:
+                registered += 1
+                _registered_free_models[tier_name].add(mid)
+            else:
                 failed += 1
-                logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
+                logger.warning(f"Failed to register {mid} under {tier_name}: {error_msg}")
+
     logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers")
 
 
@@ -1168,21 +1180,29 @@ async def _register_openrouter_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in openrouter_models:
+
+    async def _register_single(payload):
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
             )
             if r.status_code in (200, 201):
-                registered += 1
+                return True, payload
             else:
-                failed += 1
                 logger.warning(
                     f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
                 )
+                return False, payload
         except Exception as e:
-            failed += 1
             logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
+            return False, payload
+
+    results = await asyncio.gather(*[_register_single(p) for p in openrouter_models])
+    for success, _ in results:
+        if success:
+            registered += 1
+        else:
+            failed += 1
     logger.info(
         f"📊 OpenRouter DB registration: {registered} registered, {failed} failed"
     )
@@ -1312,21 +1332,29 @@ async def _register_ollama_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in ollama_models:
+
+    async def _register_single_ollama(payload):
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
             )
             if r.status_code in (200, 201):
-                registered += 1
+                return True, payload
             else:
-                failed += 1
                 logger.warning(
                     f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}"
                 )
+                return False, payload
         except Exception as e:
-            failed += 1
             logger.warning(f"Failed to register {payload['model_name']}: {e}")
+            return False, payload
+
+    results = await asyncio.gather(*[_register_single_ollama(p) for p in ollama_models])
+    for success, _ in results:
+        if success:
+            registered += 1
+        else:
+            failed += 1
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
