@@ -107,3 +107,73 @@ async def test_is_quota_exhausted_empty_seek_oserror(mock_time, mock_open):
     with patch("router.agy_proxy._last_log_check", 0):
         # OSError swallowed by outer except → falls back to True
         assert await _is_quota_exhausted(0, "", "") is True
+
+@patch("aiofiles.open")
+@patch("router.agy_proxy.time.time")
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_non_empty_stdout_success(mock_time, mock_open):
+    # rc=0, stdout="response" -> success, so False
+    assert await _is_quota_exhausted(0, "response", "") is False
+
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_nonzero_returncode():
+    # rc!=0 -> other error, so False unless stderr contains markers
+    assert await _is_quota_exhausted(1, "", "") is False
+
+@patch("aiofiles.open")
+@patch("router.agy_proxy.time.time")
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_empty_file_size_seek(mock_time, mock_open):
+    mock_time.return_value = 1000.0
+    mock_file = AsyncMock()
+    mock_file.seek = AsyncMock()
+    mock_file.tell = AsyncMock(return_value=500) # Size < 1024
+    mock_file.read = AsyncMock(return_value=b"short line\nRESOURCE_EXHAUSTED\n")
+    mock_open.return_value.__aenter__.return_value = mock_file
+
+    with patch("router.agy_proxy._last_log_check", 0):
+        assert await _is_quota_exhausted(0, "", "") is True
+
+
+@patch("aiofiles.open")
+@patch("router.agy_proxy.time.time")
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_empty_file_size_seek_no_markers(mock_time, mock_open):
+    mock_time.return_value = 1000.0
+    mock_file = AsyncMock()
+    mock_file.seek = AsyncMock()
+    mock_file.tell = AsyncMock(return_value=500) # Size < 1024
+    mock_file.read = AsyncMock(return_value=b"short line\nno markers\n")
+    mock_open.return_value.__aenter__.return_value = mock_file
+
+    with patch("router.agy_proxy._last_log_check", 0):
+        assert await _is_quota_exhausted(0, "", "") is False
+
+
+@patch("aiofiles.open")
+@patch("router.agy_proxy.time.time")
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_log_check_error_swallowed(mock_time, mock_open):
+    # Tests `except Exception: pass` when reading the log fails entirely
+    # and then falls back to True
+    mock_time.return_value = 1000.0
+    mock_open.side_effect = ValueError("general error")
+    with patch("router.agy_proxy._last_log_check", 0):
+        assert await _is_quota_exhausted(0, "", "") is True
+
+
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_success_explicit():
+    # rc=0, stdout="hello", stderr="" -> success -> False
+    assert await _is_quota_exhausted(0, "hello", "") is False
+
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_nonzero_returncode_explicit():
+    # rc=1, stdout="", stderr="" -> other error -> False
+    assert await _is_quota_exhausted(1, "", "") is False
+
+@pytest.mark.asyncio
+async def test_is_quota_exhausted_quota_exhausted_by_empty():
+    # rc=0, stdout="", stderr="" -> True immediately (first pass without waiting logic mocked out, throttle)
+    with patch("router.agy_proxy._last_log_check", 0):
+        assert await _is_quota_exhausted(0, "", "") is True
