@@ -922,15 +922,20 @@ def _validate_litellm_master_key() -> str:
     return key
 
 
-async def _purge_stale_deployments(db_url: str, pattern: str):
-    """Purge stale deployments matching the pattern from LiteLLM's DB."""
+async def _purge_stale_deployments(db_url: str, pattern: str | list[str]):
+    """Purge stale deployments matching the pattern(s) from LiteLLM's DB."""
     import asyncpg
 
     conn = await asyncpg.connect(db_url)
     try:
-        await conn.execute(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', pattern
-        )
+        if isinstance(pattern, list):
+            await conn.execute(
+                'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE ANY($1)', pattern
+            )
+        else:
+            await conn.execute(
+                'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', pattern
+            )
     finally:
         await conn.close()
 
@@ -1154,11 +1159,12 @@ async def _register_openrouter_models_in_db(master_key: str):
                 "DATABASE_URL is not set; skipping purge of stale openrouter-* DB entries"
             )
         else:
-            await _purge_stale_deployments(db_url, "openrouter-%")
+            patterns = ["openrouter-%"]
             for m in openrouter_models:
                 m_name = m.get("model_name", "")
                 if m_name and not m_name.startswith("openrouter-"):
-                    await _purge_stale_deployments(db_url, m_name)
+                    patterns.append(m_name)
+            await _purge_stale_deployments(db_url, patterns)
             logger.info(
                 "🧹 Purged stale OpenRouter DB entries before registration"
             )

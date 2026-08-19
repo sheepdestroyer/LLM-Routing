@@ -36,7 +36,7 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
     await _register_openrouter_models_in_db("test_master_key")
 
     # Should attempt to purge DB for openrouter-%
-    mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/test", "openrouter-%")
+    mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/test", ["openrouter-%"])
 
     # Should post for openrouter-auto static fallback
     assert mock_client.post.call_count == 1
