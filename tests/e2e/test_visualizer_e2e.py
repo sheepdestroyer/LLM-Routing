@@ -24,7 +24,7 @@ async def test_visualizer_empty_state_and_layout(page: Page, base_url: str):
     await expect(page.locator("#btn-unreviewed")).to_be_visible()
 
     # Empty state message
-    await expect(page.locator(".empty-state h2")).to_contain_text("Select a prompt from the list")
+    await expect(page.locator("#detail .empty-state h2")).to_contain_text("Select a prompt from the list")
 
 
 @pytest.mark.anyio
