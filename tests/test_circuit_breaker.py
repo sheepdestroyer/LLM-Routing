@@ -365,3 +365,28 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  ALL CIRCUIT BREAKER TESTS PASSED ✓")
     print("=" * 60)
+
+def test_dual_breaker_is_allowed_both_blocked():
+    """Verify DualCircuitBreaker.is_allowed() returns False only when both sub-breakers are blocked."""
+    reset_breakers()
+    b = get_breaker()
+
+    # Test 1: Both breakers are completely open, request is allowed
+    assert b.is_allowed() is True
+
+    # Test 2: Vendor blocked, Google allowed => allowed
+    b.vendor.tier = 1
+    b.vendor.cooldown_until = time.time() + 1000
+    assert b.is_allowed() is True
+
+    # Test 3: Google blocked, Vendor allowed => allowed
+    b.google.tier = 1
+    b.google.cooldown_until = time.time() + 1000
+    b.vendor.tier = 0
+    assert b.is_allowed() is True
+
+    # Test 4: Both blocked => denied
+    b.vendor.tier = 1
+    b.vendor.cooldown_until = time.time() + 1000
+    assert b.is_allowed() is False
+    print("✓ Dual breaker blocks only when both sub-breakers are blocked")
