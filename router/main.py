@@ -2077,7 +2077,7 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                 "meta-llama/",
                 "nousresearch/hermes-3-llama",
             )
-            if any(mid.startswith(p) for p in _denylist_prefixes):
+            if mid.startswith(_denylist_prefixes):
                 logger.info(f"Skipping free model {mid}: denylisted")
                 continue
 
