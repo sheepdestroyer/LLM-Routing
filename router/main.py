@@ -13,8 +13,6 @@ import logging
 import copy
 import tempfile
 import yaml
-import time
-
 import httpx
 import markupsafe
 import redis.asyncio as aioredis
@@ -25,14 +23,16 @@ _litellm_config_cache_time = {}
 def _load_yaml_cached(p):
     if not os.path.exists(p):
         return None
+    import time
+    import copy
     now = time.monotonic()
     if p in _litellm_config_cache and (now - _litellm_config_cache_time.get(p, 0)) < 60:
-        return _litellm_config_cache[p]
+        return copy.deepcopy(_litellm_config_cache[p])
     with open(p, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
         _litellm_config_cache[p] = data
         _litellm_config_cache_time[p] = now
-        return data
+        return copy.deepcopy(data)
 
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
