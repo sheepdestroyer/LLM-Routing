@@ -4,8 +4,10 @@
 # Exclude Podman runtime file generated dynamically at startup
 pod-run.yaml
 
-# Exclude persistent database and cache storages (all under data/)
+# Exclude persistent database and cache storages (all under data/ and data-dev/)
 data/
+data-dev/
+.coverage
 
 
 # Exclude auto-generated backups

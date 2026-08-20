@@ -1143,7 +1143,67 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "max_input_tokens": 2000000,
                     "is_public_model_group": True,
                 },
-            }
+            },
+            {
+                "model_name": "openrouter-gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "openrouter-gpt-5.6-luna-max",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
         ]
 
     # Purge stale openrouter DB entries before re-registering
@@ -1406,25 +1466,37 @@ async def lifespan(app: FastAPI):
         # Close shared HTTPX client
         global _http_client
         if _http_client is not None:
-            await _http_client.aclose()
+            try:
+                await _http_client.aclose()
+            except Exception:
+                pass
             _http_client = None
 
         # Close classifier client
         global _classifier_client
         if _classifier_client is not None:
-            await _classifier_client.aclose()
+            try:
+                await _classifier_client.aclose()
+            except Exception:
+                pass
             _classifier_client = None
 
         # Close llama client
         global _llama_client
         if _llama_client is not None:
-            await _llama_client.aclose()
+            try:
+                await _llama_client.aclose()
+            except Exception:
+                pass
             _llama_client = None
 
         # Close Redis client
         global _redis_client
         if _redis_client is not None and _redis_client is not False:
-            await _redis_client.aclose()
+            try:
+                await _redis_client.aclose()
+            except Exception:
+                pass
             _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
@@ -2766,6 +2838,10 @@ async def chat_completions(request: Request):
         "local-qwen-routing",
         "gpt-4o-mini",
         "gpt-4o",
+        "openrouter-auto",
+        "openrouter-gpt-5.6-luna",
+        "openrouter-gpt-5.6-luna-max",
+        "gpt-5.6-luna",
     }
 
     AUTO_MODELS = {

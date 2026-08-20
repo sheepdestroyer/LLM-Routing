@@ -35,13 +35,19 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
 
     await _register_openrouter_models_in_db("test_master_key")
 
-    # Should attempt to purge DB for openrouter-%
-    mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/test", "openrouter-%")
+    # Should attempt to purge DB for openrouter-% and non-openrouter- prefixed models
+    assert mock_purge.call_count == 2
+    purge_calls = mock_purge.call_args_list
+    assert purge_calls[0][0] == ("postgresql://test:test@localhost:5432/test", "openrouter-%")
+    assert purge_calls[1][0] == ("postgresql://test:test@localhost:5432/test", "gpt-5.6-luna")
 
-    # Should post for openrouter-auto static fallback
-    assert mock_client.post.call_count == 1
+    # Should post for openrouter-auto, openrouter-gpt-5.6-luna, openrouter-gpt-5.6-luna-max, and gpt-5.6-luna static fallback
+    assert mock_client.post.call_count == 4
     calls = mock_client.post.call_args_list
     assert "openrouter-auto" in str(calls[0])
+    assert "openrouter-gpt-5.6-luna" in str(calls[1])
+    assert "openrouter-gpt-5.6-luna-max" in str(calls[2])
+    assert "gpt-5.6-luna" in str(calls[3])
 
 
 @pytest.mark.asyncio
