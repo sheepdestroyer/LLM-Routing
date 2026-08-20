@@ -554,7 +554,7 @@
                             ID: ${safeId}
                         </button>
                         <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                            <span>📐 context ${m.context_length.toLocaleString()} tok</span>
+                            <span><span aria-hidden="true">📐</span> context ${m.context_length.toLocaleString()} tok</span>
                             <span style="color: #34d399; font-weight: bold;">${statusLabel}</span>
                         </div>
                     `;
@@ -816,7 +816,7 @@
                         ID: {{ data.best_free_model.id }}
                     </button>
                     <div style="display: flex; justify-content: space-between; font-size: 11px; opacity: 0.5;">
-                        <span>📐 context {{ "{:,}".format(data.best_free_model.context_length) }} tok</span>
+                        <span><span aria-hidden="true">📐</span> context {{ "{:,}".format(data.best_free_model.context_length) }} tok</span>
                         <span style="color: #34d399; font-weight: bold;">{% if not data.best_free_model.is_fallback %}LIVE{% else %}FALLBACK{% endif %}</span>
                     </div>
                 </div>

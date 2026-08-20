@@ -31,7 +31,7 @@ echo
 
 echo "2. Testing Claude Opus 4.6..."
 RC=0
-OUTPUT=$(CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-4-6@default \
+OUTPUT=$(CASCADE_DEFAULT_MODEL_OVERRIDE=claude-opus-3-5@default \
     agy --print "Reply with exactly: Opus OK" 2>"$TMP_LOG2") || RC=$?
 if [ "$RC" -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "   ✅ Opus 4.6: $OUTPUT"

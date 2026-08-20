@@ -21,3 +21,7 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+
+## 2026-10-27 - Decorative Emojis Accessibility
+**Learning:** Using decorative emojis in Jinja2 templates without `aria-hidden="true"` causes screen readers to read out their literal names (e.g., "Triangular ruler context...", "Warning sign No active Goose session..."), which adds unnecessary noise and degrades the experience for visually impaired users.
+**Action:** Always wrap decorative emojis, icons, or visual markers in a `<span aria-hidden="true">` to ensure they are skipped by screen readers.
