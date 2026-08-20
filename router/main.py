@@ -1468,8 +1468,8 @@ async def lifespan(app: FastAPI):
         if _http_client is not None:
             try:
                 await _http_client.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing HTTP client during shutdown: {e}")
             _http_client = None
 
         # Close classifier client
@@ -1477,8 +1477,8 @@ async def lifespan(app: FastAPI):
         if _classifier_client is not None:
             try:
                 await _classifier_client.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing classifier client during shutdown: {e}")
             _classifier_client = None
 
         # Close llama client
@@ -1486,8 +1486,8 @@ async def lifespan(app: FastAPI):
         if _llama_client is not None:
             try:
                 await _llama_client.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing llama client during shutdown: {e}")
             _llama_client = None
 
         # Close Redis client
@@ -1495,8 +1495,8 @@ async def lifespan(app: FastAPI):
         if _redis_client is not None and _redis_client is not False:
             try:
                 await _redis_client.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error closing redis client during shutdown: {e}")
             _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
@@ -3432,6 +3432,10 @@ async def chat_completions(request: Request):
                         "agent-simple-core": 32768,
                         "ollama-deepseek-v4-pro": 524288,
                         "ollama-deepseek-v4-flash": 524288,
+                        "openrouter-gpt-5.6-luna": 1050000,
+                        "openrouter-gpt-5.6-luna-max": 1050000,
+                        "gpt-5.6-luna": 1050000,
+                        "openrouter-auto": 2000000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

@@ -176,8 +176,13 @@ async def test_classify_request_langfuse_exceptions():
         mock_span.end.assert_called_once()
 
 
-def test_direct_routing_openrouter_gpt_5_6_luna():
-    """Verify that direct requests for openrouter-gpt-5.6-luna bypass the classifier and proxy to LiteLLM."""
+@pytest.mark.parametrize("model_name", [
+    "openrouter-gpt-5.6-luna",
+    "openrouter-gpt-5.6-luna-max",
+    "gpt-5.6-luna",
+])
+def test_direct_routing_openrouter_gpt_5_6_luna_variants(model_name):
+    """Verify that direct requests for openrouter-gpt-5.6-luna variants bypass the classifier and proxy to LiteLLM."""
     client = TestClient(app)
 
     mock_response = MagicMock()
@@ -192,7 +197,7 @@ def test_direct_routing_openrouter_gpt_5_6_luna():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         payload = {
-            "model": "openrouter-gpt-5.6-luna",
+            "model": model_name,
             "messages": [{"role": "user", "content": "hello"}],
         }
         response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
@@ -201,5 +206,5 @@ def test_direct_routing_openrouter_gpt_5_6_luna():
 
         mock_client.post.assert_called_once()
         _called_args, called_kwargs = mock_client.post.call_args
-        assert called_kwargs["json"]["model"] == "openrouter-gpt-5.6-luna"
+        assert called_kwargs["json"]["model"] == model_name
 
