@@ -35,13 +35,28 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
 
     await _register_openrouter_models_in_db("test_master_key")
 
-    # Should attempt to purge DB for openrouter-%
-    mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/test", "openrouter-%")
+    # Should attempt to purge DB for openrouter-% and non-openrouter- prefixed models
+    assert mock_purge.call_count == 2
+    purge_calls = {(call.args[0], call.args[1]) for call in mock_purge.call_args_list}
+    expected_purge_calls = {
+        ("postgresql://test:test@localhost:5432/test", "openrouter-%"),
+        ("postgresql://test:test@localhost:5432/test", "gpt-5.6-luna"),
+    }
+    assert purge_calls == expected_purge_calls
 
-    # Should post for openrouter-auto static fallback
-    assert mock_client.post.call_count == 1
-    calls = mock_client.post.call_args_list
-    assert "openrouter-auto" in str(calls[0])
+    # Should post for openrouter-auto, openrouter-gpt-5.6-luna, openrouter-gpt-5.6-luna-max, and gpt-5.6-luna static fallback
+    expected_models = {
+        "openrouter-auto",
+        "openrouter-gpt-5.6-luna",
+        "openrouter-gpt-5.6-luna-max",
+        "gpt-5.6-luna",
+    }
+    assert mock_client.post.call_count == len(expected_models)
+    posted_models = {
+        call.kwargs.get("json", {}).get("model_name") or call[1].get("json", {}).get("model_name")
+        for call in mock_client.post.call_args_list
+    }
+    assert posted_models == expected_models
 
 
 @pytest.mark.asyncio
