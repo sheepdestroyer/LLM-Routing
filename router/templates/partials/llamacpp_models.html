@@ -7,9 +7,9 @@
                     <span style="font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: 0.5px; {{ status_style }}">{{ m.status|upper }}</span>
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 11px; opacity: 0.6;">
-                    {% if m.n_params %}<span>🧠 {{ "%.1f"|format(m.n_params / 1000000000) }}B params</span>{% endif %}
-                    {% if m.n_ctx %}<span>📏 ctx {{ "{:,}".format(m.n_ctx) }}</span>{% endif %}
-                    {% if m.size_bytes %}<span>💾 {{ "%.0f"|format(m.size_bytes / 1000000) }} MB</span>{% endif %}
+                    {% if m.n_params %}<span><span aria-hidden="true">🧠</span> {{ "%.1f"|format(m.n_params / 1000000000) }}B params</span>{% endif %}
+                    {% if m.n_ctx %}<span><span aria-hidden="true">📏</span> ctx {{ "{:,}".format(m.n_ctx) }}</span>{% endif %}
+                    {% if m.size_bytes %}<span><span aria-hidden="true">💾</span> {{ "%.0f"|format(m.size_bytes / 1000000) }} MB</span>{% endif %}
                 </div>
             </div>
         {% endfor %}
