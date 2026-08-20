@@ -23,7 +23,10 @@ def test_quadlet_inventory_and_pod_membership():
 
 def test_quadlet_container_healthcmds_and_aligned_versions():
     minio = (QUADLETS / "llm-routing-minio.container").read_text()
-    assert 'HealthCmd=mc ready local || bash -c "</dev/tcp/127.0.0.1/MINIO_S3_PORT_PLACEHOLDER"' in minio
+    assert 'HealthCmd=["curl", "-sf", "http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live"]' in minio
+
+    clickhouse = (QUADLETS / "llm-routing-clickhouse.container").read_text()
+    assert 'HealthCmd=["clickhouse-client", "--host", "127.0.0.1", "--port", "CLICKHOUSE_TCP_PORT_PLACEHOLDER", "--user", "clickhouse", "--password", "CLICKHOUSE_PASSWORD_PLACEHOLDER", "--query", "SELECT 1"]' in clickhouse
 
     worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
     assert 'HealthCmd=node -e "process.exit(0)"' in worker
