@@ -1,5 +1,5 @@
 {% if not data.timeline %}
-        <div style='opacity: 0.5; font-size: 14px; text-align: center; padding: 20px;'>Waiting for active tool executions...</div>
+        <div class="empty-state" style='opacity: 0.5; font-size: 14px; text-align: center; padding: 20px;'>Waiting for active tool executions...</div>
     {% else %}
         {% for ev in data.timeline|reverse %}
             {% set route_label = ev.route|default('litellm_fallback') %}

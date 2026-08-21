@@ -542,6 +542,9 @@
                 const bestFreeModelContainer = document.getElementById("best-free-model-container");
                 if (bestFreeModelContainer) {
                     const m = data.best_free_model;
+                    if (!m) {
+                        bestFreeModelContainer.innerHTML = '<div class="empty-state" style="padding: 10px;">No free model available</div>';
+                    } else {
                     const statusLabel = (!m.is_fallback) ? "LIVE" : "FALLBACK";
                     const safeId = escapeHtml(m.id || "");
                     bestFreeModelContainer.innerHTML = `
@@ -558,6 +561,7 @@
                             <span style="color: #34d399; font-weight: bold;">${statusLabel}</span>
                         </div>
                     `;
+                    }
                 }
 
                 // 6. Update Llama.cpp Build version
@@ -807,6 +811,7 @@
                     <span>{{ src_badge("ROSTER", "#f43f5e") | safe }} Current Best Free Model</span>
                 </div>
                 <div id="best-free-model-container" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 18px;">
+                    {% if data.best_free_model %}
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <span style="font-weight: 800; font-size: 16px; color: #fff;">{{ data.best_free_model.name }}</span>
                         <span style="font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25);"><span aria-hidden="true">⚡</span> {{ "%.1f"|format(data.best_free_model.score) }}</span>
@@ -819,6 +824,9 @@
                         <span>📐 context {{ "{:,}".format(data.best_free_model.context_length) }} tok</span>
                         <span style="color: #34d399; font-weight: bold;">{% if not data.best_free_model.is_fallback %}LIVE{% else %}FALLBACK{% endif %}</span>
                     </div>
+                    {% else %}
+                    <div class="empty-state" style="padding: 10px;">No free model available</div>
+                    {% endif %}
                 </div>
                 <div style="font-size: 11px; opacity: 0.4; margin-top: 10px; text-align: center;">
                     Scores provided by Artificial Analysis API
