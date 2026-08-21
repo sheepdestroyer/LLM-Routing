@@ -21,3 +21,7 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+
+## 2024-05-19 - Empty States for Dynamic Views
+**Learning:** Dynamic lists in JS often result in an entirely blank section when filtered down to zero items, leaving users unsure if the app is broken or just empty. Additionally, keeping the detail pane populated with an item that was filtered out of the active list creates a disjointed UX.
+**Action:** When implementing JS-driven list/detail views, always add explicit `.empty-state` blocks for both the list (when `filtered.length === 0`) and the detail pane (when no item is selected, or when the selected item is no longer in the active filtered list).
