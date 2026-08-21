@@ -1,5 +1,6 @@
-import json
 import os
+os.environ["ROUTER_API_KEY"] = "sk-router-testkey"
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response, HTTPException
@@ -16,7 +17,7 @@ async def test_responses_api_direct_model_non_streaming():
         "model": "gpt-4o-mini",
         "input": "Hello from Home Assistant config flow!"
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -60,7 +61,7 @@ async def test_responses_api_auto_model_triage():
         "model": "llm-routing-auto-free",
         "input": "Fix typo in variable name x = 1"
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -110,7 +111,7 @@ async def test_responses_api_with_tools(model_alias):
             {"type": "web_search"}
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -167,7 +168,7 @@ async def test_responses_api_streaming_tool_calls(model_alias):
             }
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     sse_data = json.dumps({
         "type": "response.output_item.done",
@@ -216,7 +217,7 @@ async def test_responses_api_invalid_json():
     """Test POST /v1/responses with malformed JSON body."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     with pytest.raises(HTTPException) as exc_info:
         await responses_api(mock_request)
@@ -233,7 +234,7 @@ async def test_responses_api_streaming():
         "input": "Stream test",
         "stream": True
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     async def mock_aiter_bytes():
         yield b'data: {"type":"response.created"}\n\n'
@@ -267,7 +268,7 @@ async def test_responses_api_streaming_error():
         "input": "Stream error test",
         "stream": True
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     mock_resp = MagicMock()
     mock_resp.status_code = 500
@@ -313,7 +314,7 @@ async def test_responses_api_input_text_extraction():
             }
         ]
     })
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer test-token"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
     mock_lite_resp = MagicMock()
     mock_lite_resp.status_code = 200
@@ -368,9 +369,9 @@ async def test_responses_api_invalid_master_key_fail_fast(invalid_master_key):
     """Verify POST /v1/responses fails fast with 500 if server LITELLM_MASTER_KEY is unconfigured or placeholder."""
     mock_request = MagicMock()
     mock_request.json = AsyncMock(return_value={"model": "gpt-4o-mini", "input": "hi"})
-    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer gateway-pass"}
+    mock_request.headers = {"content-type": "application/json", "Authorization": "Bearer sk-router-testkey"}
 
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key}), \
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key, "ROUTER_API_KEY": "sk-router-testkey"}), \
          patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()):
         with pytest.raises(HTTPException) as exc_info:
             await responses_api(mock_request)
@@ -386,7 +387,7 @@ async def test_responses_api_invalid_master_key_fail_fast(invalid_master_key):
 ])
 def test_validate_litellm_master_key_raises_http_500(invalid_master_key):
     """Verify _validate_litellm_master_key helper raises 500 on invalid keys."""
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key}):
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": invalid_master_key, "ROUTER_API_KEY": "sk-router-testkey"}):
         with pytest.raises(HTTPException) as exc_info:
             _validate_litellm_master_key()
         assert exc_info.value.status_code == 500
