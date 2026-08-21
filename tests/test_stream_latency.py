@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+os.environ.setdefault("ROUTER_API_KEY", "valid-key")
 import asyncio
 import httpx
 import json
@@ -15,7 +17,7 @@ async def main():
     }
     headers = {
         "Content-Type": "application/json",
-        "Authorization": "Bearer gateway-pass"
+        "Authorization": "Bearer valid-key"
     }
 
     print("=" * 60)
