@@ -9,6 +9,7 @@ import json
 import orjson
 import time
 import asyncio
+import itertools
 import logging
 import copy
 import tempfile
@@ -869,6 +870,8 @@ def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
 
     Optimized: Uses Python 3.7+ dictionary insertion order to avoid O(N log N) sorting.
     Since cache hits don't update timestamps, the dict is naturally ordered by time.
+    Also uses itertools.islice to avoid materializing all keys in memory during eviction,
+    bringing memory overhead from O(N) to O(K) where K is the number of excess elements.
     """
     now = time.time()
 
@@ -879,7 +882,7 @@ def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
 
     excess = len(triage_cache) - max_size
     if excess > 0:
-        for k in list(triage_cache.keys())[:excess]:
+        for k in list(itertools.islice(triage_cache.keys(), excess)):
             triage_cache.pop(k, None)
 
 
