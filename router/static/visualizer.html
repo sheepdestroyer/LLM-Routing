@@ -236,6 +236,18 @@ function render() {
   
   // List
   const listEl = document.getElementById('list');
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty-state" style="padding-top: 60px;">
+        <h2>No prompts found</h2>
+        <p>Try changing the filter</p>
+      </div>
+    `;
+    document.getElementById('detail').innerHTML = '';
+    return;
+  }
+
   listEl.innerHTML = filtered.map(i => {
     const p = dataset[i];
     const llm = p.llm_tier || p.tier || '?';
@@ -261,6 +273,13 @@ function render() {
   
   if (selectedIdx >= 0) {
     renderDetail(selectedIdx);
+  } else {
+    document.getElementById('detail').innerHTML = `
+      <div class="empty-state">
+        <h2>Select a prompt from the list</h2>
+        <p>LLM evaluation vs classifier prediction side by side</p>
+      </div>
+    `;
   }
 }
 
