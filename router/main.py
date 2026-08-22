@@ -2149,7 +2149,10 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                 "meta-llama/",
                 "nousresearch/hermes-3-llama",
             )
-            if any(mid.startswith(p) for p in _denylist_prefixes):
+            # Performance optimization (Bolt):
+            # Pass a tuple directly to startswith() to utilize native C implementation.
+            # Expected impact: Faster prefix matching by avoiding Python-level generator overhead.
+            if mid.startswith(_denylist_prefixes):
                 logger.info(f"Skipping free model {mid}: denylisted")
                 continue
 
