@@ -291,7 +291,7 @@ function renderDetail(idx) {
     if (ann && ann.tier === tier) cls += ' selected-human';
     if (llm === tier && !ann) cls += ' llm-label';
     if (pred === tier) cls += ' classifier-label';
-    return `<button class="${cls}" onclick="annotate(${idx}, '${tier}')">${tier.replace('agent-','')}</button>`;
+    return `<button type="button" class="${cls}" onclick="annotate(${idx}, '${tier}')">${tier.replace('agent-','')}</button>`;
   }).join('');
   
   document.getElementById('detail').innerHTML = `
@@ -322,10 +322,10 @@ function renderDetail(idx) {
         <span><span class="dot hum"></span> Human selection</span>
       </div>
       <div class="annotation-bar">
-        <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
-        <button onclick="saveNote(${idx})">Save Note</button>
+        <input type="text" id="note-input" aria-label="Review note" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
+        <button type="button" onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <button type="button" onclick="clearAnnotation(${idx})" style="color:#f44336; background: transparent; border: none; font-family: inherit; font-size: inherit; padding: 0; cursor: pointer; text-decoration: underline;" aria-label="Clear annotation">clear</button></div>` : ''}
     </div>
   `;
 }
