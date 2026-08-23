@@ -217,6 +217,11 @@ function getFilteredIndices() {
 
 function render() {
   const filtered = getFilteredIndices();
+
+  if (selectedIdx >= 0 && !filtered.includes(selectedIdx)) {
+    selectedIdx = -1;
+  }
+
   document.getElementById('filter-count').textContent = filtered.length;
   
   // Stats
@@ -236,31 +241,42 @@ function render() {
   
   // List
   const listEl = document.getElementById('list');
-  listEl.innerHTML = filtered.map(i => {
-    const p = dataset[i];
-    const llm = p.llm_tier || p.tier || '?';
-    const pred = p.clf_tier;
-    const ann = getAnnotation(i);
-    const conflict = isConflict(i);
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-state" style="padding: 40px 20px; font-size: 0.9em; border: none;">No items match the current filter.</div>`;
+  } else {
+    listEl.innerHTML = filtered.map(i => {
+      const p = dataset[i];
+      const llm = p.llm_tier || p.tier || '?';
+      const pred = p.clf_tier;
+      const ann = getAnnotation(i);
+      const conflict = isConflict(i);
 
-    let tags = '';
-    if (conflict === true) tags += '<span class="tag conflict">CONFLICT</span>';
-    else if (conflict === false) tags += '<span class="tag agree">AGREE</span>';
-    else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
-    if (ann) tags += '<span class="tag human">REVIEWED</span>';
+      let tags = '';
+      if (conflict === true) tags += '<span class="tag conflict">CONFLICT</span>';
+      else if (conflict === false) tags += '<span class="tag agree">AGREE</span>';
+      else tags += '<span class="tag" style="background:#333;color:#888">NO DATA</span>';
+      if (ann) tags += '<span class="tag human">REVIEWED</span>';
 
-    const displayLlm = typeof llm === 'string' ? escapeHtml(llm.replace('agent-','')) : '?';
-    const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
+      const displayLlm = typeof llm === 'string' ? escapeHtml(llm.replace('agent-','')) : '?';
+      const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
 
-    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})" tabindex="0" role="button" aria-label="Prompt ${i}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPrompt(${i})}">
-      <div class="id">#${i} · LLM: ${displayLlm}${pred ? ' · CLS: ' + displayPred : ''}</div>
-      <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
-      <div class="tags">${tags}</div>
-    </div>`;
-  }).join('');
+      return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})" tabindex="0" role="button" aria-label="Prompt ${i}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPrompt(${i})}">
+        <div class="id">#${i} · LLM: ${displayLlm}${pred ? ' · CLS: ' + displayPred : ''}</div>
+        <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
+        <div class="tags">${tags}</div>
+      </div>`;
+    }).join('');
+  }
   
   if (selectedIdx >= 0) {
     renderDetail(selectedIdx);
+  } else {
+    document.getElementById('detail').innerHTML = `
+      <div class="empty-state">
+        <h2>Select a prompt from the list</h2>
+        <p>LLM evaluation vs classifier prediction side by side</p>
+      </div>
+    `;
   }
 }
 
