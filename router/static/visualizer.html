@@ -69,6 +69,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .annotation-bar button { background: #e94560; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
 .annotation-bar button.save { background: #4caf50; }
 .annotation-bar button:focus-visible, .annotation-bar input:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
+.clear-btn { background: transparent; border: none; color: #f44336; cursor: pointer; padding: 0; font-size: inherit; font-family: inherit; text-decoration: underline; }
+.clear-btn:focus-visible { outline: var(--focus-outline); outline-offset: 2px; }
 .progress-bar { height: 4px; background: #0f3460; border-radius: 2px; margin-top: 8px; }
 .progress-fill { height: 100%; background: #64b5f6; border-radius: 2px; transition: width 0.3s; }
 .filter-count { color: #e94560; font-weight: bold; }
@@ -325,7 +327,7 @@ function renderDetail(idx) {
         <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <button type="button" class="clear-btn" onclick="clearAnnotation(${idx})">clear</button></div>` : ''}
     </div>
   `;
 }
