@@ -6,6 +6,7 @@ import aiofiles
 import re
 import sys
 import json
+import itertools
 import orjson
 import time
 import asyncio
@@ -879,7 +880,10 @@ def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
 
     excess = len(triage_cache) - max_size
     if excess > 0:
-        for k in list(triage_cache.keys())[:excess]:
+        # Performance optimization (Bolt):
+        # Used itertools.islice instead of list(d.keys())[:excess] to evict oldest entries from the TTL cache.
+        # This avoids materializing all keys in memory, providing O(1) memory overhead.
+        for k in list(itertools.islice(triage_cache.keys(), excess)):
             triage_cache.pop(k, None)
 
 
@@ -2149,7 +2153,11 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                 "meta-llama/",
                 "nousresearch/hermes-3-llama",
             )
-            if any(mid.startswith(p) for p in _denylist_prefixes):
+            # Performance optimization (Bolt):
+            # Passed a tuple directly to str.startswith() instead of using a generator expression with any().
+            # This utilizes the native C implementation and avoids Python-level generator overhead.
+            # Expected impact: Faster prefix matching when filtering denylisted free models.
+            if mid.startswith(_denylist_prefixes):
                 logger.info(f"Skipping free model {mid}: denylisted")
                 continue
 
