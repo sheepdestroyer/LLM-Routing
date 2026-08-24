@@ -86,10 +86,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   </div>
 </div>
 <div class="controls">
-  <button id="btn-all" class="active" onclick="setFilter('all')">All</button>
-  <button id="btn-conflict" onclick="setFilter('conflict')">⚡ Conflicts</button>
-  <button id="btn-agree" onclick="setFilter('agree')">✓ Agreements</button>
-  <button id="btn-unreviewed" onclick="setFilter('unreviewed')">✎ Unreviewed</button>
+  <button id="btn-all" aria-pressed="true" class="active" onclick="setFilter('all')">All</button>
+  <button id="btn-conflict" aria-pressed="false" onclick="setFilter('conflict')">⚡ Conflicts</button>
+  <button id="btn-agree" aria-pressed="false" onclick="setFilter('agree')">✓ Agreements</button>
+  <button id="btn-unreviewed" aria-pressed="false" onclick="setFilter('unreviewed')">✎ Unreviewed</button>
   <span style="margin-left:auto;color:#888;font-size:0.8em">Showing <span class="filter-count" id="filter-count">0</span></span>
   <button onclick="exportAnnotations()" style="background:#4caf50;border-color:#4caf50;">💾 Export Annotations</button>
 </div>
@@ -197,7 +197,9 @@ function isConflict(idx) {
 function setFilter(filter) {
   currentFilter = filter;
   document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.controls button[id^="btn-"]').forEach(b => b.setAttribute('aria-pressed', 'false'));
   document.getElementById('btn-' + filter).classList.add('active');
+  document.getElementById('btn-' + filter).setAttribute('aria-pressed', 'true');
   render();
 }
 
@@ -252,7 +254,7 @@ function render() {
     const displayLlm = typeof llm === 'string' ? escapeHtml(llm.replace('agent-','')) : '?';
     const displayPred = pred ? escapeHtml(pred.replace('agent-','')) : '';
 
-    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})" tabindex="0" role="button" aria-label="Prompt ${i}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPrompt(${i})}">
+    return `<div class="list-item${i === selectedIdx ? ' selected' : ''}" onclick="selectPrompt(${i})" tabindex="0" role="button" aria-label="Select prompt ${i}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectPrompt(${i})}">
       <div class="id">#${i} · LLM: ${displayLlm}${pred ? ' · CLS: ' + displayPred : ''}</div>
       <div class="snippet">${escapeHtml(p.prompt.substring(0, 120))}</div>
       <div class="tags">${tags}</div>
@@ -322,10 +324,11 @@ function renderDetail(idx) {
         <span><span class="dot hum"></span> Human selection</span>
       </div>
       <div class="annotation-bar">
+        <label for="note-input" style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0;">Review Note</label>
         <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <button type="button" onclick="clearAnnotation(${idx})" style="background: transparent; border: none; padding: 0; color: #f44336; cursor: pointer; font: inherit; text-decoration: underline;">clear</button></div>` : ''}
     </div>
   `;
 }
