@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI
-import asyncio
 import os
 
 from router.main import lifespan
@@ -20,8 +19,8 @@ async def test_lifespan_happy_path():
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
          patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
          patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
-         patch("router.main.push_aggregate_scores", new_callable=AsyncMock) as mock_push_scores, \
-         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock) as mock_cleanup, \
+         patch("router.main.push_aggregate_scores", new_callable=AsyncMock), \
+         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock), \
          patch("asyncio.sleep", new_callable=AsyncMock), \
          patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
 

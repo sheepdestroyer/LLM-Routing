@@ -93,7 +93,7 @@ def test_load_persisted_stats_timeline_exception(mock_stats):
 def test_load_persisted_stats_exception(mock_stats):
     with patch("router.main.os.path.exists", return_value=True):
         with patch("router.main.open", side_effect=Exception("Mock read error")):
-            with patch("router.main.logger.error") as mock_logger:
+            with patch("router.main.logger.error"):
                 load_persisted_stats()
 
                 assert mock_stats
