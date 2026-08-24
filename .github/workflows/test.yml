@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright
+          pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright litellm python-dotenv psycopg2-binary
           playwright install --with-deps chromium
 
       - name: Run Unit Tests
