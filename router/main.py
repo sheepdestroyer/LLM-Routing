@@ -1,5 +1,6 @@
 """Main FastAPI application for the LLM Triage & Fallback Gateway."""
 import os
+import itertools
 import uuid
 import posixpath
 import aiofiles
@@ -879,7 +880,9 @@ def cleanup_triage_cache(max_size: int = MAX_TRIAGE_CACHE_SIZE) -> None:
 
     excess = len(triage_cache) - max_size
     if excess > 0:
-        for k in list(triage_cache.keys())[:excess]:
+        # Optimized: itertools.islice avoids O(N) memory allocation when slicing dict keys,
+        # reducing eviction overhead to O(K) where K is the number of excess items.
+        for k in list(itertools.islice(triage_cache.keys(), excess)):
             triage_cache.pop(k, None)
 
 
