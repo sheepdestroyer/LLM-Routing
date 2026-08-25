@@ -21,3 +21,6 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+## 2026-08-16 - Replace anchor tags used for JavaScript actions
+**Learning:** Using `<a href="#">` for JavaScript actions forces a page jump to the top when clicked. This is a common and highly annoying micro-UX issue.
+**Action:** Replace `<a href="#">` with `<button type="button">` for inline JavaScript actions. Reset button styles (`background: transparent; border: none; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; color: inherit;`) to maintain visual appearance while fixing the semantic and interaction bug.
