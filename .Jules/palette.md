@@ -21,3 +21,7 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+
+## 2024-08-26 - Interactive element accessibility in custom lists
+**Learning:** Custom interactive elements that act as buttons (e.g. `div` with `role="button"` and `tabindex="0"`) lack semantic meaning and require manual Javascript event handlers for keyboard events (like `Enter` and `Space`). Additionally, using `<a href="#">` with `onclick` for Javascript actions causes unintended page jumps.
+**Action:** Replace interactive `div` elements with native `<button type="button">` elements and apply CSS resets (`display: block`, `width: 100%`, `text-align: left`, `background: transparent`, `border: none`, `color: inherit`, `font-family: inherit`) to retain visual styling while gaining native accessibility features. Replace Javascript action links (`<a href="#">`) with inline `<button type="button">`.
