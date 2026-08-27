@@ -325,7 +325,7 @@ function renderDetail(idx) {
         <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <button type="button" onclick="clearAnnotation(${idx})" style="display: inline-block; width: auto; text-align: left; background: transparent; color: #f44336; border: none; font-family: inherit; font-size: inherit; padding: 0; cursor: pointer; text-decoration: underline;" aria-label="Clear review">clear</button></div>` : ''}
     </div>
   `;
 }
