@@ -4,6 +4,7 @@ import copy
 import sys
 import os
 import json
+import orjson
 import asyncio
 
 # Ensure the root directory is in the path
@@ -12,7 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import router.main
 from router.main import _read_annotations_async
 
-def make_mock_aiofiles_open(content: str):
+def make_mock_aiofiles_open(content: bytes):
     mock_file = AsyncMock()
     mock_file.read.return_value = content
     mock_context_manager = MagicMock()
@@ -31,7 +32,7 @@ async def test_read_annotations_async_initial_read():
     fake_data = {"annotation1": "data1"}
 
     # Mock aiofiles.open
-    mock_aiofiles_open = make_mock_aiofiles_open('{"annotation1": "data1"}')
+    mock_aiofiles_open = make_mock_aiofiles_open(orjson.dumps(fake_data))
 
     with patch("os.path.getmtime", return_value=100.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:
@@ -39,13 +40,13 @@ async def test_read_annotations_async_initial_read():
         result = await _read_annotations_async(fake_path)
 
         mock_getmtime.assert_called_once_with(fake_path)
-        mock_open.assert_called_once_with(fake_path, "r", encoding="utf-8")
+        mock_open.assert_called_once_with(fake_path, "rb")
         assert result == fake_data
 
         # Verify cache is populated
         assert fake_path in router.main._annotations_cache
         assert router.main._annotations_cache[fake_path]["mtime"] == 100.0
-        assert router.main._annotations_cache[fake_path]["data"] == fake_data
+        assert router.main._annotations_cache[fake_path]["raw_bytes"] == orjson.dumps(fake_data)
 
 @pytest.mark.asyncio
 async def test_read_annotations_async_cache_hit():
@@ -53,7 +54,7 @@ async def test_read_annotations_async_cache_hit():
     fake_data = {"annotation1": "data1"}
 
     # Pre-populate cache
-    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data}
+    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "raw_bytes": orjson.dumps(fake_data)}
 
     # Mock aiofiles.open (should NOT be called)
     mock_aiofiles_open = MagicMock()
@@ -74,9 +75,9 @@ async def test_read_annotations_async_cache_invalidation():
     fake_data_new = {"annotation2": "data2"}
 
     # Pre-populate cache with old mtime
-    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data_old}
+    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "raw_bytes": orjson.dumps(fake_data_old)}
 
-    mock_aiofiles_open = make_mock_aiofiles_open('{"annotation2": "data2"}')
+    mock_aiofiles_open = make_mock_aiofiles_open(orjson.dumps(fake_data_new))
 
     with patch("os.path.getmtime", return_value=200.0) as mock_getmtime, \
          patch("aiofiles.open", mock_aiofiles_open) as mock_open:
@@ -84,12 +85,12 @@ async def test_read_annotations_async_cache_invalidation():
         result = await _read_annotations_async(fake_path)
 
         mock_getmtime.assert_called_once_with(fake_path)
-        mock_open.assert_called_once_with(fake_path, "r", encoding="utf-8")
+        mock_open.assert_called_once_with(fake_path, "rb")
         assert result == fake_data_new
 
         # Verify cache is updated
         assert router.main._annotations_cache[fake_path]["mtime"] == 200.0
-        assert router.main._annotations_cache[fake_path]["data"] == fake_data_new
+        assert router.main._annotations_cache[fake_path]["raw_bytes"] == orjson.dumps(fake_data_new)
 
 @pytest.mark.asyncio
 async def test_read_annotations_async_deepcopy():
@@ -97,7 +98,7 @@ async def test_read_annotations_async_deepcopy():
     fake_data = {"annotation1": {"nested": "value"}}
 
     # Pre-populate cache
-    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data}
+    router.main._annotations_cache[fake_path] = {"mtime": 100.0, "raw_bytes": orjson.dumps(fake_data)}
 
     with patch("os.path.getmtime", return_value=100.0):
         # First read
@@ -111,7 +112,7 @@ async def test_read_annotations_async_deepcopy():
 
         # Verify second read returns original data, not mutated
         assert result2["annotation1"]["nested"] == "value"
-        assert router.main._annotations_cache[fake_path]["data"]["annotation1"]["nested"] == "value"
+        assert orjson.loads(router.main._annotations_cache[fake_path]["raw_bytes"])["annotation1"]["nested"] == "value"
 
 @pytest.mark.asyncio
 async def test_read_annotations_async_file_not_found():
