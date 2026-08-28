@@ -2546,6 +2546,10 @@ async def proxy_memory(request: Request, path: str = ""):
         or "://" in clean_path
         or "\x00" in path
         or "\x00" in clean_path
+        or "\r" in path
+        or "\n" in path
+        or "\r" in clean_path
+        or "\n" in clean_path
     ):
         logger.warning(f"Blocking potentially malicious memory proxy path: {path}")
         raise HTTPException(status_code=400, detail="Invalid path")
@@ -2627,6 +2631,10 @@ async def proxy_audio(request: Request, path: str = ""):
         or "://" in clean_path
         or "\x00" in path
         or "\x00" in clean_path
+        or "\r" in path
+        or "\n" in path
+        or "\r" in clean_path
+        or "\n" in clean_path
     ):
         logger.warning(f"Blocking potentially malicious audio proxy path: {path}")
         raise HTTPException(status_code=400, detail="Invalid path")
