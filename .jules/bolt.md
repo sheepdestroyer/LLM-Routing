@@ -1,3 +1,6 @@
 ## 2024-05-20 - [O(1) LRU Eviction using Python Dict Insertion Order]
 **Learning:** Python 3.7+ dictionaries maintain insertion order. For caches where hits don't update the timestamp (like our `triage_cache`), the dictionary is naturally ordered from oldest to newest. We can avoid O(N log N) sorting for TTL and LRU evictions by popping elements off the front using `list(dict.keys())[:excess]`.
 **Action:** Always consider dictionary insertion order before using `sorted()` or `heapq` for eviction logic in TTL caches without touch-on-read mechanics.
+## 2024-05-20 - [Avoid copy.deepcopy() by caching raw bytes for faster deserialization]
+**Learning:** Returning `copy.deepcopy()` of a large dictionary structure from a cache is extremely slow in Python. We can avoid this and get O(N) fast copies by storing the raw `bytes` (e.g., from reading a JSON file) in the cache instead, and using `orjson.loads()` on those bytes whenever the data is requested. `orjson.loads` is implemented in Rust and builds a brand-new Python dictionary on the fly much faster than `copy.deepcopy()` can traverse and copy an existing one.
+**Action:** When creating in-memory caches of read-only JSON structures that must not be mutated by callers, store the serialized bytes rather than the parsed dictionary, and parse it via `orjson.loads()` on demand.
