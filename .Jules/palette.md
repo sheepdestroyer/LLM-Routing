@@ -21,3 +21,6 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+## 2024-05-20 - Accessible Interactive Actions Without Page Jumps
+**Learning:** Using `<a href="#">` for purely javascript-driven actions like clearing annotations creates a poor UX because clicking it causes the page to unexpectedly jump back to the top, and lacks proper semantics for screen readers.
+**Action:** Always replace `<a href="#">` used for JS actions with `<button type="button">` and apply CSS resets (`background:transparent;border:none;padding:0;font-family:inherit;`) to maintain the expected link-like visual appearance while preserving native button accessibility and behavior.
