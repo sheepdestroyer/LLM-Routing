@@ -8,7 +8,6 @@ import re
 import sys
 import json
 import orjson
-import json
 import time
 import asyncio
 import logging
