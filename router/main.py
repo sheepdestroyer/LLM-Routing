@@ -8,6 +8,7 @@ import re
 import sys
 import json
 import orjson
+import json
 import time
 import asyncio
 import logging
@@ -31,7 +32,7 @@ try:
 except ImportError:
     from circuit_breaker import get_breaker
 from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, List, Set
+from typing import Any, Dict, Optional, Literal, Union, List, Set
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
