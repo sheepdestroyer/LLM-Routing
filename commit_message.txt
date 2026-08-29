@@ -1,0 +1,6 @@
+🎨 Palette: Improve interactive element accessibility
+
+💡 What: Replaced clear annotation `<a>` tag with native `<button>` and added `type="button"` attributes in the visualizer. Added descriptive `aria-label`s to dashboard link buttons.
+🎯 Why: Fixes page jump when clearing annotations and improves screen reader support for console links.
+📸 Before/After: N/A (no visible changes).
+♿ Accessibility: Improved keyboard navigation on interactive elements and enhanced screen reader context.
