@@ -21,3 +21,6 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+## 2026-08-17 - Keyboard accessibility for list items
+**Learning:** Using custom `div` elements for interactive list items creates non-semantic markup and requires manual `tabindex` and `onkeydown` handlers, which can be prone to errors and poor screen-reader feedback.
+**Action:** Replace interactive custom `div` list items with native `<button type="button">` elements and adjust the CSS (`display: block; width: 100%; text-align: left; background: transparent; color: inherit; border: none; font-family: inherit;`) to inherit visual styling while preserving native accessibility semantics and interactions.
