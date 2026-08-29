@@ -2990,7 +2990,7 @@ async def chat_completions(request: Request):
         #      For AUTO models: only triggered when classifier picks agent-advanced-core
         #      or agent-reasoning-core.
         #      Reasoning tier → gemini-3.5-flash (single tier, low thinking)
-        #      Advanced tier → gemini-3.5-flash → claude-opus-4.6 (full 2-tier chain)
+        #      Advanced tier → gemini-3.5-flash → claude-3-5-sonnet-20240620 (full 2-tier chain)
         #      Proxied to host agy daemon on port 5005.
         # ollama: triggered unconditionally for llm-routing-ollama (direct).
         #      For AUTO models: only triggered when classifier picks agent-advanced-core
