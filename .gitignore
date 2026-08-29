@@ -42,3 +42,4 @@ pr_description.txt
 
 .cache/
 test_output*.log
+venv/
