@@ -14,7 +14,7 @@ from router.main import _read_annotations_async
 
 def make_mock_aiofiles_open(content: str):
     mock_file = AsyncMock()
-    mock_file.read.return_value = content
+    mock_file.read.return_value = content.encode("utf-8") if isinstance(content, str) else content
     mock_context_manager = MagicMock()
     mock_context_manager.__aenter__ = AsyncMock(return_value=mock_file)
     mock_context_manager.__aexit__ = AsyncMock(return_value=False)
@@ -28,7 +28,7 @@ def clear_cache():
 @pytest.mark.asyncio
 async def test_read_annotations_async_initial_read():
     fake_path = "/tmp/annotations.json"
-    fake_data = {"annotation1": "data1"}
+    fake_data = b'{"annotation1": "data1"}'
 
     # Mock aiofiles.open
     mock_aiofiles_open = make_mock_aiofiles_open('{"annotation1": "data1"}')
@@ -39,8 +39,8 @@ async def test_read_annotations_async_initial_read():
         result = await _read_annotations_async(fake_path)
 
         mock_getmtime.assert_called_once_with(fake_path)
-        mock_open.assert_called_once_with(fake_path, "r", encoding="utf-8")
-        assert result == fake_data
+        mock_open.assert_called_once_with(fake_path, "rb")
+        assert result == {"annotation1": "data1"}
 
         # Verify cache is populated
         assert fake_path in router.main._annotations_cache
@@ -50,7 +50,7 @@ async def test_read_annotations_async_initial_read():
 @pytest.mark.asyncio
 async def test_read_annotations_async_cache_hit():
     fake_path = "/tmp/annotations.json"
-    fake_data = {"annotation1": "data1"}
+    fake_data = b'{"annotation1": "data1"}'
 
     # Pre-populate cache
     router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data}
@@ -65,13 +65,13 @@ async def test_read_annotations_async_cache_hit():
 
         mock_getmtime.assert_called_once_with(fake_path)
         mock_open.assert_not_called()
-        assert result == fake_data
+        assert result == {"annotation1": "data1"}
 
 @pytest.mark.asyncio
 async def test_read_annotations_async_cache_invalidation():
     fake_path = "/tmp/annotations.json"
-    fake_data_old = {"annotation1": "data1"}
-    fake_data_new = {"annotation2": "data2"}
+    fake_data_old = b'{"annotation1": "data1"}'
+    fake_data_new = b'{"annotation2": "data2"}'
 
     # Pre-populate cache with old mtime
     router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data_old}
@@ -84,8 +84,8 @@ async def test_read_annotations_async_cache_invalidation():
         result = await _read_annotations_async(fake_path)
 
         mock_getmtime.assert_called_once_with(fake_path)
-        mock_open.assert_called_once_with(fake_path, "r", encoding="utf-8")
-        assert result == fake_data_new
+        mock_open.assert_called_once_with(fake_path, "rb")
+        assert result == {"annotation2": "data2"}
 
         # Verify cache is updated
         assert router.main._annotations_cache[fake_path]["mtime"] == 200.0
@@ -94,7 +94,7 @@ async def test_read_annotations_async_cache_invalidation():
 @pytest.mark.asyncio
 async def test_read_annotations_async_deepcopy():
     fake_path = "/tmp/annotations.json"
-    fake_data = {"annotation1": {"nested": "value"}}
+    fake_data = b'{"annotation1": {"nested": "value"}}'
 
     # Pre-populate cache
     router.main._annotations_cache[fake_path] = {"mtime": 100.0, "data": fake_data}
@@ -111,7 +111,7 @@ async def test_read_annotations_async_deepcopy():
 
         # Verify second read returns original data, not mutated
         assert result2["annotation1"]["nested"] == "value"
-        assert router.main._annotations_cache[fake_path]["data"]["annotation1"]["nested"] == "value"
+        assert b'"nested": "value"' in router.main._annotations_cache[fake_path]["data"]
 
 @pytest.mark.asyncio
 async def test_read_annotations_async_file_not_found():
