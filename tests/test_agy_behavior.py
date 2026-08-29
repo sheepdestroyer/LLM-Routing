@@ -27,7 +27,7 @@ async def test():
     # Also check the log for recent quota lines
     log_path = os.path.expanduser("~/.gemini/antigravity-cli/cli.log")
     if os.path.exists(log_path):
-        print(f"\nLast line in cli.log:")
+        print("\nLast line in cli.log:")
         with open(log_path) as f:
             lines = f.readlines()
             for line in lines[-3:]:

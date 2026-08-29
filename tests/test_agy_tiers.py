@@ -6,7 +6,6 @@ Tests all 3 model tiers and verifies session continuation.
 import asyncio
 import json
 import os
-import sys
 import time
 
 AGY = os.path.expanduser("~/.local/bin/agy")
@@ -76,7 +75,7 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        print(f"❌ TIMEOUT (30s)")
+        print("❌ TIMEOUT (30s)")
         return False, None, None
 
 async def main():

@@ -1,7 +1,5 @@
 import os
-import json
 import subprocess
-import time
 
 def test_antigravity_connection():
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -22,11 +20,11 @@ def test_antigravity_connection():
         agy_path = shutil.which("agy")
 
     if not agy_path or not os.path.exists(agy_path):
-        print(f"agy binary not found; skipping health check")
+        print("agy binary not found; skipping health check")
         if __name__ != "__main__":
             try:
                 import pytest
-                pytest.skip(f"agy binary not found; skipping health check")
+                pytest.skip("agy binary not found; skipping health check")
             except ImportError:
                 pass
         return

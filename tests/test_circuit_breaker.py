@@ -13,7 +13,6 @@ Simulates consecutive quota failures and verifies:
   - Backward compatibility of master breaker methods
 """
 
-import sys
 import time
 import asyncio
 import pytest
@@ -359,7 +358,7 @@ if __name__ == "__main__":
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
-    asyncio.run(test_dual_circuit_breaker_evaluates_both())
+
     asyncio.run(test_sync_from_valkey_bytes_and_str())
 
     print("\n" + "=" * 60)
