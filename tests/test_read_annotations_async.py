@@ -121,3 +121,14 @@ async def test_read_annotations_async_file_not_found():
     with patch("os.path.getmtime", side_effect=FileNotFoundError):
         with pytest.raises(FileNotFoundError):
             await _read_annotations_async(fake_path)
+
+@pytest.mark.asyncio
+async def test_read_annotations_async_invalid_json():
+    fake_path = "/tmp/annotations.json"
+
+    mock_aiofiles_open = make_mock_aiofiles_open(b'invalid json')
+
+    with patch("os.path.getmtime", return_value=100.0),          patch("aiofiles.open", mock_aiofiles_open):
+
+        result = await _read_annotations_async(fake_path)
+        assert result == {}

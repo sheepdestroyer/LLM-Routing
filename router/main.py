@@ -4434,7 +4434,10 @@ async def _read_annotations_async(path) -> dict:
             # than calling copy.deepcopy() to ensure callers cannot mutate the cache.
             _annotations_cache[path] = {"mtime": current_mtime, "data": content}
 
-    return orjson.loads(_annotations_cache[path]["data"])
+    try:
+        return orjson.loads(_annotations_cache[path]["data"])
+    except orjson.JSONDecodeError:
+        return {}
 
 
 @app.post("/dashboard/save-annotations")

@@ -11,7 +11,7 @@ from router.main import AnnotationPayload, AnnotationItem
 @pytest.fixture(autouse=True)
 def reset_globals():
     """Reset global variables related to annotations."""
-    original_cache = main._annotations_cache.copy()
+    original_cache = dict(main._annotations_cache)
     main._annotations_cache.clear()
 
     yield
