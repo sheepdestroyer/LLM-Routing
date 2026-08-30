@@ -1,39 +1,46 @@
 """Main FastAPI application for the LLM Triage & Fallback Gateway."""
+import asyncio
+import copy
+import json
+import logging
 import os
-import uuid
 import posixpath
-import aiofiles
 import re
 import sys
-import json
-import orjson
-import time
-import asyncio
-import logging
-import copy
 import tempfile
-import yaml
-import httpx
-import markupsafe
-import redis.asyncio as aioredis
+import time
+import uuid
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
-
-from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from urllib.parse import urlparse
+
+import aiofiles
+import httpx
+import markupsafe
+import orjson
+import redis.asyncio as aioredis
+import yaml
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
 try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, Union, List, Set
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 try:
-    from langfuse import propagate_attributes  # noqa: F401
+    from langfuse import propagate_attributes
 except ImportError:
     propagate_attributes = None
 
@@ -460,7 +467,6 @@ def _end_parent_obs(parent_obs, output=None, metadata=None) -> None:
         parent_obs.end()
     except Exception:
         logger.debug("_end_parent_obs failed (non-fatal)", exc_info=True)
-        pass
         return
 
 
@@ -482,7 +488,6 @@ def _end_child_span(span, output=None, metadata=None) -> None:
         span.end()
     except Exception:
         logger.debug("_end_child_span failed (non-fatal)", exc_info=True)
-        pass
 
 
 def _close_prop_ctx(prop_ctx):
@@ -496,8 +501,6 @@ def _close_prop_ctx(prop_ctx):
             prop_ctx.__exit__(None, None, None)
         except Exception:
             logger.debug("_close_prop_ctx failed (non-fatal)", exc_info=True)
-            pass
-    return
 
 
 def _make_prop_ctx(session_id, user_id):
@@ -1696,7 +1699,7 @@ async def _read_json_file_async(file_path: str) -> dict:
 
 
 
-def _parse_oauth_token_info(data: dict) -> tuple[Optional[str], int]:
+def _parse_oauth_token_info(data: dict) -> tuple[str | None, int]:
     """Helper to extract access token and expiry epoch ms from varied token schemas."""
     if not isinstance(data, dict):
         return None, 0
@@ -2088,7 +2091,7 @@ async def get_llamacpp_metrics() -> dict:
 free_model_cache = {"data": None, "last_fetched": 0.0}
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
-_registered_free_models: Dict[str, Set[str]] = {}
+_registered_free_models: dict[str, set[str]] = {}
 _last_roster_sync: float = 0.0
 
 # --- Artificial Analysis Agentic Index scores cache ---
@@ -2102,7 +2105,6 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-        import json
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
@@ -2123,7 +2125,7 @@ def compute_free_model_score(m: dict) -> float:
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
 
-async def _fetch_openrouter_free_models() -> List[dict]:
+async def _fetch_openrouter_free_models() -> list[dict]:
     """Internal helper to fetch and score free models from OpenRouter."""
     if not _AA_SCORES_LOADED:
         await asyncio.to_thread(_load_aa_scores)
@@ -3024,7 +3026,7 @@ async def chat_completions(request: Request):
         if should_try_agy:
             agy_span_obj = None
             try:
-                from agy_proxy import try_agy_proxy, AgyProxyRequest
+                from agy_proxy import AgyProxyRequest, try_agy_proxy
 
                 last_prompt = ""
                 for msg in reversed(messages):
@@ -3558,7 +3560,7 @@ async def chat_completions(request: Request):
                                 _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                             except Exception as ex:
-                                if hasattr(ex, "status_code") and getattr(ex, "status_code") == 429:
+                                if hasattr(ex, "status_code") and ex.status_code == 429:
                                     if model_name.startswith("agent-"):
                                         await maybe_trigger_roster_sync(force=True)
 
@@ -4379,13 +4381,13 @@ class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
     model_config = ConfigDict(extra="forbid")
 
-    tier: Optional[AnnotationTier] = None
-    note: Optional[str] = Field(default=None, max_length=1000)
-    ts: Optional[str] = Field(default=None, max_length=100)
+    tier: AnnotationTier | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    ts: str | None = Field(default=None, max_length=100)
 
 class AnnotationPayload(RootModel):
     """Pydantic model representing a payload of multiple annotations."""
-    root: Dict[str, AnnotationItem]
+    root: dict[str, AnnotationItem]
 
     @model_validator(mode="after")
     def _validate_payload(self) -> "AnnotationPayload":
@@ -4416,7 +4418,6 @@ _annotations_cache = {}
 
 async def _read_annotations_async(path) -> dict:
     """Read annotations from disk asynchronously with caching."""
-    import copy
 
     # Do not swallow OSError if file doesn't exist to preserve original behavior.
     # The caller (save_annotations) handles the exception when reading existing annotations.
@@ -4425,13 +4426,15 @@ async def _read_annotations_async(path) -> dict:
     cache_entry = _annotations_cache.get(path)
 
     if cache_entry is None or current_mtime != cache_entry["mtime"]:
-        async with aiofiles.open(path, "r", encoding="utf-8") as f:
-            # Read asynchronously, but parse in a thread pool to avoid blocking event loop
+        async with aiofiles.open(path, "rb") as f:
+            # Read asynchronously
             content = await f.read()
-            data = await asyncio.to_thread(orjson.loads, content)
-            _annotations_cache[path] = {"mtime": current_mtime, "data": data}
+            # Optimization: We cache the raw JSON bytes instead of a parsed dictionary.
+            # This allows us to use orjson.loads() on read, which is significantly faster
+            # than calling copy.deepcopy() to ensure callers cannot mutate the cache.
+            _annotations_cache[path] = {"mtime": current_mtime, "data": content}
 
-    return copy.deepcopy(_annotations_cache[path]["data"])
+    return orjson.loads(_annotations_cache[path]["data"])
 
 
 @app.post("/dashboard/save-annotations")
