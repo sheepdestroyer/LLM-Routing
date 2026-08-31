@@ -29,8 +29,8 @@ try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, Union, List, Set
+from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
+from typing import Any, Dict, Optional, Literal, List, Set
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -1264,21 +1264,27 @@ async def _register_openrouter_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in openrouter_models:
+
+    async def _register(payload):
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
             )
             if r.status_code in (200, 201):
-                registered += 1
+                return True, None
             else:
-                failed += 1
-                logger.warning(
-                    f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
-                )
+                return False, f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
         except Exception as e:
+            return False, f"Failed to register {payload.get('model_name')}: {e}"
+
+    results = await asyncio.gather(*[_register(payload) for payload in openrouter_models])
+
+    for success, err_msg in results:
+        if success:
+            registered += 1
+        else:
             failed += 1
-            logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
+            logger.warning(err_msg)
     logger.info(
         f"📊 OpenRouter DB registration: {registered} registered, {failed} failed"
     )
@@ -1408,21 +1414,27 @@ async def _register_ollama_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in ollama_models:
+
+    async def _register(payload):
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
             )
             if r.status_code in (200, 201):
-                registered += 1
+                return True, None
             else:
-                failed += 1
-                logger.warning(
-                    f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}"
-                )
+                return False, f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}"
         except Exception as e:
+            return False, f"Failed to register {payload['model_name']}: {e}"
+
+    results = await asyncio.gather(*[_register(payload) for payload in ollama_models])
+
+    for success, err_msg in results:
+        if success:
+            registered += 1
+        else:
             failed += 1
-            logger.warning(f"Failed to register {payload['model_name']}: {e}")
+            logger.warning(err_msg)
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
@@ -2138,7 +2150,6 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-        import json
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
