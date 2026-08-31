@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI
-import asyncio
 import os
 
 from router.main import lifespan

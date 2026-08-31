@@ -1,7 +1,5 @@
 import json
-import os
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 from router import main
 import host_agy_daemon
 

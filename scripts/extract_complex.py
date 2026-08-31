@@ -1,5 +1,8 @@
 """Final gap-fill: deep extraction targeting complex + advanced tiers only."""
-import base64, json, urllib.request, time
+import base64
+import json
+import urllib.request
+import time
 from pathlib import Path
 
 env = {}

@@ -1,6 +1,9 @@
 """Benchmark local-qwen-routing classifier against labeled dataset."""
 import os
-import json, urllib.request, urllib.error, time
+import json
+import urllib.request
+import urllib.error
+import time
 import concurrent.futures
 import threading
 from collections import defaultdict, Counter
@@ -140,14 +143,14 @@ print(f"\n{'='*60}")
 print(f"Overall accuracy: {correct}/{scored_total} ({overall:.1f}%)")
 print(f"{'='*60}")
 
-print(f"\nPer-tier accuracy:")
+print("\nPer-tier accuracy:")
 for tier in TIERS:
     t = per_tier[tier]
     pct = t["correct"] / t["total"] * 100 if t["total"] > 0 else 0
     bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
     print(f"  {tier:30s} {t['correct']:3d}/{t['total']:3d}  {bar} {pct:.1f}%")
 
-print(f"\nConfusion matrix (expected → predicted):")
+print("\nConfusion matrix (expected → predicted):")
 header = " " * 30 + "".join(f"{t:25s}" for t in TIERS)
 print(header)
 for exp_tier in TIERS:
