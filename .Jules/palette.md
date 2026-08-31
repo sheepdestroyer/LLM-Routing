@@ -21,3 +21,6 @@
 ## 2026-08-16 - Focus Parity for CSS Transform Animations
 **Learning:** When interactive elements (like `.btn` links) have CSS `transform` animations on `:hover` (e.g., `transform: translateX(4px)`), missing the corresponding `transform` on the `:focus-visible` state means keyboard users do not get the same visual feedback as mouse users, creating an inconsistent and less polished experience.
 **Action:** Ensure CSS `transform` and other layout-affecting animations applied on `:hover` are also applied on `:focus-visible` for the parent element to maintain focus parity.
+## 2026-08-31 - Replace Custom Divs with Buttons for A11y
+**Learning:** Using `<a href="#">` tags for interactive javascript actions forces an unintended page scroll and creates non-semantic markup. A button is the correct semantic element.
+**Action:** Replace interactive custom `div`, `span`, and `<a href="#">` elements with native `<button type="button">` elements. Use inline CSS resets (e.g. `display: inline; padding: 0; background: transparent; border: none; text-decoration: underline; cursor: pointer; color: inherit; font-family: inherit; font-size: inherit;`) to perfectly preserve the original visual layout of inline text links.
