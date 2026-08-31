@@ -377,6 +377,8 @@ spec:
       value: LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
+    - name: LANGFUSE_MIGRATION_V4_WRITE_MODE
+      value: dual
     image: langfuse/langfuse:4.24.0
     livenessProbe:
       exec:
@@ -439,6 +441,8 @@ spec:
       value: MINIO_PASSWORD_PLACEHOLDER
     - name: LANGFUSE_LOG_LEVEL
       value: warn
+    - name: LANGFUSE_MIGRATION_V4_WRITE_MODE
+      value: dual
     image: langfuse/langfuse-worker:4.24.0
     livenessProbe:
       exec:

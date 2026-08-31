@@ -216,3 +216,15 @@ def test_data_root_is_worktree_scoped_by_default():
     prod_root = (ROOT.parent.parent / "prod" / "LLM-Routing").resolve()
     assert dev_root != prod_root
     assert dev_root / "data" != prod_root / "data"
+
+
+def test_langfuse_dual_write_mode_configured():
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    assert "- name: LANGFUSE_MIGRATION_V4_WRITE_MODE\n      value: dual" in pod_yaml
+    assert pod_yaml.count("name: LANGFUSE_MIGRATION_V4_WRITE_MODE") == 2
+
+    web = (QUADLETS / "llm-routing-langfuse-web.container").read_text()
+    assert "Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual" in web
+
+    worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
+    assert "Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual" in worker
