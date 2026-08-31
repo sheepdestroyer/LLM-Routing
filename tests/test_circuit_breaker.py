@@ -13,7 +13,6 @@ Simulates consecutive quota failures and verifies:
   - Backward compatibility of master breaker methods
 """
 
-import sys
 import time
 import asyncio
 import pytest
