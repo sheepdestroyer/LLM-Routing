@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 import sys
 import os
+import logging
 import importlib.util
 
 spec = importlib.util.spec_from_file_location("entrypoint", "litellm/entrypoint.py")
@@ -78,3 +79,19 @@ def test_check_tcp_port_failure_exception():
         result = entrypoint.check_tcp_port("127.0.0.1", 5432)
 
         assert result is False
+
+
+def test_max_level_filter():
+    filter_obj = entrypoint.MaxLevelFilter(logging.WARNING)
+    rec_debug = logging.LogRecord("test", logging.DEBUG, "", 0, "debug msg", (), None)
+    rec_info = logging.LogRecord("test", logging.INFO, "", 0, "info msg", (), None)
+    rec_warn = logging.LogRecord("test", logging.WARNING, "", 0, "warn msg", (), None)
+    rec_err = logging.LogRecord("test", logging.ERROR, "", 0, "err msg", (), None)
+    rec_crit = logging.LogRecord("test", logging.CRITICAL, "", 0, "crit msg", (), None)
+
+    assert filter_obj.filter(rec_debug) is True
+    assert filter_obj.filter(rec_info) is True
+    assert filter_obj.filter(rec_warn) is True
+    assert filter_obj.filter(rec_err) is False
+    assert filter_obj.filter(rec_crit) is False
+
