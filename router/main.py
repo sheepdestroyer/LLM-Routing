@@ -29,8 +29,8 @@ try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, Union, List, Set
+from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
+from typing import Any, Dict, Optional, Literal, List, Set
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -195,11 +195,11 @@ def _count_tokens_heuristic(text: Any) -> float:
     # Expected impact: ~4-8% faster execution for the word counting stage based on internal benchmarks.
     word_total = 0.0
     for w in WORD_RE.findall(text):
-        l = len(w)
-        if l <= 8:
+        word_len = len(w)
+        if word_len <= 8:
             word_total += 1.2
         else:
-            word_total += l * 0.25
+            word_total += word_len * 0.25
 
     # 2. Non-ASCII characters (CJK/Emoji)
     # Each character is weighted at 0.35 tokens.
@@ -2102,7 +2102,6 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-        import json
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
@@ -4416,7 +4415,6 @@ _annotations_cache = {}
 
 async def _read_annotations_async(path) -> dict:
     """Read annotations from disk asynchronously with caching."""
-    import copy
 
     # Do not swallow OSError if file doesn't exist to preserve original behavior.
     # The caller (save_annotations) handles the exception when reading existing annotations.
@@ -4425,13 +4423,13 @@ async def _read_annotations_async(path) -> dict:
     cache_entry = _annotations_cache.get(path)
 
     if cache_entry is None or current_mtime != cache_entry["mtime"]:
-        async with aiofiles.open(path, "r", encoding="utf-8") as f:
-            # Read asynchronously, but parse in a thread pool to avoid blocking event loop
+        async with aiofiles.open(path, "rb") as f:
+            # Cache the raw bytes to avoid expensive deep copies later
             content = await f.read()
-            data = await asyncio.to_thread(orjson.loads, content)
-            _annotations_cache[path] = {"mtime": current_mtime, "data": data}
+            _annotations_cache[path] = {"mtime": current_mtime, "bytes": content}
 
-    return copy.deepcopy(_annotations_cache[path]["data"])
+    # Deserialize fresh from cached bytes to avoid mutation without deepcopy overhead
+    return orjson.loads(_annotations_cache[path]["bytes"])
 
 
 @app.post("/dashboard/save-annotations")
