@@ -29,8 +29,8 @@ try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, Union, List, Set
+from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
+from typing import Any, Dict, Optional, Literal, List, Set
 
 try:
     from langfuse import propagate_attributes  # noqa: F401
@@ -2138,7 +2138,6 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-        import json
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
