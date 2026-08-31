@@ -409,9 +409,45 @@ class ValkeyStatsPersistence:
 
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
+# Split handlers ensure standard operational logs (DEBUG/INFO/WARNING) go to sys.stdout
+# (syslog PRIORITY=6 in journald/conmon) so filtering by priority:err does not capture them.
+# Only actual errors (ERROR/CRITICAL) are routed to sys.stderr (syslog PRIORITY=3).
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
 _log_level = getattr(logging, _log_level_str, logging.WARNING)
-logging.basicConfig(level=_log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+class MaxLevelFilter(logging.Filter):
+    """Filter that only passes log records up to a maximum severity level."""
+
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
+_log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(_log_level)
+_stdout_handler.addFilter(MaxLevelFilter(logging.WARNING))
+_stdout_handler.setFormatter(_log_formatter)
+
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(max(logging.ERROR, _log_level))
+_stderr_handler.setFormatter(_log_formatter)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(_log_level)
+_root_logger.handlers = [_stdout_handler, _stderr_handler]
+
+# Ensure uvicorn error loggers route info/warning to stdout instead of stderr
+for _lg_name in ("uvicorn", "uvicorn.error"):
+    _uv_lg = logging.getLogger(_lg_name)
+    _uv_lg.handlers = [_stdout_handler, _stderr_handler]
+    _uv_lg.propagate = False
+
 logger = logging.getLogger("llm-triage-router")
 logger.info(f"Log level set to {_log_level_str} (from LOG_LEVEL env var)")
 
