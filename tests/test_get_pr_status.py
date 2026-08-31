@@ -1,7 +1,7 @@
 import pytest
 import subprocess
 import json
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from scripts.get_pr_status import run_cmd, get_pr_status
 
 def test_run_cmd_success():

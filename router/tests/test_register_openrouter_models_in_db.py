@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 import os
+import httpx
 
 from router.main import _register_openrouter_models_in_db
 

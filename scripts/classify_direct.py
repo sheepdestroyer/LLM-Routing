@@ -1,8 +1,6 @@
 """Direct classification of Hermes prompts using local-qwen-routing."""
 import os
-import json
-import urllib.request
-import time
+import json, urllib.request, time
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
@@ -70,7 +68,7 @@ for i, p in enumerate(prompts):
             errors += 1
         results.append({"id": i, "tier": tier, "prompt_snippet": prompt[:60], **extra})
     except Exception as e:
-        tier = "ERROR"
+        tier = f"ERROR"
         errors += 1
         results.append({"id": i, "tier": tier, "error": str(e)[:100]})
         print(f"  [{i}] ERROR: {str(e)[:80]}")
@@ -84,7 +82,7 @@ from collections import Counter
 counts = Counter(r["tier"] for r in results)
 
 print(f"\nDone. {len(results)} classified, {errors} errors")
-print("Counts:")
+print(f"Counts:")
 for tier in ['agent-simple-core', 'agent-medium-core', 'agent-complex-core', 'agent-reasoning-core', 'agent-advanced-core']:
     c = counts.get(tier, 0)
     print(f"  {tier}: {c}")

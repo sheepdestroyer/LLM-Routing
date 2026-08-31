@@ -1,9 +1,5 @@
 """Gap-fill extraction: pull longer/older prompts targeting complex+ tiers."""
-import base64
-import json
-import urllib.request
-import time
-import re
+import base64, json, urllib.request, time, re
 from pathlib import Path
 
 env = {}
@@ -150,7 +146,7 @@ print(f"\nSaved {len(prompts)} gap-fill prompts to {out_path}")
 lengths = [len(p['prompt']) for p in prompts]
 if lengths:
     print(f"Length range: {min(lengths)}-{max(lengths)} chars, avg: {sum(lengths)/len(lengths):.0f}")
-    print("Sample:")
+    print(f"Sample:")
     for p in prompts[:5]:
         print(f"  [{p['timestamp'][:19]}] ({len(p['prompt'])} chars) {p['prompt'][:100]}...")
 else:
