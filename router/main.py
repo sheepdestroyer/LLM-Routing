@@ -1264,21 +1264,28 @@ async def _register_openrouter_models_in_db(master_key: str):
     client = get_http_client()
     registered = 0
     failed = 0
-    for payload in openrouter_models:
+
+    async def _register_model(payload):
         try:
             r = await client.post(
                 f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
             )
             if r.status_code in (200, 201):
+                return True, None
+            else:
+                return False, f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
+        except Exception as e:
+            return False, f"Failed to register {payload.get('model_name')}: {e}"
+
+    if openrouter_models:
+        results = await asyncio.gather(*[_register_model(p) for p in openrouter_models])
+        for success, error_msg in results:
+            if success:
                 registered += 1
             else:
                 failed += 1
-                logger.warning(
-                    f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
-                )
-        except Exception as e:
-            failed += 1
-            logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
+                logger.warning(error_msg)
+
     logger.info(
         f"📊 OpenRouter DB registration: {registered} registered, {failed} failed"
     )
