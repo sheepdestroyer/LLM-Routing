@@ -2150,6 +2150,7 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
+        import json
 
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
