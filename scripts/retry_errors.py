@@ -1,9 +1,5 @@
 """Retry the 94 failed prompts with 800-char truncation (safe for 4096-ctx model)."""
-import json
-import urllib.request
-import time
-import tempfile
-import os
+import json, urllib.request, time, tempfile, os
 from pathlib import Path
 from collections import Counter
 
@@ -111,6 +107,7 @@ for batch_start in range(0, len(error_indices), 5):
         print(f"  batch {batch_start//5 + 1}/{(len(error_indices)+4)//5}: {fixed} fixed, {errors} errors")
         time.sleep(5)
 
+from collections import Counter
 new_counts = Counter(p.get('clf_tier') or p.get('tier') or p.get('llm_tier', 'ERROR') for p in dataset.get('prompts', []))
 dataset['counts'] = {k: v for k, v in new_counts.items()}
 dataset['gaps'] = [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 

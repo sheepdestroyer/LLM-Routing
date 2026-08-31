@@ -64,7 +64,7 @@ async def main():
                                         full_response.append(content)
                                         # Print character to show live streaming
                                         print(content, end="", flush=True)
-                            except Exception:
+                            except Exception as e:
                                 # Ignore parse errors for partial chunks
                                 pass
 

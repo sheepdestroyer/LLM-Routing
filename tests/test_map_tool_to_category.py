@@ -1,3 +1,4 @@
+import pytest
 from router.main import map_tool_to_category
 
 def test_map_tool_to_category_tree():

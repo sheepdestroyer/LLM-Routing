@@ -9,8 +9,7 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from router.circuit_breaker import get_breaker
     from router.agy_proxy import try_agy_proxy, AgyProxyRequest
-import asyncio
-import time
+import asyncio, time
 
 b = get_breaker()
 for sub in (b.google, b.vendor):

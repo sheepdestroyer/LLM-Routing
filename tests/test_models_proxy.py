@@ -1,9 +1,10 @@
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from router.main import proxy_models
+from router.main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
 
 def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
