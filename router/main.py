@@ -3503,6 +3503,12 @@ async def chat_completions(request: Request):
                     # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
                     # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
                     _tier_min_ctx = {
+                        "local-qwen": 240896,
+                        "local-qwen-hass": 240896,
+                        "local-qwen-routing": 8192,
+                        "gpt-4o-mini": 240896,
+                        "gpt-4o": 240896,
+                        "agent-advanced-core": 240896,
                         "agent-simple-core": 32768,
                         "ollama-deepseek-v4-pro": 524288,
                         "ollama-deepseek-v4-flash": 524288,
