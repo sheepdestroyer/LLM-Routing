@@ -21,9 +21,8 @@ async def test_register_ollama_models_no_master_key(mock_env, caplog):
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
 @patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_ollama_models_static_fallback(mock_open, mock_purge, mock_get_client, mock_env):
+async def test_register_ollama_models_static_fallback(mock_open, mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
@@ -32,15 +31,6 @@ async def test_register_ollama_models_static_fallback(mock_open, mock_purge, moc
     mock_client.post.return_value = mock_response
 
     await _register_ollama_models_in_db("test_master_key")
-
-    # Should attempt to purge DB for ollama-% and ollama/%
-    assert mock_purge.call_count == 2
-    purge_calls = {(call.args[0], call.args[1]) for call in mock_purge.call_args_list}
-    expected_purge_calls = {
-        ("postgresql://test:test@localhost:5432/test", "ollama-%"),
-        ("postgresql://test:test@localhost:5432/test", "ollama/%"),
-    }
-    assert purge_calls == expected_purge_calls
 
     # Should post for all 6 static models
     expected_models = {
@@ -61,8 +51,7 @@ async def test_register_ollama_models_static_fallback(mock_open, mock_purge, moc
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
-async def test_register_ollama_models_from_config(mock_purge, mock_get_client, mock_env):
+async def test_register_ollama_models_from_config(mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
@@ -103,9 +92,8 @@ async def test_register_ollama_models_from_config(mock_purge, mock_get_client, m
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
 @patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_ollama_models_http_failure(mock_open, mock_purge, mock_get_client, mock_env, caplog):
+async def test_register_ollama_models_http_failure(mock_open, mock_get_client, mock_env, caplog):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
@@ -132,49 +120,8 @@ async def test_register_ollama_models_http_failure(mock_open, mock_purge, mock_g
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
-@patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_ollama_models_db_url_missing(mock_open, mock_purge, mock_get_client, caplog):
-    # Test skipping DB purge if DATABASE_URL is missing
-    with patch.dict(os.environ, {"ROUTER_API_KEY": "test_api_key"}):
-        if "DATABASE_URL" in os.environ:
-            del os.environ["DATABASE_URL"]
-
-        mock_client = AsyncMock()
-        mock_get_client.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_client.post.return_value = mock_response
-
-        await _register_ollama_models_in_db("test_master_key")
-
-        assert "DATABASE_URL is not set; skipping purge" in caplog.text
-        mock_purge.assert_not_called()
-
-@pytest.mark.asyncio
-@patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
-@patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_ollama_models_db_purge_error(mock_open, mock_purge, mock_get_client, mock_env, caplog):
-    # Test handling DB purge exception
-    mock_client = AsyncMock()
-    mock_get_client.return_value = mock_client
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_client.post.return_value = mock_response
-
-    mock_purge.side_effect = Exception("DB Connection Error")
-
-    await _register_ollama_models_in_db("test_master_key")
-
-    assert "Failed to purge stale ollama DB entries (non-fatal): DB Connection Error" in caplog.text
-    assert mock_client.post.call_count == 6
-
-@pytest.mark.asyncio
-@patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
 @patch("router.main.asyncio.to_thread")
-async def test_register_ollama_models_config_load_exception(mock_to_thread, mock_purge, mock_get_client, mock_env, caplog):
+async def test_register_ollama_models_config_load_exception(mock_to_thread, mock_get_client, mock_env, caplog):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
     mock_response = MagicMock()

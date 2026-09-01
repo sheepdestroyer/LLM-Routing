@@ -242,3 +242,33 @@ def test_direct_routing_ollama_gpt_5_6_luna_variants(model_name):
         _called_args, called_kwargs = mock_client.post.call_args
         assert called_kwargs["json"]["model"] == model_name
 
+
+def test_direct_routing_arbitrary_custom_db_model():
+    """Verify that any custom in-DB model (not listed in static YAML) is directly forwarded to LiteLLM."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "custom db model completion"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    custom_model = "custom-arbitrary-db-model-v1"
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload = {
+            "model": custom_model,
+            "messages": [{"role": "user", "content": "test payload"}],
+        }
+        response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
+        assert response.status_code == 200
+        assert response.json() == {"choices": [{"message": {"content": "custom db model completion"}}]}
+
+        mock_client.post.assert_called_once()
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == custom_model
+
+
