@@ -75,6 +75,11 @@ if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
     set -a
     source "$DEV_ENV_FILE"
     set +a
+elif [[ "$WORKDIR" =~ /dev/ ]] && [ -f "${WORKDIR}/.env.dev" ]; then
+    echo "ℹ️  Development worktree detected (${WORKDIR}); automatically applying .env.dev overlay."
+    set -a
+    source "${WORKDIR}/.env.dev"
+    set +a
 fi
 
 # Quadlet namespace is environment-specific. This prevents dev and prod from
@@ -118,6 +123,25 @@ if [ -z "${ROUTER_IMAGE:-}" ]; then
     fi
 fi
 DATA_ROOT="${DATA_ROOT:-${WORKDIR}/data}"
+
+# Guard against environment contamination
+if [ "$QUADLET_NAMESPACE" = "llm-routing-prod" ] && [[ "$DATA_ROOT" =~ /dev/ ]]; then
+    echo "❌ Error: Production namespace (llm-routing-prod) cannot use a development data directory ($DATA_ROOT)." >&2
+    echo "   Production must be deployed from ~/prod/LLM-Routing." >&2
+    exit 1
+fi
+
+if [ "$QUADLET_NAMESPACE" = "llm-routing-dev" ] && [[ "$DATA_ROOT" =~ /prod/ ]]; then
+    echo "❌ Error: Development namespace (llm-routing-dev) cannot use a production data directory ($DATA_ROOT)." >&2
+    exit 1
+fi
+
+if [[ "$WORKDIR" =~ /dev/ ]] && [ "$QUADLET_NAMESPACE" = "llm-routing-prod" ] && [ "${ALLOW_PROD_IN_DEV:-false}" != "true" ]; then
+    echo "❌ Error: Refusing to start production stack ($POD_NAME / $QUADLET_NAMESPACE) from dev worktree ($WORKDIR)." >&2
+    echo "   Use DEV_ENV_FILE=.env.dev or deploy from ~/prod/LLM-Routing." >&2
+    exit 1
+fi
+
 export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL
 
 # Ensure local volume directories exist on the host for Podman mounts
@@ -446,7 +470,7 @@ PY
 # Hermes profiles (e.g., llm-routing-openrouter) whose container storage
 # can leave surviving processes holding ports indefinitely.
 cleanup_zombie_ports() {
-    local ALL_PORTS="$ROUTER_PORT $LITELLM_PORT $LANGFUSE_WEB_PORT $LANGFUSE_WORKER_PORT $POSTGRES_PORT $VALKEY_CACHE_PORT $VALKEY_LF_PORT $CLICKHOUSE_HTTP_PORT $CLICKHOUSE_TCP_PORT $CLICKHOUSE_INTERSERVER_PORT $MINIO_S3_PORT $MINIO_CONSOLE_PORT 8080 9004 9005"
+    local ALL_PORTS="$ROUTER_PORT $LITELLM_PORT $LANGFUSE_WEB_PORT $LANGFUSE_WORKER_PORT $POSTGRES_PORT $VALKEY_CACHE_PORT $VALKEY_LF_PORT $CLICKHOUSE_HTTP_PORT $CLICKHOUSE_TCP_PORT $CLICKHOUSE_INTERSERVER_PORT $MINIO_S3_PORT $MINIO_CONSOLE_PORT"
     
     echo "🧹 Cleaning up zombie port bindings..."
     
