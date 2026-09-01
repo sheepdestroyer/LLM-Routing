@@ -228,3 +228,13 @@ def test_langfuse_dual_write_mode_configured():
 
     worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
     assert "Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual" in worker
+
+
+def test_environment_isolation_guards_and_clean_zombie_ports():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'Production namespace (llm-routing-prod) cannot use a development data directory' in script
+    assert 'Development namespace (llm-routing-dev) cannot use a production data directory' in script
+    assert 'Refusing to start production stack' in script
+    assert 'automatically applying .env.dev overlay' in script
+    assert '8080' not in script.split('cleanup_zombie_ports()')[1].split('echo "🧹')[0]
+
