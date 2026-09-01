@@ -267,6 +267,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
 | `openrouter-gpt-5.6-luna` (aliases: `openrouter-gpt-5.6-luna-max`, `gpt-5.6-luna`) | ❌ | OpenRouter (`openai/gpt-5.6-luna`, max reasoning) | Direct OpenRouter | 1.05M |
+| `ollama/GPT-5.6 Luna (max)` (aliases: `ollama-gpt-5.6-luna-max`, `ollama/gpt-5.6-luna`, `ollama-gpt-5.6-luna`) | ❌ | Ollama (`gpt-5.6-luna`, max reasoning) | Direct Ollama | 1.05M |
 | `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen` → `llm-routing-ollama` → `openrouter-auto` | 262K |
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |

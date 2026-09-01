@@ -1328,8 +1328,27 @@ async def _register_ollama_models_in_db(master_key: str):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
-                            if isinstance(model_name, str) and model_name.startswith(
-                                "ollama-deepseek-"
+                            litellm_params = item.get("litellm_params", {})
+                            model_target = (
+                                litellm_params.get("model", "")
+                                if isinstance(litellm_params, dict)
+                                else ""
+                            )
+                            if (
+                                (
+                                    isinstance(model_name, str)
+                                    and (
+                                        model_name.startswith("ollama-")
+                                        or model_name.startswith("ollama/")
+                                    )
+                                )
+                                or (
+                                    isinstance(model_target, str)
+                                    and (
+                                        model_target.startswith("ollama_chat/")
+                                        or model_target.startswith("ollama/")
+                                    )
+                                )
                             ):
                                 # Create a clean deep copy to avoid mutating configuration structures
                                 ollama_models.append(copy.deepcopy(item))
@@ -1387,20 +1406,111 @@ async def _register_ollama_models_in_db(master_key: str):
                     "is_public_model_group": True,
                 },
             },
+            {
+                "model_name": "ollama/GPT-5.6 Luna (max)",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-gpt-5.6-luna-max",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama/gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
         ]
 
-    # Purge stale ollama-deepseek DB entries before re-registering.
+    # Purge stale ollama DB entries before re-registering.
     # Mirrors the agent-* purge pattern above — delete all, then register fresh.
     try:
         db_url = os.getenv("DATABASE_URL")
         if not db_url:
             logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries"
+                "DATABASE_URL is not set; skipping purge of stale ollama DB entries"
             )
         else:
-            await _purge_stale_deployments(db_url, "ollama-deepseek-%")
+            await _purge_stale_deployments(db_url, "ollama-%")
+            await _purge_stale_deployments(db_url, "ollama/%")
+            for m in ollama_models:
+                m_name = m.get("model_name", "")
+                if m_name and not (
+                    m_name.startswith("ollama-") or m_name.startswith("ollama/")
+                ):
+                    await _purge_stale_deployments(db_url, m_name)
             logger.info(
-                "🧹 Purged stale ollama-deepseek-* DB entries before registration"
+                "🧹 Purged stale ollama DB entries before registration"
             )
     except Exception as e:
         logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
@@ -2878,7 +2988,13 @@ async def chat_completions(request: Request):
         "openrouter-gpt-5.6-luna",
         "openrouter-gpt-5.6-luna-max",
         "gpt-5.6-luna",
-    }
+        "ollama-deepseek-v4-pro",
+        "ollama-deepseek-v4-flash",
+        "ollama/GPT-5.6 Luna (max)",
+        "ollama-gpt-5.6-luna-max",
+        "ollama/gpt-5.6-luna",
+        "ollama-gpt-5.6-luna",
+    } | set(backends.keys())
 
     AUTO_MODELS = {
         "llm-routing-auto-free",
@@ -3468,6 +3584,10 @@ async def chat_completions(request: Request):
                         "agent-simple-core": 32768,
                         "ollama-deepseek-v4-pro": 524288,
                         "ollama-deepseek-v4-flash": 524288,
+                        "ollama/GPT-5.6 Luna (max)": 1050000,
+                        "ollama-gpt-5.6-luna-max": 1050000,
+                        "ollama/gpt-5.6-luna": 1050000,
+                        "ollama-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna-max": 1050000,
                         "gpt-5.6-luna": 1050000,

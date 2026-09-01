@@ -29,6 +29,10 @@ litellm_settings:
     - llm-routing-ollama
     - ollama-deepseek-v4-pro
     - ollama-deepseek-v4-flash
+    - "ollama/GPT-5.6 Luna (max)"
+    - ollama-gpt-5.6-luna-max
+    - "ollama/gpt-5.6-luna"
+    - ollama-gpt-5.6-luna
     - agent-advanced-core
     - agent-reasoning-core
     - agent-complex-core
@@ -280,6 +284,78 @@ model_list:
     max_input_tokens: 524288
     input_cost_per_token: 0.00000014
     output_cost_per_token: 0.00000028
+    is_public_model_group: true
+
+# ================================================================================
+# OLLAMA GPT-5.6 LUNA (MAX) — direct high-reasoning Ollama endpoint
+# ================================================================================
+- model_name: "ollama/GPT-5.6 Luna (max)"
+  litellm_params:
+    model: ollama_chat/gpt-5.6-luna
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    reasoning_effort: max
+    request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 1050000
+    max_input_tokens: 1050000
+    input_cost_per_token: 0.0000002
+    output_cost_per_token: 0.0000012
+    is_public_model_group: true
+- model_name: ollama-gpt-5.6-luna-max
+  litellm_params:
+    model: ollama_chat/gpt-5.6-luna
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    reasoning_effort: max
+    request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 1050000
+    max_input_tokens: 1050000
+    input_cost_per_token: 0.0000002
+    output_cost_per_token: 0.0000012
+    is_public_model_group: true
+- model_name: "ollama/gpt-5.6-luna"
+  litellm_params:
+    model: ollama_chat/gpt-5.6-luna
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    reasoning_effort: max
+    request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 1050000
+    max_input_tokens: 1050000
+    input_cost_per_token: 0.0000002
+    output_cost_per_token: 0.0000012
+    is_public_model_group: true
+- model_name: ollama-gpt-5.6-luna
+  litellm_params:
+    model: ollama_chat/gpt-5.6-luna
+    api_base: https://api.ollama.com
+    api_key: os.environ/OLLAMA_API_KEY
+    reasoning_effort: max
+    request_timeout: 120
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 1050000
+    max_input_tokens: 1050000
+    input_cost_per_token: 0.0000002
+    output_cost_per_token: 0.0000012
     is_public_model_group: true
 
 # ================================================================================
