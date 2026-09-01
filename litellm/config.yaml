@@ -165,8 +165,8 @@ model_list:
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
@@ -182,8 +182,8 @@ model_list:
     supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
@@ -196,8 +196,8 @@ model_list:
     supports_reasoning: false
     supports_function_calling: false
     mode: chat
-    max_tokens: 4096
-    max_input_tokens: 4096
+    max_tokens: 8192
+    max_input_tokens: 8192
     is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
@@ -213,8 +213,8 @@ model_list:
     supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
@@ -230,8 +230,8 @@ model_list:
     supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
@@ -376,8 +376,8 @@ model_list:
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -388,8 +388,8 @@ model_list:
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -400,8 +400,8 @@ model_list:
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -412,8 +412,8 @@ model_list:
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -424,8 +424,8 @@ model_list:
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 240896
+    max_input_tokens: 240896
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
