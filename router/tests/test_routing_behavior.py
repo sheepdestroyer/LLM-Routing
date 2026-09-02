@@ -272,3 +272,46 @@ def test_direct_routing_arbitrary_custom_db_model():
         assert called_kwargs["json"]["model"] == custom_model
 
 
+def test_chat_completions_missing_auth():
+    """Verify that /v1/chat/completions rejects unauthenticated requests with 401."""
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "test", "messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert response.status_code == 401
+    assert "Missing or invalid Authorization header" in response.text
+
+
+def test_chat_completions_invalid_auth():
+    """Verify that /v1/chat/completions rejects invalid tokens with 401."""
+    client = TestClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer invalid-token"}
+    )
+    assert response.status_code == 401
+    assert "Invalid Authorization token" in response.text
+
+
+def test_chat_completions_case_insensitive_auth():
+    """Verify that /v1/chat/completions accepts case-insensitive 'bearer <token>'."""
+    client = TestClient(app)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": "bearer test-key"}
+        )
+        assert response.status_code == 200
+
+
+
