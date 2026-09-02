@@ -1494,108 +1494,131 @@ async def _register_ollama_models_in_db(master_key: str):
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
-async def _register_langfuse_models_in_db():
+LANGFUSE_MANAGED_MODELS = [
+    (
+        "local-qwen-model-def",
+        "local-qwen",
+        "(?i)^(openai/)?(local-qwen)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "local-qwen-hass-model-def",
+        "local-qwen-hass",
+        "(?i)^(openai/)?(local-qwen-hass)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "local-qwen-routing-model-def",
+        "local-qwen-routing",
+        "(?i)^(openai/)?(local-qwen-routing)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "ollama-deepseek-v4-pro-def",
+        "ollama-deepseek-v4-pro",
+        "(?i)^(ollama_chat/)?(deepseek-v4-pro|ollama-deepseek-v4-pro)$",
+        "TOKENS",
+        0.00000174,
+        0.00000348,
+        0.0,
+    ),
+    (
+        "ollama-deepseek-v4-flash-def",
+        "ollama-deepseek-v4-flash",
+        "(?i)^(ollama_chat/)?(deepseek-v4-flash|ollama-deepseek-v4-flash)$",
+        "TOKENS",
+        0.00000014,
+        0.00000028,
+        0.0,
+    ),
+    (
+        "ollama-gpt-5.6-luna-def",
+        "ollama-gpt-5.6-luna",
+        "(?i)^(ollama_chat/)?(gpt-5\\.6-luna|ollama-gpt-5\\.6-luna.*)$",
+        "TOKENS",
+        0.0000002,
+        0.0000012,
+        0.0,
+    ),
+    (
+        "openrouter-auto-def",
+        "openrouter-auto",
+        "(?i)^(openrouter/)?(openrouter/auto|openrouter-auto)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+]
+
+
+async def _register_langfuse_models_in_db(
+    max_retries: int = 5, retry_delay: float = 2.0
+) -> bool:
     """Ensure standard local and routing models are registered in Langfuse's Postgres database.
 
     This provides model metadata, token unit definitions, and pricing match patterns so
     Langfuse observation and latency dashboards (like P95 Latency by Model, Time to First Token)
     can properly resolve and aggregate stats for local-qwen, ollama, and openrouter models.
+
+    Retries up to max_retries with delay to handle race conditions where Langfuse
+    or Postgres database migrations are initializing on container startup.
     """
     raw_db_url = os.getenv("DATABASE_URL")
     if not raw_db_url:
-        return
+        return False
 
     try:
         import asyncpg
+    except ImportError:
+        logger.warning("asyncpg not installed — skipping Langfuse model registration")
+        return False
 
-        langfuse_db_url = raw_db_url.rsplit("/", 1)[0] + "/langfuse"
-        conn = await asyncpg.connect(langfuse_db_url, timeout=5.0)
+    langfuse_db_url = raw_db_url.rsplit("/", 1)[0] + "/langfuse"
+    query = """
+    INSERT INTO models (id, model_name, match_pattern, unit, input_price, output_price, total_price)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (id) DO UPDATE SET
+      model_name = EXCLUDED.model_name,
+      match_pattern = EXCLUDED.match_pattern,
+      unit = EXCLUDED.unit,
+      input_price = EXCLUDED.input_price,
+      output_price = EXCLUDED.output_price,
+      total_price = EXCLUDED.total_price;
+    """
+
+    for attempt in range(1, max_retries + 1):
         try:
-            models_to_register = [
-                (
-                    "local-qwen-model-def",
-                    "local-qwen",
-                    "(?i)^(openai/)?(local-qwen)$",
-                    "TOKENS",
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-                (
-                    "local-qwen-hass-model-def",
-                    "local-qwen-hass",
-                    "(?i)^(openai/)?(local-qwen-hass)$",
-                    "TOKENS",
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-                (
-                    "local-qwen-routing-model-def",
-                    "local-qwen-routing",
-                    "(?i)^(openai/)?(local-qwen-routing)$",
-                    "TOKENS",
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-                (
-                    "ollama-deepseek-v4-pro-def",
-                    "ollama-deepseek-v4-pro",
-                    "(?i)^(ollama_chat/)?(deepseek-v4-pro|ollama-deepseek-v4-pro)$",
-                    "TOKENS",
-                    0.00000174,
-                    0.00000348,
-                    0.0,
-                ),
-                (
-                    "ollama-deepseek-v4-flash-def",
-                    "ollama-deepseek-v4-flash",
-                    "(?i)^(ollama_chat/)?(deepseek-v4-flash|ollama-deepseek-v4-flash)$",
-                    "TOKENS",
-                    0.00000014,
-                    0.00000028,
-                    0.0,
-                ),
-                (
-                    "ollama-gpt-5.6-luna-def",
-                    "ollama-gpt-5.6-luna",
-                    "(?i)^(ollama_chat/)?(gpt-5\\.6-luna|ollama-gpt-5\\.6-luna.*)$",
-                    "TOKENS",
-                    0.0000002,
-                    0.0000012,
-                    0.0,
-                ),
-                (
-                    "openrouter-auto-def",
-                    "openrouter-auto",
-                    "(?i)^(openrouter/)?(openrouter/auto|openrouter-auto)$",
-                    "TOKENS",
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-            ]
-            query = """
-            INSERT INTO models (id, model_name, match_pattern, unit, input_price, output_price, total_price)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (id) DO UPDATE SET
-              model_name = EXCLUDED.model_name,
-              match_pattern = EXCLUDED.match_pattern,
-              unit = EXCLUDED.unit,
-              input_price = EXCLUDED.input_price,
-              output_price = EXCLUDED.output_price,
-              total_price = EXCLUDED.total_price;
-            """
-            for m in models_to_register:
-                await conn.execute(query, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
-            logger.info(
-                f"📊 Langfuse DB models verified: {len(models_to_register)} models registered/updated"
-            )
-        finally:
-            await conn.close()
-    except Exception as e:
-        logger.warning(f"Langfuse model registration skipped (non-fatal): {e}")
+            conn = await asyncpg.connect(langfuse_db_url, timeout=5.0)
+            try:
+                for m in LANGFUSE_MANAGED_MODELS:
+                    await conn.execute(query, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+                logger.info(
+                    f"📊 Langfuse DB models verified: {len(LANGFUSE_MANAGED_MODELS)} models registered/updated"
+                )
+                return True
+            finally:
+                await conn.close()
+        except Exception as e:
+            if attempt < max_retries:
+                logger.debug(
+                    f"Langfuse model registration attempt {attempt}/{max_retries} failed: {e}. Retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.warning(
+                    f"Langfuse model registration skipped after {max_retries} attempts (non-fatal): {e}"
+                )
+    return False
 
 
 @asynccontextmanager
