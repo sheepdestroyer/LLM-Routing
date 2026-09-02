@@ -275,6 +275,9 @@ spec:
     - mountPath: /etc/clickhouse-server/config.d/port-override.xml
       name: clickhouse-port-config
       subPath: port-override.xml
+    - mountPath: /etc/clickhouse-server/users.d/settings-override.xml
+      name: clickhouse-port-config
+      subPath: settings-override.xml
   # Valkey LF — Langfuse v3 BullMQ job queue
   - command:
     - redis-server

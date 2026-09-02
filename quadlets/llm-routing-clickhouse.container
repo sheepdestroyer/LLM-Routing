@@ -15,6 +15,7 @@ Environment=CLICKHOUSE_USER=clickhouse
 Environment=CLICKHOUSE_PASSWORD=CLICKHOUSE_PASSWORD_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/clickhouse-data:/var/lib/clickhouse
 Volume=DATA_ROOT_PLACEHOLDER/clickhouse-config/port-override.xml:/etc/clickhouse-server/config.d/port-override.xml
+Volume=DATA_ROOT_PLACEHOLDER/clickhouse-config/settings-override.xml:/etc/clickhouse-server/users.d/settings-override.xml
 HealthCmd=["clickhouse-client", "--host", "127.0.0.1", "--port", "CLICKHOUSE_TCP_PORT_PLACEHOLDER", "--user", "clickhouse", "--password", "CLICKHOUSE_PASSWORD_PLACEHOLDER", "--query", "SELECT 1"]
 HealthInterval=15s
 HealthTimeout=5s

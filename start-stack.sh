@@ -754,9 +754,9 @@ if podman pod exists "${POD_NAME}" 2>/dev/null; then
     bash scripts/backup.sh && echo "✓ Pre-deploy backup saved" || echo "⚠️ Pre-deploy backup skipped"
 fi
 
-# ── ClickHouse port override XML ──
-# Writes a minimal config.d XML override so ClickHouse listens on the
-# configured ports instead of its compiled-in defaults.
+# ── ClickHouse port override XML & user profile settings ──
+# Writes minimal config.d and users.d XML overrides so ClickHouse listens on the
+# configured ports and parses bare integer DateTime64 ticks for Langfuse.
 generate_clickhouse_config() {
     local config_dir="${DATA_ROOT}/clickhouse-config"
     mkdir -p "$config_dir"
@@ -767,7 +767,16 @@ generate_clickhouse_config() {
     <interserver_http_port>${CLICKHOUSE_INTERSERVER_PORT}</interserver_http_port>
 </clickhouse>
 EOF
-    echo "✓ ClickHouse port config written to ${config_dir}/port-override.xml"
+    cat > "${config_dir}/settings-override.xml" << EOF
+<clickhouse>
+    <profiles>
+        <default>
+            <input_format_read_datetime_number_as_raw_value>1</input_format_read_datetime_number_as_raw_value>
+        </default>
+    </profiles>
+</clickhouse>
+EOF
+    echo "✓ ClickHouse config written to ${config_dir}/port-override.xml and settings-override.xml"
 }
 
 # ── LiteLLM rendered config ──
