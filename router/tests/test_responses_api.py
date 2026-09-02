@@ -392,17 +392,19 @@ def test_validate_litellm_master_key_raises_http_500(invalid_master_key):
         assert exc_info.value.status_code == 500
 
 
-def test_authenticate_client_request_case_insensitive():
+@pytest.mark.asyncio
+async def test_authenticate_client_request_case_insensitive():
     """Verify _authenticate_client_request accepts case-insensitive 'bearer' prefix."""
     from router.main import _authenticate_client_request
     mock_request = MagicMock()
     mock_request.headers = {"Authorization": "bearer my-valid-key"}
     with patch.dict(os.environ, {"ROUTER_API_KEY": "my-valid-key"}):
-        token = _authenticate_client_request(mock_request)
+        token = await _authenticate_client_request(mock_request)
         assert token == "my-valid-key"
 
 
-def test_authenticate_client_request_fail_closed_when_empty_keys():
+@pytest.mark.asyncio
+async def test_authenticate_client_request_fail_closed_when_empty_keys():
     """Verify _authenticate_client_request raises 401 when no valid server keys are configured."""
     from router.main import _authenticate_client_request
     import sys
@@ -412,7 +414,73 @@ def test_authenticate_client_request_fail_closed_when_empty_keys():
     with patch.dict(os.environ, {"ROUTER_API_KEY": "", "LITELLM_MASTER_KEY": "", "GATEWAY_KEY": ""}, clear=True), \
          patch.dict(sys.modules, {"pytest": None}):
         with pytest.raises(HTTPException) as exc_info:
-            _authenticate_client_request(mock_request)
+            await _authenticate_client_request(mock_request)
+        assert exc_info.value.status_code == 401
+        assert "Invalid Authorization token" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_authenticate_client_request_litellm_virtual_key_valid():
+    """Verify _authenticate_client_request validates and caches LiteLLM virtual keys."""
+    from router.main import _authenticate_client_request, _VIRTUAL_KEY_CACHE
+    import sys
+    _VIRTUAL_KEY_CACHE.clear()
+    mock_request = MagicMock()
+    mock_request.headers = {"Authorization": "Bearer sk-valid-vkey-123"}
+    mock_request.state = MagicMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "info": {
+            "key_alias": "hermes-agent-boy",
+            "user_id": "boy-hermes",
+            "models": ["all-team-models"],
+            "metadata": {"app": "hermes"},
+        }
+    }
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_resp
+
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "router-secret", "LITELLM_MASTER_KEY": "sk-master"}, clear=True), \
+         patch.dict(sys.modules, {"pytest": None}), \
+         patch("router.main.get_http_client", return_value=mock_client):
+        token = await _authenticate_client_request(mock_request)
+        assert token == "sk-valid-vkey-123"
+        assert mock_request.state.auth_user_id == "boy-hermes"
+        assert mock_request.state.auth_key_alias == "hermes-agent-boy"
+        assert "sk-valid-vkey-123" in _VIRTUAL_KEY_CACHE
+
+        # Second call should hit the cache without calling LiteLLM again
+        mock_client.get.reset_mock()
+        token2 = await _authenticate_client_request(mock_request)
+        assert token2 == "sk-valid-vkey-123"
+        mock_client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_authenticate_client_request_litellm_virtual_key_invalid():
+    """Verify _authenticate_client_request rejects invalid LiteLLM virtual keys with 401."""
+    from router.main import _authenticate_client_request, _VIRTUAL_KEY_CACHE
+    import sys
+    _VIRTUAL_KEY_CACHE.clear()
+    mock_request = MagicMock()
+    mock_request.headers = {"Authorization": "Bearer sk-invalid-vkey-456"}
+    mock_request.state = MagicMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_resp.json.return_value = {"error": "Key not found"}
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_resp
+
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "router-secret", "LITELLM_MASTER_KEY": "sk-master"}, clear=True), \
+         patch.dict(sys.modules, {"pytest": None}), \
+         patch("router.main.get_http_client", return_value=mock_client):
+        with pytest.raises(HTTPException) as exc_info:
+            await _authenticate_client_request(mock_request)
         assert exc_info.value.status_code == 401
         assert "Invalid Authorization token" in exc_info.value.detail
 
