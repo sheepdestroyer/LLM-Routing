@@ -4528,7 +4528,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
             logger.warning("Invalid public port in netloc %r; omitting port", netloc_val)
             port_suffix = ""
 
-        host_base = re.sub(r"^(?:dashboard|llm-routing)\.", "", host_val)
+        host_base = re.sub(r"^(?:dashboard|llm-routing|llm)\.", "", host_val)
         host_base = re.sub(r"^(?:litellm|langfuse|llama)\.", "", host_base)
         service_netloc = f"{host_base}{port_suffix}"
         return (

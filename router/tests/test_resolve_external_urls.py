@@ -171,3 +171,18 @@ def test_resolve_llama_endpoints_explicit_https_env():
     assert server_url == "https://custom-llama.domain.com"
     assert classifier_url == "https://custom-classifier.domain.com/v1"
 
+
+def test_resolve_with_llm_subdomain_pavese_fr():
+    """Verify resolve_external_urls properly handles 'llm.pavese.fr' subdomain."""
+    os.environ["ROUTING_DOMAIN"] = "pavese.fr"
+    req = MockRequest(
+        base_host="llm.pavese.fr",
+        base_netloc="llm.pavese.fr",
+        url_scheme="https",
+    )
+    lf, ll, lm = resolve_external_urls(req)
+    assert lf == "https://langfuse.pavese.fr"
+    assert ll == "https://litellm.pavese.fr/ui/"
+    assert lm == "https://llama.pavese.fr/"
+
+
