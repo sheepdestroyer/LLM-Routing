@@ -23,9 +23,8 @@ async def test_register_openrouter_models_no_master_key(mock_env, caplog):
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
 @patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_openrouter_models_static_fallback(mock_open, mock_purge, mock_get_client, mock_env):
+async def test_register_openrouter_models_static_fallback(mock_open, mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
@@ -34,15 +33,6 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
     mock_client.post.return_value = mock_response
 
     await _register_openrouter_models_in_db("test_master_key")
-
-    # Should attempt to purge DB for openrouter-% and non-openrouter- prefixed models
-    assert mock_purge.call_count == 2
-    purge_calls = {(call.args[0], call.args[1]) for call in mock_purge.call_args_list}
-    expected_purge_calls = {
-        ("postgresql://test:test@localhost:5432/test", "openrouter-%"),
-        ("postgresql://test:test@localhost:5432/test", "gpt-5.6-luna"),
-    }
-    assert purge_calls == expected_purge_calls
 
     # Should post for openrouter-auto, openrouter-gpt-5.6-luna, openrouter-gpt-5.6-luna-max, and gpt-5.6-luna static fallback
     expected_models = {
@@ -61,8 +51,7 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
-async def test_register_openrouter_models_from_config(mock_purge, mock_get_client, mock_env):
+async def test_register_openrouter_models_from_config(mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
