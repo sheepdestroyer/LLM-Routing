@@ -2784,8 +2784,54 @@ async def proxy_models():
         raise HTTPException(status_code=502, detail="Model proxy failed")
 
 
-def _authenticate_client_request(request: Request) -> str:
-    """Validate client authorization header against configured secrets in a fail-closed manner.
+_VIRTUAL_KEY_CACHE: dict[str, tuple[float, dict]] = {}
+_VIRTUAL_KEY_TTL = 300.0  # 5 minutes cache TTL
+
+
+async def _validate_litellm_virtual_key(token: str) -> dict | None:
+    """Validate a LiteLLM virtual key (sk-...) against LiteLLM /key/info endpoint.
+
+    Caches valid tokens in-memory for _VIRTUAL_KEY_TTL seconds to minimize overhead.
+    Returns:
+        dict: The key info dict if valid (containing user_id, key_alias, metadata, etc.).
+        None: If the token is invalid, expired, or rejected.
+    """
+    if not token or not token.startswith("sk-"):
+        return None
+
+    now = time.time()
+    cached = _VIRTUAL_KEY_CACHE.get(token)
+    if cached:
+        cached_at, info = cached
+        if now - cached_at < _VIRTUAL_KEY_TTL:
+            return info
+
+    master_key = os.getenv("LITELLM_MASTER_KEY")
+    if not master_key:
+        return None
+
+    try:
+        client = get_http_client()
+        r = await client.get(
+            f"{LITELLM_URL}/key/info",
+            params={"key": token},
+            headers={"Authorization": f"Bearer {master_key}"},
+            timeout=5.0,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            info = data.get("info")
+            if isinstance(info, dict) and not info.get("blocked", False):
+                _VIRTUAL_KEY_CACHE[token] = (now, info)
+                return info
+    except Exception as e:
+        logger.warning(f"LiteLLM virtual key lookup failed (non-fatal check): {e}")
+
+    return None
+
+
+async def _authenticate_client_request(request: Request) -> str:
+    """Validate client authorization header against configured secrets and virtual keys in a fail-closed manner.
 
     Returns:
         client_token: The authenticated bearer token.
@@ -2823,10 +2869,20 @@ def _authenticate_client_request(request: Request) -> str:
         if k and str(k).strip() not in _INVALID_MASTER_KEYS and "PLACEHOLDER" not in str(k).upper()
     }
 
-    if not valid_keys or client_token not in valid_keys:
-        raise HTTPException(status_code=401, detail="Invalid Authorization token")
+    if valid_keys and client_token in valid_keys:
+        return client_token
 
-    return client_token
+    # Check LiteLLM virtual key lookup if token begins with sk-
+    if client_token.startswith("sk-"):
+        vkey_info = await _validate_litellm_virtual_key(client_token)
+        if vkey_info is not None:
+            # Store validated user and key metadata on request state
+            request.state.auth_user_id = vkey_info.get("user_id")
+            request.state.auth_key_alias = vkey_info.get("key_alias")
+            request.state.auth_metadata = vkey_info.get("metadata") or {}
+            return client_token
+
+    raise HTTPException(status_code=401, detail="Invalid Authorization token")
 
 
 @app.api_route("/v1/responses", methods=["POST"])
@@ -2839,7 +2895,7 @@ async def responses_api(request: Request):
     (such as gpt-4o-mini, local-qwen) and tool/streaming executions.
     """
     # Enforce client authentication
-    _authenticate_client_request(request)
+    await _authenticate_client_request(request)
 
     try:
         body = await request.json()
@@ -3064,7 +3120,7 @@ async def chat_completions(request: Request):
     start_time = time.time()
 
     # Enforce client authentication
-    _authenticate_client_request(request)
+    await _authenticate_client_request(request)
 
     try:
         body = await request.json()
@@ -3116,6 +3172,7 @@ async def chat_completions(request: Request):
     _trace_user_id = (
         body.get("user")
         or request.headers.get("x-user-id")
+        or getattr(request.state, "auth_user_id", None)
     )
     if _trace_user_id:
         _trace_user_id = str(_trace_user_id)
@@ -3147,6 +3204,9 @@ async def chat_completions(request: Request):
                 metadata["session_id"] = _trace_session_id
             if _trace_user_id:
                 metadata["user_id"] = _trace_user_id
+            auth_key_alias = getattr(request.state, "auth_key_alias", None)
+            if auth_key_alias:
+                metadata["key_alias"] = str(auth_key_alias)
             parent_obs = lf.start_observation(
                 trace_context={"trace_id": langfuse_trace_id},
                 name=f"triage-{client_model}",
