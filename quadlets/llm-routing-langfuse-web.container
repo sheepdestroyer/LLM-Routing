@@ -39,6 +39,7 @@ Environment=LANGFUSE_INIT_PROJECT_NAME=Triage Gateway
 Environment=LANGFUSE_INIT_USER_EMAIL=admin@local.dev
 Environment=LANGFUSE_INIT_USER_PASSWORD=LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
 Environment=LANGFUSE_LOG_LEVEL=warn
+Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual
 HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
 HealthInterval=15s
 HealthTimeout=5s

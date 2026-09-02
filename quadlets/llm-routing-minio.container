@@ -17,7 +17,7 @@ Environment=MINIO_ROOT_PASSWORD=MINIO_PASSWORD_PLACEHOLDER
 # the same way — image entrypoint stays, Exec provides the server args.
 Exec=server --quiet /data --address :MINIO_S3_PORT_PLACEHOLDER --console-address :MINIO_CONSOLE_PORT_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/minio-data:/data
-HealthCmd=mc ready local || bash -c "</dev/tcp/127.0.0.1/MINIO_S3_PORT_PLACEHOLDER"
+HealthCmd=["curl", "-sf", "http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live"]
 HealthInterval=15s
 HealthTimeout=5s
 HealthOnFailure=kill

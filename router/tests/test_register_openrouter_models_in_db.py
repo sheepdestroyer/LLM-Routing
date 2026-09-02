@@ -23,9 +23,8 @@ async def test_register_openrouter_models_no_master_key(mock_env, caplog):
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
 @patch("builtins.open", side_effect=FileNotFoundError("Mocked file not found"))
-async def test_register_openrouter_models_static_fallback(mock_open, mock_purge, mock_get_client, mock_env):
+async def test_register_openrouter_models_static_fallback(mock_open, mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
@@ -35,19 +34,24 @@ async def test_register_openrouter_models_static_fallback(mock_open, mock_purge,
 
     await _register_openrouter_models_in_db("test_master_key")
 
-    # Should attempt to purge DB for openrouter-%
-    mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/test", "openrouter-%")
-
-    # Should post for openrouter-auto static fallback
-    assert mock_client.post.call_count == 1
-    calls = mock_client.post.call_args_list
-    assert "openrouter-auto" in str(calls[0])
+    # Should post for openrouter-auto, openrouter-gpt-5.6-luna, openrouter-gpt-5.6-luna-max, and gpt-5.6-luna static fallback
+    expected_models = {
+        "openrouter-auto",
+        "openrouter-gpt-5.6-luna",
+        "openrouter-gpt-5.6-luna-max",
+        "gpt-5.6-luna",
+    }
+    assert mock_client.post.call_count == len(expected_models)
+    posted_models = {
+        call.kwargs.get("json", {}).get("model_name") or call[1].get("json", {}).get("model_name")
+        for call in mock_client.post.call_args_list
+    }
+    assert posted_models == expected_models
 
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
-@patch("router.main._purge_stale_deployments")
-async def test_register_openrouter_models_from_config(mock_purge, mock_get_client, mock_env):
+async def test_register_openrouter_models_from_config(mock_get_client, mock_env):
     mock_client = AsyncMock()
     mock_get_client.return_value = mock_client
 
