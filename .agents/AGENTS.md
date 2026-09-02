@@ -29,7 +29,18 @@ To prevent directory reorganization regressions, outdated file restorations, or 
 
 ## Production Deployment Checklist
 
-Note: Throughout this checklist, the production host SSH alias is represented by `<prod-host>` (e.g., `boy`), the deployer home path is represented by `<prod-home>` (e.g., `/mnt/DATA/boy`), and the domain is represented by `<prod-domain>` (e.g., `vendeuvre.lan`).
+Note: Throughout this checklist, the production host SSH alias is represented by `<prod-host>` (e.g., `boy`), the deployer home path is represented by `<prod-home>` (e.g., `/mnt/DATA/boy`), the local domain is represented by `<prod-domain>` (e.g., `vendeuvre.lan`), and the public/external domain is `pavese.fr`.
+
+### Architecture & Domain Topology
+- **Internal / LAN Domain**: `vendeuvre.lan` (e.g., `llm-routing.vendeuvre.lan`, `litellm.vendeuvre.lan`, `langfuse.vendeuvre.lan`, `llama.vendeuvre.lan`). Terminated by internal self-signed CA cert `<prod-home>/haproxy/certs/vendeuvre.pem`.
+- **Public / External Domain**: `pavese.fr` (e.g., `llm.pavese.fr`).
+  - **Ingress Topology**: Public traffic hits VPS (`141.227.139.168`) -> routed via WireGuard (`wg0`) to Freedora DMZ (`192.168.0.27`) -> reverse-proxied to production host x570 (`192.168.0.35:443`).
+  - **Let's Encrypt TLS Bundle**: Terminated with `pavese.pem` (renewed on VPS standalone port 8888, synced to Freedora DMZ and production host `<prod-home>/prod/haproxy/certs/pavese.pem`).
+  - **Security Boundaries**:
+    - `https://llm.pavese.fr`: API endpoints (`/v1/chat/completions`, `/v1/responses`, `/models`) are routed externally and authenticated via `Authorization: Bearer <ROUTER_API_KEY>` (`_authenticate_client_request`).
+    - Web Dashboard & Visualizer (`/dashboard`, `/visualizer`, `/api/dashboard-stats`, `/metrics`): Strictly restricted to LAN (`192.168.0.0/24`, `127.0.0.1`), denied (403 Forbidden) from WAN on Freedora DMZ.
+    - `litellm.pavese.fr` & `langfuse.pavese.fr`: Restricted to LAN for now (denied on Freedora DMZ), and configured under `one_factor` in Authelia SSO (`/mnt/DATA/boy/prod/authelia/configuration.yml`) if ever exposed.
+    - Direct `llama.cpp` (`llama.vendeuvre.lan`): Always strictly restricted to LAN, never exposed to `pavese.fr` or WAN.
 
 ### One-Time Host Prerequisites
 - `net.ipv4.ip_unprivileged_port_start=80` persisted in `/etc/sysctl.d/99-unprivileged-ports.conf`
@@ -40,8 +51,8 @@ Note: Throughout this checklist, the production host SSH alias is represented by
   - `<prod-home>/.local/bin/agy` (copy of the `agy` binary)
   - `<prod-home>/.local/share/goose/`
   - `<prod-home>/.local/share/keyrings/`
-- HAProxy SSL cert: `<prod-home>/haproxy/certs/<prod-domain>.pem`
-- HAProxy config: `<prod-home>/haproxy/haproxy.cfg`
+- HAProxy SSL certs: `<prod-home>/haproxy/certs/vendeuvre.pem` and `<prod-home>/haproxy/certs/pavese.pem`
+- HAProxy config: `<prod-home>/haproxy/haproxy.cfg` (binds both certs on 443)
 
 ### Production Deployment (Gitless Minimal Deploy using GHCR Releases)
 Production host does not require a full `git` repository checkout or local container build toolchain. Production pulls pre-built, tested release container images from GHCR (`ghcr.io/sheepdestroyer/llm-routing:<VERSION>`) and consumes the lightweight runtime deployment bundle.
@@ -65,9 +76,12 @@ podman run -d --name production-haproxy --restart always --net host \
 pkill -f host_agy_daemon.py || true
 nohup python3 <prod-home>/LLM-Routing/scripts/host_agy_daemon.py >/tmp/agy-daemon.log 2>&1 </dev/null &
 
-# 5. Verify end-to-end dashboard health
-# NOTE: -k is intentional — the HAProxy cert is self-signed (local CA).
+# 5. Verify end-to-end dashboard health & external API routing
+# NOTE: -k is intentional for internal host check — the internal HAProxy cert is self-signed (local CA).
 curl -k -s --resolve llm-routing.<prod-domain>:443:127.0.0.1 https://llm-routing.<prod-domain>/dashboard | head -5
+
+# External WAN API healthcheck (valid Let's Encrypt TLS)
+curl -s -H "Authorization: Bearer <ROUTER_API_KEY>" https://llm.pavese.fr/v1/models | head -5
 ```
 
 ### Deployment Guidelines & Data Integrity
