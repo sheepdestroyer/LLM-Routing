@@ -1494,6 +1494,133 @@ async def _register_ollama_models_in_db(master_key: str):
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 
+LANGFUSE_MANAGED_MODELS = [
+    (
+        "local-qwen-model-def",
+        "local-qwen",
+        "(?i)^(openai/)?(local-qwen)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "local-qwen-hass-model-def",
+        "local-qwen-hass",
+        "(?i)^(openai/)?(local-qwen-hass)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "local-qwen-routing-model-def",
+        "local-qwen-routing",
+        "(?i)^(openai/)?(local-qwen-routing)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
+        "ollama-deepseek-v4-pro-def",
+        "ollama-deepseek-v4-pro",
+        "(?i)^(ollama_chat/)?(deepseek-v4-pro|ollama-deepseek-v4-pro)$",
+        "TOKENS",
+        0.00000174,
+        0.00000348,
+        0.0,
+    ),
+    (
+        "ollama-deepseek-v4-flash-def",
+        "ollama-deepseek-v4-flash",
+        "(?i)^(ollama_chat/)?(deepseek-v4-flash|ollama-deepseek-v4-flash)$",
+        "TOKENS",
+        0.00000014,
+        0.00000028,
+        0.0,
+    ),
+    (
+        "ollama-gpt-5.6-luna-def",
+        "ollama-gpt-5.6-luna",
+        "(?i)^(ollama_chat/)?(gpt-5\\.6-luna|ollama-gpt-5\\.6-luna.*)$",
+        "TOKENS",
+        0.0000002,
+        0.0000012,
+        0.0,
+    ),
+    (
+        "openrouter-auto-def",
+        "openrouter-auto",
+        "(?i)^(openrouter/)?(openrouter/auto|openrouter-auto)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+]
+
+
+async def _register_langfuse_models_in_db(
+    max_retries: int = 5, retry_delay: float = 2.0
+) -> bool:
+    """Ensure standard local and routing models are registered in Langfuse's Postgres database.
+
+    This provides model metadata, token unit definitions, and pricing match patterns so
+    Langfuse observation and latency dashboards (like P95 Latency by Model, Time to First Token)
+    can properly resolve and aggregate stats for local-qwen, ollama, and openrouter models.
+
+    Retries up to max_retries with delay to handle race conditions where Langfuse
+    or Postgres database migrations are initializing on container startup.
+    """
+    raw_db_url = os.getenv("DATABASE_URL")
+    if not raw_db_url:
+        return False
+
+    try:
+        import asyncpg
+    except ImportError:
+        logger.warning("asyncpg not installed — skipping Langfuse model registration")
+        return False
+
+    langfuse_db_url = raw_db_url.rsplit("/", 1)[0] + "/langfuse"
+    query = """
+    INSERT INTO models (id, model_name, match_pattern, unit, input_price, output_price, total_price)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (id) DO UPDATE SET
+      model_name = EXCLUDED.model_name,
+      match_pattern = EXCLUDED.match_pattern,
+      unit = EXCLUDED.unit,
+      input_price = EXCLUDED.input_price,
+      output_price = EXCLUDED.output_price,
+      total_price = EXCLUDED.total_price;
+    """
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            conn = await asyncpg.connect(langfuse_db_url, timeout=5.0)
+            try:
+                for m in LANGFUSE_MANAGED_MODELS:
+                    await conn.execute(query, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+                logger.info(
+                    f"📊 Langfuse DB models verified: {len(LANGFUSE_MANAGED_MODELS)} models registered/updated"
+                )
+                return True
+            finally:
+                await conn.close()
+        except Exception as e:
+            if attempt < max_retries:
+                logger.debug(
+                    f"Langfuse model registration attempt {attempt}/{max_retries} failed: {e}. Retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.warning(
+                    f"Langfuse model registration skipped after {max_retries} attempts (non-fatal): {e}"
+                )
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: wait for LiteLLM readiness, then sync free-model roster."""
@@ -1547,6 +1674,11 @@ async def lifespan(app: FastAPI):
             await _register_ollama_models_in_db(litellm_master_key)
         except Exception as e:
             logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
+
+    try:
+        await _register_langfuse_models_in_db()
+    except Exception as e:
+        logger.warning(f"Langfuse model registration failed (non-fatal): {e}")
 
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
@@ -2971,21 +3103,21 @@ async def chat_completions(request: Request):
                 _prop_ctx = _make_prop_ctx(_trace_session_id, _trace_user_id)
                 if _prop_ctx is not None:
                     _prop_ctx.__enter__()
-            parent_obs_kwargs = {
-                "trace_context": {"trace_id": langfuse_trace_id},
-                "name": f"triage-{client_model}",
-                "input": last_user_message[:200],
-                "level": "DEFAULT",
-                "metadata": {
-                    "client_model": client_model,
-                    "environment": os.getenv("ENVIRONMENT", "production"),
-                },
+            metadata = {
+                "client_model": client_model,
+                "environment": os.getenv("ENVIRONMENT", "production"),
             }
             if _trace_session_id:
-                parent_obs_kwargs["session_id"] = _trace_session_id
+                metadata["session_id"] = _trace_session_id
             if _trace_user_id:
-                parent_obs_kwargs["user_id"] = _trace_user_id
-            parent_obs = lf.start_observation(**parent_obs_kwargs)
+                metadata["user_id"] = _trace_user_id
+            parent_obs = lf.start_observation(
+                trace_context={"trace_id": langfuse_trace_id},
+                name=f"triage-{client_model}",
+                input=last_user_message[:200],
+                level="DEFAULT",
+                metadata=metadata,
+            )
         except Exception as e:
             logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
             langfuse_trace_id = None
@@ -3042,19 +3174,19 @@ async def chat_completions(request: Request):
         # Update the parent Langfuse observation with classification results
         if parent_obs:
             try:
-                parent_obs_update_kwargs = {
-                    "output": {"tier": target_model, "raw": raw_classification},
-                    "metadata": {
-                        "triage_latency_ms": round(triage_latency, 2),
-                        "cache_hit": was_cache_hit,
-                        "total_requests": stats["total_requests"],
-                    },
+                update_meta = {
+                    "triage_latency_ms": round(triage_latency, 2),
+                    "cache_hit": was_cache_hit,
+                    "total_requests": stats["total_requests"],
                 }
                 if _trace_session_id:
-                    parent_obs_update_kwargs["session_id"] = _trace_session_id
+                    update_meta["session_id"] = _trace_session_id
                 if _trace_user_id:
-                    parent_obs_update_kwargs["user_id"] = _trace_user_id
-                parent_obs.update(**parent_obs_update_kwargs)
+                    update_meta["user_id"] = _trace_user_id
+                parent_obs.update(
+                    output={"tier": target_model, "raw": raw_classification},
+                    metadata=update_meta,
+                )
             except Exception as e:
                 logger.warning(f"Langfuse trace update failed (non-fatal): {e}")
 
@@ -3487,6 +3619,9 @@ async def chat_completions(request: Request):
                 headers = {"Authorization": f"Bearer {backend_api_key}"}
                 if langfuse_trace_id:
                     headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
+                    headers["langfuse_existing_trace_id"] = langfuse_trace_id
+                    if litellm_span_obj and hasattr(litellm_span_obj, "id") and litellm_span_obj.id:
+                        headers["langfuse_parent_observation_id"] = str(litellm_span_obj.id)
 
                 # Handle streaming vs non-streaming proxying (LiteLLM handles fallback internally)
                 proxy_start = time.time()
@@ -3557,6 +3692,11 @@ async def chat_completions(request: Request):
                     body_to_send["metadata"]["session_id"] = _trace_session_id
                 if _trace_user_id:
                     body_to_send["metadata"]["trace_user_id"] = _trace_user_id
+                if langfuse_trace_id:
+                    body_to_send["metadata"]["existing_trace_id"] = langfuse_trace_id
+                    body_to_send["metadata"]["trace_id"] = langfuse_trace_id
+                    if litellm_span_obj and hasattr(litellm_span_obj, "id") and litellm_span_obj.id:
+                        body_to_send["metadata"]["parent_observation_id"] = str(litellm_span_obj.id)
 
                 if body.get("stream", False):
                     logger.info(f"Proxying streaming to LiteLLM as model={model_name}")
