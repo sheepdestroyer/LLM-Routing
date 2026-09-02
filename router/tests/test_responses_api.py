@@ -392,3 +392,29 @@ def test_validate_litellm_master_key_raises_http_500(invalid_master_key):
         assert exc_info.value.status_code == 500
 
 
+def test_authenticate_client_request_case_insensitive():
+    """Verify _authenticate_client_request accepts case-insensitive 'bearer' prefix."""
+    from router.main import _authenticate_client_request
+    mock_request = MagicMock()
+    mock_request.headers = {"Authorization": "bearer my-valid-key"}
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "my-valid-key"}):
+        token = _authenticate_client_request(mock_request)
+        assert token == "my-valid-key"
+
+
+def test_authenticate_client_request_fail_closed_when_empty_keys():
+    """Verify _authenticate_client_request raises 401 when no valid server keys are configured."""
+    from router.main import _authenticate_client_request
+    import sys
+    mock_request = MagicMock()
+    mock_request.headers = {"Authorization": "Bearer any-token"}
+    # Temporarily remove pytest from sys.modules during this test or mock empty valid_keys
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "", "LITELLM_MASTER_KEY": "", "GATEWAY_KEY": ""}, clear=True), \
+         patch.dict(sys.modules, {"pytest": None}):
+        with pytest.raises(HTTPException) as exc_info:
+            _authenticate_client_request(mock_request)
+        assert exc_info.value.status_code == 401
+        assert "Invalid Authorization token" in exc_info.value.detail
+
+
+

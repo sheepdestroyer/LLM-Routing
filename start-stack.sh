@@ -624,6 +624,7 @@ verify_stack_health() {
     waited=0
     while [ "$waited" -lt 120 ]; do
         local resp=$(curl -s --max-time 10 http://127.0.0.1:${ROUTER_PORT}/v1/chat/completions \
+            -H "Authorization: Bearer ${ROUTER_API_KEY:-${LITELLM_MASTER_KEY:-gateway-pass}}" \
             -H 'Content-Type: application/json' \
             -d '{"model":"agent-simple-core","messages":[{"role":"user","content":"Hi"}],"max_tokens":5}' 2>/dev/null)
         if echo "$resp" | grep -q '"choices"'; then

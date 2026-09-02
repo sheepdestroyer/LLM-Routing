@@ -494,6 +494,7 @@ To test the zero-shot router classification and complete gateway execution, run 
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/chat/completions \
+  -H "Authorization: Bearer ${ROUTER_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llm-routing-auto-free",
