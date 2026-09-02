@@ -174,3 +174,101 @@ async def test_classify_request_langfuse_exceptions():
         assert decision == "agent-advanced-core"
         assert raw_result == "advanced (fallback)"
         mock_span.end.assert_called_once()
+
+
+@pytest.mark.parametrize("model_name", [
+    "openrouter-gpt-5.6-luna",
+    "openrouter-gpt-5.6-luna-max",
+    "gpt-5.6-luna",
+])
+def test_direct_routing_openrouter_gpt_5_6_luna_variants(model_name):
+    """Verify that direct requests for openrouter-gpt-5.6-luna variants bypass the classifier and proxy to LiteLLM."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "luna completion"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
+        assert response.status_code == 200
+        assert response.json() == {"choices": [{"message": {"content": "luna completion"}}]}
+
+        mock_client.post.assert_called_once()
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == model_name
+
+
+@pytest.mark.parametrize("model_name", [
+    "ollama/GPT-5.6 Luna (max)",
+    "ollama-gpt-5.6-luna-max",
+    "ollama/gpt-5.6-luna",
+    "ollama-gpt-5.6-luna",
+])
+def test_direct_routing_ollama_gpt_5_6_luna_variants(model_name):
+    """Verify that direct requests for ollama GPT-5.6 Luna variants bypass the classifier and proxy to LiteLLM."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "ollama luna completion"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+        response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
+        assert response.status_code == 200
+        assert response.json() == {"choices": [{"message": {"content": "ollama luna completion"}}]}
+
+        mock_client.post.assert_called_once()
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == model_name
+
+
+def test_direct_routing_arbitrary_custom_db_model():
+    """Verify that any custom in-DB model (not listed in static YAML) is directly forwarded to LiteLLM."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "custom db model completion"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    custom_model = "custom-arbitrary-db-model-v1"
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload = {
+            "model": custom_model,
+            "messages": [{"role": "user", "content": "test payload"}],
+        }
+        response = client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer test-key"})
+        assert response.status_code == 200
+        assert response.json() == {"choices": [{"message": {"content": "custom db model completion"}}]}
+
+        mock_client.post.assert_called_once()
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == custom_model
+
+

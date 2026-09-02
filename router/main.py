@@ -409,9 +409,45 @@ class ValkeyStatsPersistence:
 
 
 # Configure logging — respect LOG_LEVEL env var (default: WARNING)
+# Split handlers ensure standard operational logs (DEBUG/INFO/WARNING) go to sys.stdout
+# (syslog PRIORITY=6 in journald/conmon) so filtering by priority:err does not capture them.
+# Only actual errors (ERROR/CRITICAL) are routed to sys.stderr (syslog PRIORITY=3).
 _log_level_str = os.getenv("LOG_LEVEL", "WARNING").upper()
 _log_level = getattr(logging, _log_level_str, logging.WARNING)
-logging.basicConfig(level=_log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+class MaxLevelFilter(logging.Filter):
+    """Filter that only passes log records up to a maximum severity level."""
+
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
+_log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(_log_level)
+_stdout_handler.addFilter(MaxLevelFilter(logging.WARNING))
+_stdout_handler.setFormatter(_log_formatter)
+
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(max(logging.ERROR, _log_level))
+_stderr_handler.setFormatter(_log_formatter)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(_log_level)
+_root_logger.handlers = [_stdout_handler, _stderr_handler]
+
+# Ensure uvicorn error loggers route info/warning to stdout instead of stderr
+for _lg_name in ("uvicorn", "uvicorn.error"):
+    _uv_lg = logging.getLogger(_lg_name)
+    _uv_lg.handlers = [_stdout_handler, _stderr_handler]
+    _uv_lg.propagate = False
+
 logger = logging.getLogger("llm-triage-router")
 logger.info(f"Log level set to {_log_level_str} (from LOG_LEVEL env var)")
 
@@ -1143,27 +1179,68 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "max_input_tokens": 2000000,
                     "is_public_model_group": True,
                 },
-            }
+            },
+            {
+                "model_name": "openrouter-gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "openrouter-gpt-5.6-luna-max",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "api_key": "os.environ/OPENROUTER_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
         ]
-
-    # Purge stale openrouter DB entries before re-registering
-    try:
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale openrouter-* DB entries"
-            )
-        else:
-            await _purge_stale_deployments(db_url, "openrouter-%")
-            for m in openrouter_models:
-                m_name = m.get("model_name", "")
-                if m_name and not m_name.startswith("openrouter-"):
-                    await _purge_stale_deployments(db_url, m_name)
-            logger.info(
-                "🧹 Purged stale OpenRouter DB entries before registration"
-            )
-    except Exception as e:
-        logger.warning(f"Failed to purge stale openrouter DB entries (non-fatal): {e}")
 
     client = get_http_client()
     registered = 0
@@ -1232,8 +1309,27 @@ async def _register_ollama_models_in_db(master_key: str):
                     for item in litellm_config["model_list"]:
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
-                            if isinstance(model_name, str) and model_name.startswith(
-                                "ollama-deepseek-"
+                            litellm_params = item.get("litellm_params", {})
+                            model_target = (
+                                litellm_params.get("model", "")
+                                if isinstance(litellm_params, dict)
+                                else ""
+                            )
+                            if (
+                                (
+                                    isinstance(model_name, str)
+                                    and (
+                                        model_name.startswith("ollama-")
+                                        or model_name.startswith("ollama/")
+                                    )
+                                )
+                                or (
+                                    isinstance(model_target, str)
+                                    and (
+                                        model_target.startswith("ollama_chat/")
+                                        or model_target.startswith("ollama/")
+                                    )
+                                )
                             ):
                                 # Create a clean deep copy to avoid mutating configuration structures
                                 ollama_models.append(copy.deepcopy(item))
@@ -1291,23 +1387,91 @@ async def _register_ollama_models_in_db(master_key: str):
                     "is_public_model_group": True,
                 },
             },
+            {
+                "model_name": "ollama/GPT-5.6 Luna (max)",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-gpt-5.6-luna-max",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama/gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "ollama-gpt-5.6-luna",
+                "litellm_params": {
+                    "model": "ollama_chat/gpt-5.6-luna",
+                    "api_base": "https://api.ollama.com",
+                    "api_key": "os.environ/OLLAMA_API_KEY",
+                    "reasoning_effort": "max",
+                    "request_timeout": 120,
+                },
+                "model_info": {
+                    "supports_vision": True,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "mode": "chat",
+                    "max_tokens": 1050000,
+                    "max_input_tokens": 1050000,
+                    "input_cost_per_token": 0.0000002,
+                    "output_cost_per_token": 0.0000012,
+                    "is_public_model_group": True,
+                },
+            },
         ]
-
-    # Purge stale ollama-deepseek DB entries before re-registering.
-    # Mirrors the agent-* purge pattern above — delete all, then register fresh.
-    try:
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            logger.warning(
-                "DATABASE_URL is not set; skipping purge of stale ollama-deepseek-* DB entries"
-            )
-        else:
-            await _purge_stale_deployments(db_url, "ollama-deepseek-%")
-            logger.info(
-                "🧹 Purged stale ollama-deepseek-* DB entries before registration"
-            )
-    except Exception as e:
-        logger.warning(f"Failed to purge stale ollama DB entries (non-fatal): {e}")
 
     client = get_http_client()
     registered = 0
@@ -1406,25 +1570,37 @@ async def lifespan(app: FastAPI):
         # Close shared HTTPX client
         global _http_client
         if _http_client is not None:
-            await _http_client.aclose()
+            try:
+                await _http_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing HTTP client during shutdown: {e}")
             _http_client = None
 
         # Close classifier client
         global _classifier_client
         if _classifier_client is not None:
-            await _classifier_client.aclose()
+            try:
+                await _classifier_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing classifier client during shutdown: {e}")
             _classifier_client = None
 
         # Close llama client
         global _llama_client
         if _llama_client is not None:
-            await _llama_client.aclose()
+            try:
+                await _llama_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing llama client during shutdown: {e}")
             _llama_client = None
 
         # Close Redis client
         global _redis_client
         if _redis_client is not None and _redis_client is not False:
-            await _redis_client.aclose()
+            try:
+                await _redis_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing redis client during shutdown: {e}")
             _redis_client = None
 
         # Flush any buffered stats/timeline on clean shutdown (always runs)
@@ -2753,21 +2929,6 @@ async def chat_completions(request: Request):
             last_user_message = str(content)
             break
 
-    # Known tier names that can be routed directly (bypass classifier)
-    DIRECT_TIERS = {
-        "agent-simple-core",
-        "agent-medium-core",
-        "agent-complex-core",
-        "agent-reasoning-core",
-        "agent-advanced-core",
-        "llm-routing-agy",
-        "local-qwen",
-        "local-qwen-hass",
-        "local-qwen-routing",
-        "gpt-4o-mini",
-        "gpt-4o",
-    }
-
     AUTO_MODELS = {
         "llm-routing-auto-free",
         "llm-routing-auto-agy",
@@ -2849,25 +3010,14 @@ async def chat_completions(request: Request):
                 langfuse_trace_id=langfuse_trace_id,
             )
             logger.info(f"Triage decision (auto/gated): Routing to -> '{target_model}'")
-        elif client_model in DIRECT_TIERS:
-            # Direct routing: client knows what tier they want, skip classifier
+        else:
+            # Direct routing: client requested a specific model (DB model, alias, or tier), forward directly to LiteLLM
             target_model = client_model
             triage_latency = 0.0
             was_cache_hit = False
             raw_classification = f"direct ({client_model})"
             logger.info(
                 f"Direct routing: Client requested '{client_model}', skipping classifier"
-            )
-        else:
-            # guard: end parent obs before raising
-            _end_parent_obs(parent_obs,
-                output={"error": f"Unknown model: {client_model}"})
-            _close_prop_ctx(_prop_ctx)
-            _non_streaming_finalized = True
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown model '{client_model}'. Use 'llm-routing-auto-free' for automatic routing, "
-                f"or one of: {', '.join(sorted(DIRECT_TIERS))}",
             )
 
         # Update in-memory statistics
@@ -3353,9 +3503,23 @@ async def chat_completions(request: Request):
                     # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
                     # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
                     _tier_min_ctx = {
+                        "local-qwen": 240896,
+                        "local-qwen-hass": 240896,
+                        "local-qwen-routing": 8192,
+                        "gpt-4o-mini": 240896,
+                        "gpt-4o": 240896,
+                        "agent-advanced-core": 240896,
                         "agent-simple-core": 32768,
                         "ollama-deepseek-v4-pro": 524288,
                         "ollama-deepseek-v4-flash": 524288,
+                        "ollama/GPT-5.6 Luna (max)": 1050000,
+                        "ollama-gpt-5.6-luna-max": 1050000,
+                        "ollama/gpt-5.6-luna": 1050000,
+                        "ollama-gpt-5.6-luna": 1050000,
+                        "openrouter-gpt-5.6-luna": 1050000,
+                        "openrouter-gpt-5.6-luna-max": 1050000,
+                        "gpt-5.6-luna": 1050000,
+                        "openrouter-auto": 2000000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

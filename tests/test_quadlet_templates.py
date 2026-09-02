@@ -23,7 +23,10 @@ def test_quadlet_inventory_and_pod_membership():
 
 def test_quadlet_container_healthcmds_and_aligned_versions():
     minio = (QUADLETS / "llm-routing-minio.container").read_text()
-    assert 'HealthCmd=mc ready local || bash -c "</dev/tcp/127.0.0.1/MINIO_S3_PORT_PLACEHOLDER"' in minio
+    assert 'HealthCmd=["curl", "-sf", "http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live"]' in minio
+
+    clickhouse = (QUADLETS / "llm-routing-clickhouse.container").read_text()
+    assert 'HealthCmd=["clickhouse-client", "--host", "127.0.0.1", "--port", "CLICKHOUSE_TCP_PORT_PLACEHOLDER", "--user", "clickhouse", "--password", "CLICKHOUSE_PASSWORD_PLACEHOLDER", "--query", "SELECT 1"]' in clickhouse
 
     worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
     assert 'HealthCmd=node -e "process.exit(0)"' in worker
@@ -213,3 +216,25 @@ def test_data_root_is_worktree_scoped_by_default():
     prod_root = (ROOT.parent.parent / "prod" / "LLM-Routing").resolve()
     assert dev_root != prod_root
     assert dev_root / "data" != prod_root / "data"
+
+
+def test_langfuse_dual_write_mode_configured():
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    assert "- name: LANGFUSE_MIGRATION_V4_WRITE_MODE\n      value: dual" in pod_yaml
+    assert pod_yaml.count("name: LANGFUSE_MIGRATION_V4_WRITE_MODE") == 2
+
+    web = (QUADLETS / "llm-routing-langfuse-web.container").read_text()
+    assert "Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual" in web
+
+    worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
+    assert "Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual" in worker
+
+
+def test_environment_isolation_guards_and_clean_zombie_ports():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'Production namespace (llm-routing-prod) cannot use a development data directory' in script
+    assert 'Development namespace (llm-routing-dev) cannot use a production data directory' in script
+    assert 'Refusing to start production stack' in script
+    assert 'automatically applying .env.dev overlay' in script
+    assert '8080' not in script.split('cleanup_zombie_ports()')[1].split('echo "🧹')[0]
+

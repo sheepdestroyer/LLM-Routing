@@ -11,10 +11,10 @@ def test_favicon_ico_endpoint(monkeypatch):
 
     from router.main import app
 
-    with TestClient(app) as client:
-        response = client.get("/favicon.ico")
-        assert response.status_code == 200
-        assert response.headers["content-type"] in ("image/x-icon", "image/vnd.microsoft.icon")
+    client = TestClient(app)
+    response = client.get("/favicon.ico")
+    assert response.status_code == 200
+    assert response.headers["content-type"] in ("image/x-icon", "image/vnd.microsoft.icon")
 
 
 def test_favicon_ico_not_found(monkeypatch):
@@ -24,7 +24,7 @@ def test_favicon_ico_not_found(monkeypatch):
     from router.main import app
 
     with patch("router.main.STATIC_DIR", Path("/nonexistent/static/dir")):
-        with TestClient(app) as client:
-            response = client.get("/favicon.ico")
-            assert response.status_code == 404
-            assert response.json()["detail"] == "Favicon not found"
+        client = TestClient(app)
+        response = client.get("/favicon.ico")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Favicon not found"

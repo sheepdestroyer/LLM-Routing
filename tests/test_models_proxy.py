@@ -90,3 +90,33 @@ async def test_proxy_models_invalid_json():
         assert isinstance(response, Response)
         assert response.status_code == 200
         assert response.body == b"not a json"
+
+
+def test_litellm_config_local_model_context_limits():
+    """Verify local models in litellm/config.yaml have correct context limits (240896)."""
+    import yaml
+    from pathlib import Path
+
+    config_path = Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    models_by_name = {m["model_name"]: m for m in config.get("model_list", []) if "model_name" in m}
+
+    assert "local-qwen" in models_by_name
+    assert models_by_name["local-qwen"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["local-qwen"]["model_info"]["max_input_tokens"] == 240896
+
+    assert "local-qwen-hass" in models_by_name
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
+
+    assert "gpt-4o-mini" in models_by_name
+    assert models_by_name["gpt-4o-mini"]["model_info"]["max_tokens"] == 240896
+
+    assert "gpt-4o" in models_by_name
+    assert models_by_name["gpt-4o"]["model_info"]["max_tokens"] == 240896
+
+    assert "local-qwen-routing" in models_by_name
+    assert models_by_name["local-qwen-routing"]["model_info"]["max_tokens"] == 8192
+

@@ -141,8 +141,78 @@ if serializer is not None:
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
 sys.stdout.flush()
 
+# Configure logging: ensure INFO/DEBUG/WARNING route to stdout (priority 6 in journald)
+# and ERROR/CRITICAL route to stderr (priority 3 in journald).
+import logging
+
+class MaxLevelFilter(logging.Filter):
+    """Filter that only passes log records up to a maximum severity level."""
+
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
+# Configure uvicorn default logging before LiteLLM proxy starts
+try:
+    import uvicorn.config
+
+    if "handlers" in uvicorn.config.LOGGING_CONFIG:
+        if "default" in uvicorn.config.LOGGING_CONFIG["handlers"]:
+            uvicorn.config.LOGGING_CONFIG["handlers"]["default"]["stream"] = "ext://sys.stdout"
+except Exception:
+    pass
+
 # Start LiteLLM Proxy
 from litellm.proxy.proxy_cli import run_server
+
+try:
+    import litellm._logging as ll_log
+
+    _ll_level_str = os.environ.get("LITELLM_LOG", "INFO").upper()
+    _ll_level = getattr(logging, _ll_level_str, logging.INFO)
+    _ll_fmt = getattr(ll_log.handler, "formatter", None)
+
+    _stdout_h = logging.StreamHandler(sys.stdout)
+    _stdout_h.setLevel(_ll_level)
+    _stdout_h.addFilter(MaxLevelFilter(logging.WARNING))
+    for _f in getattr(ll_log.handler, "filters", []):
+        _stdout_h.addFilter(_f)
+    if _ll_fmt:
+        _stdout_h.setFormatter(_ll_fmt)
+
+    _stderr_h = logging.StreamHandler(sys.stderr)
+    _stderr_h.setLevel(logging.ERROR)
+    for _f in getattr(ll_log.handler, "filters", []):
+        _stderr_h.addFilter(_f)
+    if _ll_fmt:
+        _stderr_h.setFormatter(_ll_fmt)
+
+    # Set underlying stream of default handler to stdout
+    ll_log.handler.setStream(sys.stdout)
+
+    for _lg in [
+        getattr(ll_log, "verbose_logger", None),
+        getattr(ll_log, "verbose_proxy_logger", None),
+        getattr(ll_log, "verbose_router_logger", None),
+        logging.getLogger(),
+        logging.getLogger("uvicorn"),
+        logging.getLogger("uvicorn.error"),
+        logging.getLogger("litellm_proxy_extras"),
+        logging.getLogger("prisma"),
+        logging.getLogger("apscheduler"),
+    ]:
+        if _lg is not None:
+            _lg.handlers = [_stdout_h, _stderr_h]
+            _lg.setLevel(_ll_level)
+            _lg.propagate = False
+except Exception:
+    pass
+
 litellm_port = os.environ.get("LITELLM_PORT") or os.environ.get("PORT") or "4000"
 sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
 run_server()
+
