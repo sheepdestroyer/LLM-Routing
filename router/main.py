@@ -2301,8 +2301,22 @@ def get_goose_sessions() -> list:
         return []
 
 
-async def get_llamacpp_metrics() -> dict:
-    """Fetches live model inventory and slot statistics from the local llama-server."""
+# In-Memory Cache for llama.cpp metrics (slots, models, build info) to prevent flooding llama-server
+llamacpp_metrics_cache: dict[str, Any] = {"data": None, "last_fetched": 0.0}
+LLAMACPP_METRICS_CACHE_TTL = float(os.getenv("LLAMACPP_METRICS_CACHE_TTL", "10.0"))
+
+
+async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
+    """Fetches live model inventory and slot statistics from the local llama-server, cached with short TTL."""
+    global llamacpp_metrics_cache
+    now = time.time()
+    if (
+        not force_refresh
+        and llamacpp_metrics_cache["data"] is not None
+        and (now - llamacpp_metrics_cache["last_fetched"] < LLAMACPP_METRICS_CACHE_TTL)
+    ):
+        return llamacpp_metrics_cache["data"]
+
     result = {"models": [], "slots": [], "build": "unknown"}
     try:
         client = get_llama_client()
@@ -2359,8 +2373,12 @@ async def get_llamacpp_metrics() -> dict:
                         "n_decoded": decoded,
                         "speculative": s.get("speculative", False),
                     })
+        llamacpp_metrics_cache["data"] = result
+        llamacpp_metrics_cache["last_fetched"] = now
     except Exception as e:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
+        if llamacpp_metrics_cache["data"] is not None:
+            return llamacpp_metrics_cache["data"]
     return result
 
 
@@ -2736,6 +2754,13 @@ async def proxy_audio(request: Request, path: str = ""):
         raise HTTPException(status_code=502, detail="Audio proxy failed")
 
 
+@app.get("/health")
+@app.head("/health")
+async def health():
+    """Liveness probe returning HTTP 200."""
+    return {"status": "ok"}
+
+
 @app.get("/v1/models")
 async def proxy_models():
     """Proxy /v1/models to LiteLLM, injecting llm-routing-auto-free as the first entry."""
@@ -2790,6 +2815,13 @@ async def proxy_models():
                         },
                         {
                             "id": "llm-routing-agy",
+                            "object": "model",
+                            "created": 0,
+                            "owned_by": "llm-routing",
+                            "context_length": 1048576,
+                        },
+                        {
+                            "id": "llm-routing-agy-sse",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
@@ -3343,7 +3375,11 @@ async def chat_completions(request: Request):
         # simple/medium/complex prompts that the fast OpenRouter free tier handles better.
 
         should_try_agy = (
-            client_model == "llm-routing-agy"  # direct — always try
+            client_model in (
+                "llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini",
+                "agy-opus", "agy-opus-sse", "agy-sonnet", "agy-sonnet-sse",
+                "agy-gptoss", "agy-gptoss-sse"
+            )
             or (
                 client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
                 and target_model in ("agent-advanced-core", "agent-reasoning-core")
@@ -3362,9 +3398,18 @@ async def chat_completions(request: Request):
         # --- AGY PROXY (via LiteLLM) ---
         # LiteLLM routes llm-routing-agy to host_agy_daemon (:5005) with native fallbacks
         # (gemini-3.8-flash -> claude-opus-4.6 -> agent-advanced-core -> openrouter-auto).
-        # We proxy to LiteLLM with model="llm-routing-agy".
+        # We proxy to LiteLLM with appropriate model name.
         if should_try_agy:
-            target_model = "llm-routing-agy"
+            if client_model in ("llm-routing-agy-sse", "agy-sse"):
+                target_model = "llm-routing-agy-sse"
+            elif client_model in (
+                "agy-gemini", "agy-opus", "agy-opus-sse",
+                "agy-sonnet", "agy-sonnet-sse",
+                "agy-gptoss", "agy-gptoss-sse"
+            ):
+                target_model = client_model
+            else:
+                target_model = "llm-routing-agy"
             logger.info(f"agy route: proxying to LiteLLM as model={target_model}")
 
         original_target_model = target_model
@@ -3477,8 +3522,15 @@ async def chat_completions(request: Request):
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
                         "llm-routing-agy": 1048576,
+                        "llm-routing-agy-sse": 1048576,
+                        "agy-sse": 1048576,
                         "agy-gemini": 1048576,
                         "agy-opus": 200000,
+                        "agy-opus-sse": 200000,
+                        "agy-sonnet": 200000,
+                        "agy-sonnet-sse": 200000,
+                        "agy-gptoss": 131072,
+                        "agy-gptoss-sse": 131072,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

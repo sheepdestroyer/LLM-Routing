@@ -97,7 +97,7 @@ model_list:
     model: openai/gemini-3.8-flash
     api_base: http://127.0.0.1:5005/v1
     api_key: "dummy"
-    request_timeout: 120
+    request_timeout: 600
   model_name: llm-routing-agy
   model_info:
     supports_vision: false
@@ -111,7 +111,7 @@ model_list:
     model: openai/gemini-3.8-flash
     api_base: http://127.0.0.1:5005/v1
     api_key: "dummy"
-    request_timeout: 120
+    request_timeout: 600
   model_name: agy-gemini
   model_info:
     supports_vision: false
@@ -125,12 +125,110 @@ model_list:
     model: openai/claude-opus-4.6
     api_base: http://127.0.0.1:5005/v1
     api_key: "dummy"
-    request_timeout: 180
+    request_timeout: 600
   model_name: agy-opus
   model_info:
     supports_vision: false
     supports_reasoning: true
     supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 200000
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gemini-3.8-flash-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: llm-routing-agy-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gemini-3.8-flash-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/claude-opus-4.6-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-opus-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 200000
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gpt-oss-120b-medium
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-gptoss
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 131072
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gpt-oss-120b-medium-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-gptoss-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 131072
+    is_public_model_group: true
+- litellm_params:
+    model: openai/claude-sonnet-4.6
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-sonnet
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 200000
+    is_public_model_group: true
+- litellm_params:
+    model: openai/claude-sonnet-4.6-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-sonnet-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
     mode: chat
     max_tokens: 65536
     max_input_tokens: 200000

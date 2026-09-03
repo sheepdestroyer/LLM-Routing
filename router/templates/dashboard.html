@@ -604,7 +604,7 @@
             }).catch(err => console.error("Failed to copy to clipboard:", err));
         }
 
-        // Initialize on load and set periodic polling
+        // Initialize on load and set periodic polling with visibility guard
         window.addEventListener("DOMContentLoaded", () => {
             const basePath = window.location.pathname.endsWith('/') ? '../' : './';
             const visLink = document.getElementById("visualizer-link");
@@ -613,7 +613,18 @@
             }
             refreshStats();
         });
-        setInterval(refreshStats, 3000);
+
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+                refreshStats();
+            }
+        });
+
+        setInterval(() => {
+            if (document.visibilityState !== "hidden") {
+                refreshStats();
+            }
+        }, 10000);
     </script>
 </head>
 <body>

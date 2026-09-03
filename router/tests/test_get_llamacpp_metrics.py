@@ -1,7 +1,16 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import router.main
 from router.main import get_llamacpp_metrics
+
+
+@pytest.fixture(autouse=True)
+def reset_llamacpp_cache():
+    router.main.llamacpp_metrics_cache = {"data": None, "last_fetched": 0.0}
+    yield
+    router.main.llamacpp_metrics_cache = {"data": None, "last_fetched": 0.0}
+
 
 @pytest.fixture
 def mock_http_client():
@@ -148,3 +157,71 @@ async def test_get_llamacpp_metrics_exception(mock_http_client):
 
         # Verify it returns the default structure
         assert result == {"models": [], "slots": [], "build": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_get_llamacpp_metrics_cache_hit_and_force_refresh(mock_http_client):
+    models_response = MagicMock(status_code=200)
+    models_response.json.return_value = {"data": [{"id": "model-1", "status": {"value": "loaded"}}]}
+    props_response = MagicMock(status_code=200)
+    props_response.json.return_value = {"build_info": "v1"}
+    slots_response = MagicMock(status_code=200)
+    slots_response.json.return_value = []
+
+    def mock_get(url, *args, **kwargs):
+        if url.endswith("/v1/models"):
+            return models_response
+        elif url.endswith("/props"):
+            return props_response
+        elif "/slots" in url:
+            return slots_response
+        return MagicMock(status_code=404)
+
+    mock_http_client.get.side_effect = mock_get
+
+    # First call - populates cache
+    res1 = await get_llamacpp_metrics()
+    assert res1["build"] == "v1"
+    initial_call_count = mock_http_client.get.call_count
+    assert initial_call_count > 0
+
+    # Second call within TTL - returns cached without extra network calls
+    res2 = await get_llamacpp_metrics()
+    assert res2 == res1
+    assert mock_http_client.get.call_count == initial_call_count
+
+    # Third call with force_refresh=True - bypasses cache
+    res3 = await get_llamacpp_metrics(force_refresh=True)
+    assert res3["build"] == "v1"
+    assert mock_http_client.get.call_count > initial_call_count
+
+
+@pytest.mark.asyncio
+async def test_get_llamacpp_metrics_cache_expiry(mock_http_client):
+    models_response = MagicMock(status_code=200)
+    models_response.json.return_value = {"data": []}
+    mock_http_client.get.return_value = models_response
+
+    # Populate cache with old timestamp
+    res1 = await get_llamacpp_metrics()
+    router.main.llamacpp_metrics_cache["last_fetched"] = 100.0  # long ago
+    initial_count = mock_http_client.get.call_count
+
+    with patch("time.time", return_value=200.0):  # 100 seconds later > TTL
+        res2 = await get_llamacpp_metrics()
+        assert mock_http_client.get.call_count > initial_count
+
+
+@pytest.mark.asyncio
+async def test_get_llamacpp_metrics_exception_fallback_to_cache(mock_http_client):
+    # Set up existing cached data
+    cached_data = {"models": [{"id": "cached-model"}], "slots": [], "build": "v-cached"}
+    router.main.llamacpp_metrics_cache["data"] = cached_data
+    router.main.llamacpp_metrics_cache["last_fetched"] = 0.0
+
+    mock_http_client.get.side_effect = Exception("Temporary network glitch")
+
+    with patch("router.main.logger.warning") as mock_logger:
+        result = await get_llamacpp_metrics(force_refresh=True)
+        mock_logger.assert_called_once()
+        assert result == cached_data

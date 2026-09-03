@@ -130,7 +130,7 @@ def parse_models_output(text: str) -> list[dict]:
             models.append({"id": parts[0], "name": parts[0]})
     return models
 
-async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 120.0):
+async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 600.0):
     """Asynchronously execute agy and capture full output."""
     env = os.environ.copy()
     if model_override:
@@ -216,7 +216,9 @@ async def execute_agy_stream_json(
     prompt: str,
     model_override: str = "",
     conversation_id: str = None,
-    timeout: float = 120.0,
+    timeout: float = 600.0,
+    tools: list = None,
+    intercept_tools: bool = True,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
     env = os.environ.copy()
@@ -259,6 +261,7 @@ async def execute_agy_stream_json(
             "stderr": f"Execution timed out after {timeout} seconds",
             "conversation_id": None,
             "usage": None,
+            "tool_calls": [],
         }
     except Exception as e:
         if proc is not None and proc.returncode is None:
@@ -273,6 +276,7 @@ async def execute_agy_stream_json(
             "stderr": str(e),
             "conversation_id": None,
             "usage": None,
+            "tool_calls": [],
         }
 
     stdout_text = stdout_bytes.decode("utf-8", errors="replace")
@@ -282,6 +286,7 @@ async def execute_agy_stream_json(
     result_usage = None
     res_conv_id = None
     accumulated_deltas = []
+    intercepted_call = None
 
     for line in stdout_text.splitlines():
         line = line.strip()
@@ -293,19 +298,28 @@ async def execute_agy_stream_json(
             if ev == "init":
                 res_conv_id = event_obj.get("conversation_id")
             elif ev == "step_update":
-                delta = event_obj.get("step_update", {}).get("text_delta")
+                su = event_obj.get("step_update", {})
+                st = su.get("step_type")
+                if tools and intercept_tools and st == "tool" and not intercepted_call:
+                    tn = su.get("tool_name", "")
+                    ti = su.get("tool_info", {})
+                    params = ti.get("parameters", {})
+                    intercepted_call = map_native_tool_call(tn, params, tools)
+                delta = su.get("text_delta")
                 if delta:
                     accumulated_deltas.append(delta)
             elif ev == "result":
                 res = event_obj.get("result", {})
                 if res.get("status") == "ERROR":
                     err_msg = res.get("error") or "Unknown stream-json error"
+                    combined_err = f"{err_msg} - {stderr_text}" if stderr_text else err_msg
                     return {
                         "returncode": 1,
                         "stdout": "",
-                        "stderr": err_msg,
+                        "stderr": combined_err,
                         "conversation_id": res.get("conversation_id") or res_conv_id,
                         "usage": None,
+                        "tool_calls": [],
                     }
                 result_response = res.get("response", "")
                 result_usage = res.get("usage")
@@ -314,6 +328,16 @@ async def execute_agy_stream_json(
         except Exception:
             continue
 
+    if intercepted_call:
+        return {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": stderr_text,
+            "tool_calls": [intercepted_call],
+            "conversation_id": res_conv_id,
+            "usage": result_usage or {"input_tokens": max(1, len(prompt) // 4), "output_tokens": 10},
+        }
+
     final_text = result_response or "".join(accumulated_deltas)
     return {
         "returncode": returncode,
@@ -321,6 +345,7 @@ async def execute_agy_stream_json(
         "stderr": stderr_text,
         "conversation_id": res_conv_id,
         "usage": result_usage,
+        "tool_calls": [],
     }
 
 TOOL_CALL_RE = re.compile(
@@ -328,7 +353,7 @@ TOOL_CALL_RE = re.compile(
     re.IGNORECASE
 )
 
-def format_tools_instruction(tools: list) -> str:
+def format_tools_instruction(tools: list, is_sse_mode: bool = False) -> str:
     """Format tools list into prompt instructions for agy."""
     if not tools or not isinstance(tools, list):
         return ""
@@ -337,19 +362,78 @@ def format_tools_instruction(tools: list) -> str:
     except Exception:
         tools_json = str(tools)
 
-    return (
-        "# Available Tools\n"
-        "You have access to the following functions to call:\n"
-        f"<tools>\n{tools_json}\n</tools>\n\n"
-        "# Tool Calling Protocol\n"
-        "If you need to invoke one or more tools to fulfill the user's request, you MUST NOT execute any commands, "
-        "scripts, or actions on the host system yourself.\n"
-        "Instead, you MUST respond ONLY with one or more tool call blocks in this exact format:\n"
-        "<tool_call>\n"
-        '{"name": "<function_name>", "arguments": <json_object_of_arguments>}\n'
-        "</tool_call>\n\n"
-        "If you do not need to call any tool, answer normally with conversational text."
-    )
+    if is_sse_mode:
+        return (
+            "# Available Client Tools\n"
+            "The upstream client provides the following external function definitions:\n"
+            f"<tools>\n{tools_json}\n</tools>\n\n"
+            "# Tool Calling Protocol\n"
+            "You operate as an autonomous backend with full access to your native workspace tools (file inspection, command execution, and codebase searches).\n"
+            "If a user request requires calling one of the external client tools defined above that you cannot perform natively,\n"
+            "you MUST respond with one or more tool call blocks in this exact format:\n"
+            "<tool_call>\n"
+            '{"name": "<function_name>", "arguments": <json_object_of_arguments>}\n'
+            "</tool_call>\n\n"
+            "Otherwise, execute any necessary inspections using your native tools and provide a clear, concise conversational report."
+        )
+    else:
+        return (
+            "# Available Tools\n"
+            "You have access to the following functions to call:\n"
+            f"<tools>\n{tools_json}\n</tools>\n\n"
+            "# Tool Calling Protocol\n"
+            "You are acting as an external function calling engine for an agent orchestrator.\n"
+            "When you need to execute a command, inspect files, or call a tool, invoke the tool directly.\n"
+            "If you do not need to call any tool, answer normally with conversational text."
+        )
+
+def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -> dict:
+    """Map native agy tool calls to client-provided tools (e.g. run_command -> terminal)."""
+    client_tool_names = []
+    if client_tools and isinstance(client_tools, list):
+        for ct in client_tools:
+            if isinstance(ct, dict):
+                fn = ct.get("function", {})
+                name = fn.get("name") if isinstance(fn, dict) else ct.get("name")
+                if name:
+                    client_tool_names.append(name)
+
+    mapped_name = tool_name
+    mapped_args = parameters or {}
+
+    if tool_name == "run_command":
+        cmd_str = parameters.get("CommandLine") or parameters.get("command") or ""
+        if "terminal" in client_tool_names:
+            mapped_name = "terminal"
+            mapped_args = {"command": cmd_str}
+        elif "bash" in client_tool_names:
+            mapped_name = "bash"
+            mapped_args = {"command": cmd_str}
+        elif "exec" in client_tool_names:
+            mapped_name = "exec"
+            mapped_args = {"command": cmd_str}
+        elif client_tool_names:
+            mapped_name = client_tool_names[0]
+            mapped_args = {"command": cmd_str}
+    elif tool_name in ("view_file", "read_file"):
+        path_str = parameters.get("AbsolutePath") or parameters.get("path") or ""
+        if "read_file" in client_tool_names:
+            mapped_name = "read_file"
+            mapped_args = {"path": path_str}
+        elif "view_file" in client_tool_names:
+            mapped_name = "view_file"
+            mapped_args = {"path": path_str}
+    elif tool_name not in client_tool_names and client_tool_names:
+        mapped_name = client_tool_names[0]
+
+    return {
+        "id": f"call_{uuid.uuid4().hex[:8]}",
+        "type": "function",
+        "function": {
+            "name": mapped_name,
+            "arguments": json.dumps(mapped_args) if isinstance(mapped_args, (dict, list)) else str(mapped_args),
+        },
+    }
 
 def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     """Parse <tool_call> blocks from text and convert them into OpenAI tool_calls dicts."""
@@ -417,7 +501,7 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
 
     return cleaned, tool_calls
 
-def extract_prompt_from_messages(messages: list, tools: list = None) -> str:
+def extract_prompt_from_messages(messages: list, tools: list = None, is_sse_mode: bool = False) -> str:
     """Convert an OpenAI messages array into a clean unified prompt string for agy."""
     if not messages or not isinstance(messages, list):
         prompt = ""
@@ -461,13 +545,27 @@ def extract_prompt_from_messages(messages: list, tools: list = None) -> str:
                 parts.append(f"User: {content}")
         prompt = "\n\n".join(parts)
 
+    if not prompt:
+        return ""
+
     if tools:
-        tool_instr = format_tools_instruction(tools)
+        tool_instr = format_tools_instruction(tools, is_sse_mode=is_sse_mode)
         if tool_instr:
             if prompt.startswith("System:"):
                 prompt = f"System: {tool_instr}\n\n" + prompt
             else:
-                prompt = f"System: {tool_instr}\n\n{prompt}" if prompt else tool_instr
+                prompt = f"System: {tool_instr}\n\n{prompt}"
+    else:
+        completion_instr = (
+            "# Execution Guidelines\n"
+            "You are acting as an intelligent autonomous backend for the client.\n"
+            "You have full access to your native workspace tools to inspect files, execute commands, or analyze context as needed to fulfill the user's request.\n"
+            "Provide a clear, concise conversational report."
+        )
+        if prompt.startswith("System:"):
+            prompt = f"System: {completion_instr}\n\n" + prompt
+        else:
+            prompt = f"System: {completion_instr}\n\n{prompt}"
 
     return prompt
 
@@ -541,9 +639,18 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
                     {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
                     {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
+                    {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
+                    {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
                     {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
                     {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
                     {"id": "agy-opus", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
+                    {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
                 ]
                 res = {"object": "list", "data": openai_models}
 
@@ -604,7 +711,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
-        timeout = body.get("timeout", 120.0)
+        timeout = body.get("timeout", 600.0)
         stream = body.get("stream", False)
         
         if stream:
@@ -742,19 +849,26 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         """Handle standard OpenAI /v1/chat/completions requests from LiteLLM or direct clients."""
         messages = body.get("messages", [])
         tools = body.get("tools")
-        prompt = extract_prompt_from_messages(messages, tools=tools) if messages else body.get("prompt", "")
         model = body.get("model", "gemini-3.8-flash")
+        model_lower = str(model).lower()
+        is_sse_mode = "sse" in model_lower or "autonomous" in model_lower
+        prompt = extract_prompt_from_messages(messages, tools=tools, is_sse_mode=is_sse_mode) if messages else body.get("prompt", "")
         stream = body.get("stream", False)
-        timeout = float(body.get("timeout", 120.0))
+        timeout = float(body.get("timeout", 600.0))
         raw_conv_id = body.get("conversation_id")
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
         # Swap Gemini 3.5 to 3.8 and resolve model overrides:
-        # Default Gemini tier -> gemini-3.8-flash-low
         # Claude Opus tier -> claude-opus-4-6-thinking
-        model_lower = str(model).lower()
+        # Claude Sonnet tier -> claude-sonnet-4-6
+        # GPT-OSS tier (cheapest 3rd-party vendor model) -> gpt-oss-120b-medium
+        # Default Gemini tier -> gemini-3.8-flash-low
         if "opus" in model_lower:
             model_override = "claude-opus-4-6-thinking"
+        elif "sonnet" in model_lower:
+            model_override = "claude-sonnet-4-6"
+        elif "gpt-oss" in model_lower or "gptoss" in model_lower or "gpt_oss" in model_lower:
+            model_override = "gpt-oss-120b-medium"
         elif "gemini-3.8-flash-high" in model_lower:
             model_override = "gemini-3.8-flash-high"
         elif "gemini-3.8-flash-medium" in model_lower:
@@ -828,6 +942,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 has_streamed_deltas = False
                 stream_error = None
                 deadline = time.time() + timeout
+                intercepted_tool_call = None
 
                 try:
                     while True:
@@ -845,9 +960,52 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
 
                         ev = event_obj.get("event")
                         if ev == "step_update":
-                            delta = event_obj.get("step_update", {}).get("text_delta")
+                            su = event_obj.get("step_update", {})
+                            st = su.get("step_type")
+                            if not is_sse_mode and tools and st == "tool":
+                                tn = su.get("tool_name", "")
+                                ti = su.get("tool_info", {})
+                                params = ti.get("parameters", {})
+                                intercepted_tool_call = map_native_tool_call(tn, params, tools)
+                                if proc.returncode is None:
+                                    try:
+                                        proc.kill()
+                                        await proc.wait()
+                                    except Exception:
+                                        pass
+                                break
+                            elif is_sse_mode and st == "tool":
+                                tn = su.get("tool_name", "")
+                                ti = su.get("tool_info", {})
+                                params = ti.get("parameters", {})
+                                output = ti.get("output")
+                                has_streamed_deltas = True
+                                if output is None:
+                                    cmd_hint = params.get("CommandLine") or params.get("command") or json.dumps(params)
+                                    prog_text = f"\n⚡ *[Running `{tn}`: `{cmd_hint}`]*\n"
+                                else:
+                                    out_snippet = output.strip()
+                                    if len(out_snippet) > 800:
+                                        out_snippet = out_snippet[:800] + "\n..."
+                                    prog_text = f"```\n{out_snippet}\n```\n\n"
+                                chunk_data = {
+                                    "id": chunk_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model,
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": prog_text},
+                                            "finish_reason": None,
+                                        }
+                                    ],
+                                }
+                                if not safe_write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n"):
+                                    return
+                            delta = su.get("text_delta")
                             if delta:
-                                if tools:
+                                if not is_sse_mode and tools:
                                     accumulated_chunks.append(delta)
                                 else:
                                     has_streamed_deltas = True
@@ -874,26 +1032,48 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             if res.get("response") and not accumulated_chunks:
                                 accumulated_chunks.append(res.get("response"))
 
-                    remaining = max(0.1, deadline - time.time())
-                    await asyncio.wait_for(proc.wait(), timeout=remaining)
-                    if proc.returncode != 0 and not stream_error:
+                    if proc.returncode is None:
+                        remaining = max(0.1, deadline - time.time())
+                        await asyncio.wait_for(proc.wait(), timeout=remaining)
+                    if proc.returncode != 0 and not stream_error and not intercepted_tool_call:
                         stream_error = f"agy exited with returncode {proc.returncode}"
                 except asyncio.TimeoutError:
                     stream_error = f"Execution timed out after {timeout} seconds"
                 except Exception as e:
                     stream_error = str(e)
                 finally:
-                    if proc is not None and proc.returncode is None:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
+                    if proc is not None:
+                        if getattr(proc, "stderr", None) is not None:
+                            try:
+                                read_fn = getattr(proc.stderr, "read", None)
+                                if callable(read_fn):
+                                    res_read = read_fn()
+                                    if asyncio.iscoroutine(res_read):
+                                        stderr_bytes = await asyncio.wait_for(res_read, timeout=1.0)
+                                    else:
+                                        stderr_bytes = res_read
+                                    if isinstance(stderr_bytes, (bytes, bytearray)):
+                                        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                                        if stderr_text:
+                                            if stream_error:
+                                                stream_error = f"{stream_error} - {stderr_text}"
+                                            elif proc.returncode is not None and proc.returncode != 0 and not intercepted_tool_call:
+                                                stream_error = stderr_text
+                            except Exception:
+                                pass
+                        if proc.returncode is None:
+                            try:
+                                proc.kill()
+                                await proc.wait()
+                            except Exception:
+                                pass
 
                 # If an error occurred, emit an error payload and exit WITHOUT [DONE]
                 # so LiteLLM and clients detect stream failure and trigger fallback.
                 if stream_error:
-                    is_quota = any(x in stream_error.lower() for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+                    is_quota = any(x in stream_error.lower() for x in [
+                        "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
+                    ])
                     err_status = 429 if is_quota else 502
                     err_type = "rate_limit_error" if is_quota else "api_error"
                     err_chunk = {
@@ -906,7 +1086,52 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     safe_write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
                     return
 
-                if tools:
+                if intercepted_tool_call:
+                    tool_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": intercepted_tool_call["id"],
+                                            "type": "function",
+                                            "function": intercepted_tool_call["function"],
+                                        }
+                                    ],
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    if not safe_write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n"):
+                        return
+                    finish_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                    }
+                    if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                        return
+                    safe_write(b"data: [DONE]\n\n")
+                    return
+
+                if tools and not is_sse_mode:
                     full_text = "".join(accumulated_chunks)
                     cleaned_text, tool_calls = parse_tool_calls_from_text(full_text)
                     if tool_calls:
@@ -1028,14 +1253,19 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            exec_res = loop.run_until_complete(
-                execute_agy_stream_json(
-                    prompt=prompt,
-                    model_override=model_override,
-                    conversation_id=conversation_id,
-                    timeout=timeout,
-                )
-            )
+            import inspect
+            sig = inspect.signature(execute_agy_stream_json)
+            kwargs = {
+                "prompt": prompt,
+                "model_override": model_override,
+                "conversation_id": conversation_id,
+                "timeout": timeout,
+            }
+            if "tools" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                kwargs["tools"] = tools
+            if "intercept_tools" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                kwargs["intercept_tools"] = not is_sse_mode
+            exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))
         finally:
             loop.close()
 
@@ -1043,7 +1273,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         if retcode != 0:
             err_text = exec_res.get("stderr") or exec_res.get("stdout") or "Unknown error"
             err_lower = err_text.lower()
-            is_quota = any(x in err_lower for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+            is_quota = any(x in err_lower for x in [
+                "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
+            ])
             status_code = 429 if is_quota else 502
             err_type = "rate_limit_error" if is_quota else "api_error"
             err_resp = {
@@ -1061,14 +1293,21 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.wfile.write(body_bytes)
             return
 
-        text = exec_res.get("stdout", "")
-        cleaned_content, tool_calls = parse_tool_calls_from_text(text)
-        finish_reason = "tool_calls" if tool_calls else "stop"
+        intercepted = exec_res.get("tool_calls")
+        if intercepted:
+            tool_calls = intercepted
+            cleaned_content = ""
+            finish_reason = "tool_calls"
+        else:
+            text = exec_res.get("stdout", "")
+            cleaned_content, tool_calls = parse_tool_calls_from_text(text)
+            finish_reason = "tool_calls" if tool_calls else "stop"
+
         created_time = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         usage_info = exec_res.get("usage") or {}
         prompt_tokens = usage_info.get("input_tokens") or max(1, len(prompt) // 4)
-        completion_tokens = usage_info.get("output_tokens") or max(1, len(text) // 4)
+        completion_tokens = usage_info.get("output_tokens") or max(1, len(cleaned_content or "") // 4)
 
         message_obj = {
             "role": "assistant",
