@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-routing"
+version = "0.1.63"
+description = "FastAPI LLM Triage Gateway & Multi-Model Proxy"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "httpx>=0.28.1",
+    "pyyaml>=6.0",
+    "redis>=5.0.0",
+    "asyncpg>=0.29.0",
+    "aiofiles>=24.1.0",
+    "jinja2>=3.1.0",
+    "orjson>=3.10.0",
+    "langfuse>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "anyio>=4.0.0",
+    "playwright>=1.40.0",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+exclude = [
+    ".git",
+    ".venv",
+    "data",
+    "data-dev",
+    "backups",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "E501",   # line length handled by ruff format
+    "E741",   # allow single letter variables in lambdas / comprehensions
+    "B008",   # allow function calls in argument defaults (FastAPI Depends/Query)
+    "B007",   # loop control variable not used
+    "UP015",  # redundant open mode argument (explicit 'r' is good for clarity & mock assertions)
+    "RUF001", # ambiguous unicode characters (in prompts/templates)
+    "RUF002", # ambiguous unicode characters in docstrings
+    "RUF003", # ambiguous unicode characters in comments
+    "RUF006", # store reference to asyncio tasks
+    "RUF012", # mutable class attributes
+    "RUF059", # allow unused unpacked variable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "F811", "F841", "B011", "B017", "E402", "UP035", "I001", "RUF059", "E741"]
+"router/tests/**" = ["F401", "F811", "F841", "B011", "B017", "E402", "UP035", "I001", "RUF059", "E741"]
+"litellm/tests/**" = ["F401", "F811", "F841", "B011", "B017", "E402", "UP035", "I001", "RUF059", "E741"]
+"litellm/entrypoint.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["router", "scripts/host_agy_daemon.py"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+check_untyped_defs = false

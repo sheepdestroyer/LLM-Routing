@@ -8,10 +8,11 @@ from router.main import _register_openrouter_models_in_db
 
 @pytest.fixture
 def mock_env():
-    with patch.dict(os.environ, {
-        "DATABASE_URL": "postgresql://test:test@localhost:5432/test",
-        "ROUTER_API_KEY": "test_api_key"
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {"DATABASE_URL": "postgresql://test:test@localhost:5432/test", "ROUTER_API_KEY": "test_api_key"},
+        clear=False,
+    ):
         yield
 
 
@@ -61,18 +62,9 @@ async def test_register_openrouter_models_from_config(mock_get_client, mock_env)
 
     mock_config = {
         "model_list": [
-            {
-                "model_name": "openrouter-auto",
-                "litellm_params": {"model": "openrouter/openrouter/auto"}
-            },
-            {
-                "model_name": "gpt-4o-mini-tts",
-                "litellm_params": {"model": "openrouter/openai/tts-1"}
-            },
-            {
-                "model_name": "locallama-qwen",
-                "litellm_params": {"model": "openai/locallama-qwen"}
-            }
+            {"model_name": "openrouter-auto", "litellm_params": {"model": "openrouter/openrouter/auto"}},
+            {"model_name": "gpt-4o-mini-tts", "litellm_params": {"model": "openrouter/openai/tts-1"}},
+            {"model_name": "locallama-qwen", "litellm_params": {"model": "openai/locallama-qwen"}},
         ]
     }
 
@@ -83,6 +75,6 @@ async def test_register_openrouter_models_from_config(mock_get_client, mock_env)
         assert mock_to_thread.call_count > 0
 
     assert mock_client.post.call_count == 2
-    payload_names = [call[1]['json']['model_name'] for call in mock_client.post.call_args_list]
+    payload_names = [call[1]["json"]["model_name"] for call in mock_client.post.call_args_list]
     assert "openrouter-auto" in payload_names
     assert "gpt-4o-mini-tts" in payload_names

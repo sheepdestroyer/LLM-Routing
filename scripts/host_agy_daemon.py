@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """HTTP daemon to bridge router requests to the host-side agy CLI."""
+
 import asyncio
 import json
 import os
 import re
 import tempfile
 import time
+import uuid
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import uuid
+from typing import Any
 
 PORT = int(os.environ.get("AGY_PORT", os.environ.get("PORT", 5005)))
 AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversations.json")
 CLI_TOKEN_PATH = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
 
+
 def get_last_conversation_id():
     """Retrieve the last active conversation ID from the agy cache."""
     try:
         if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "r") as f:
+            with open(CACHE_FILE) as f:
                 data = json.load(f)
             # Use current workspace
             return data.get(os.getcwd())
@@ -27,13 +30,15 @@ def get_last_conversation_id():
         pass
     return None
 
+
 def read_file_sync(path):
     """Synchronously read and return content from a file, returning empty string on error."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read().strip()
     except Exception:
         return ""
+
 
 def get_auth_status() -> dict:
     """Check current agy OAuth token status and expiration from CLI token file."""
@@ -42,7 +47,7 @@ def get_auth_status() -> dict:
             return {"authenticated": False, "status": "missing", "detail": "No credentials found", "expiry_ms": 0}
 
         try:
-            with open(CLI_TOKEN_PATH, "r", encoding="utf-8") as f:
+            with open(CLI_TOKEN_PATH, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             return {"authenticated": False, "status": "error", "detail": "Invalid token JSON", "expiry_ms": 0}
@@ -59,7 +64,12 @@ def get_auth_status() -> dict:
             expiry_val = data.get("expiry_date") or data.get("expiry")
 
         if not access_token:
-            return {"authenticated": False, "status": "missing", "detail": "No access token in credentials", "expiry_ms": 0}
+            return {
+                "authenticated": False,
+                "status": "missing",
+                "detail": "No access token in credentials",
+                "expiry_ms": 0,
+            }
 
         expiry_ms = 0
         if isinstance(expiry_val, (int, float)):
@@ -89,6 +99,7 @@ def get_auth_status() -> dict:
     except Exception as e:
         return {"authenticated": False, "status": "error", "detail": str(e), "expiry_ms": 0}
 
+
 def parse_usage_output(text: str) -> dict:
     """Parse agy /usage slash command output into structured quota dict."""
     lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
@@ -98,22 +109,27 @@ def parse_usage_output(text: str) -> dict:
             continue
         parts = [p.strip() for p in re.split(r"\t+|\s{2,}", line) if p.strip()]
         if len(parts) >= 4:
-            quotas.append({
-                "category": parts[0],
-                "limit_type": parts[1],
-                "remaining": parts[2],
-                "reset_time": parts[3],
-            })
+            quotas.append(
+                {
+                    "category": parts[0],
+                    "limit_type": parts[1],
+                    "remaining": parts[2],
+                    "reset_time": parts[3],
+                }
+            )
         elif len(parts) == 3:
-            quotas.append({
-                "category": parts[0],
-                "limit_type": parts[1],
-                "remaining": parts[2],
-                "reset_time": "",
-            })
+            quotas.append(
+                {
+                    "category": parts[0],
+                    "limit_type": parts[1],
+                    "remaining": parts[2],
+                    "reset_time": "",
+                }
+            )
         else:
             quotas.append({"raw": line})
     return {"raw_output": text, "quotas": quotas}
+
 
 def parse_models_output(text: str) -> list[dict]:
     """Parse agy models command output into list of model objects."""
@@ -130,7 +146,10 @@ def parse_models_output(text: str) -> list[dict]:
             models.append({"id": parts[0], "name": parts[0]})
     return models
 
-async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 600.0):
+
+async def execute_agy_print(
+    prompt: str, model_override: str = "", conversation_id: str | None = None, timeout: float = 600.0
+):
     """Asynchronously execute agy and capture full output."""
     env = os.environ.copy()
     if model_override:
@@ -153,7 +172,8 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, env=env,
+            *cmd,
+            env=env,
             stdout=stdout_file,
             stderr=stderr_file,
         )
@@ -163,7 +183,7 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
         try:
             await asyncio.wait_for(proc.wait(), timeout=timeout)
             returncode = proc.returncode or 0
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 if proc is not None:
                     proc.kill()
@@ -205,21 +225,17 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
         stderr = "TIMEOUT"
 
     result_conv_id = get_last_conversation_id()
-    return {
-        "returncode": returncode,
-        "stdout": stdout,
-        "stderr": stderr,
-        "conversation_id": result_conv_id
-    }
+    return {"returncode": returncode, "stdout": stdout, "stderr": stderr, "conversation_id": result_conv_id}
+
 
 async def execute_agy_stream_json(
     prompt: str,
     model_override: str = "",
-    conversation_id: str = None,
+    conversation_id: str | None = None,
     timeout: float = 600.0,
-    tools: list = None,
+    tools: list[Any] | None = None,
     intercept_tools: bool = True,
-    effort: str = None,
+    effort: str | None = None,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
     env = os.environ.copy()
@@ -321,7 +337,7 @@ async def execute_agy_stream_json(
             }
 
         # Real process / line-by-line streaming mode
-        if hasattr(proc.stdin, "write"):
+        if proc.stdin and hasattr(proc.stdin, "write"):
             proc.stdin.write(input_msg.encode("utf-8"))
             if hasattr(proc.stdin, "drain") and asyncio.iscoroutinefunction(proc.stdin.drain):
                 await proc.stdin.drain()
@@ -350,6 +366,7 @@ async def execute_agy_stream_json(
 
         stderr_task = asyncio.create_task(_read_stderr())
 
+        assert proc.stdout is not None
         while True:
             line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
             if not line_bytes:
@@ -430,7 +447,7 @@ async def execute_agy_stream_json(
             "usage": result_usage,
             "tool_calls": [],
         }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if proc is not None:
             try:
                 proc.kill()
@@ -461,10 +478,11 @@ async def execute_agy_stream_json(
             "tool_calls": [],
         }
 
+
 TOOL_CALL_RE = re.compile(
-    r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)",
-    re.IGNORECASE
+    r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)", re.IGNORECASE
 )
+
 
 def format_tools_instruction(tools: list, is_sse_mode: bool = False) -> str:
     """Format tools list into prompt instructions for agy."""
@@ -499,6 +517,7 @@ def format_tools_instruction(tools: list, is_sse_mode: bool = False) -> str:
             "When you need to execute a command, inspect files, or call a tool, invoke the tool directly.\n"
             "If you do not need to call any tool, answer normally with conversational text."
         )
+
 
 def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -> dict:
     """Map native agy tool calls to client-provided tools (e.g. run_command -> terminal)."""
@@ -554,6 +573,7 @@ def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -
         },
     }
 
+
 def extract_reasoning_effort(body: dict) -> str | None:
     """Extract reasoning effort string from request body.
 
@@ -593,6 +613,7 @@ def extract_reasoning_effort(body: dict) -> str | None:
         return "low"
     return e
 
+
 def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     """Parse <tool_call> blocks from text and convert them into OpenAI tool_calls dicts."""
     if not text:
@@ -609,14 +630,16 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
                 if isinstance(item, dict) and "name" in item:
                     args = item.get("arguments") or {}
                     args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
-                    tool_calls.append({
-                        "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {
-                            "name": str(item["name"]),
-                            "arguments": args_str,
-                        },
-                    })
+                    tool_calls.append(
+                        {
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": str(item["name"]),
+                                "arguments": args_str,
+                            },
+                        }
+                    )
             return ""
         except Exception:
             return m.group(0)
@@ -631,35 +654,40 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
                 if "name" in data and ("arguments" in data or "parameters" in data):
                     args = data.get("arguments") or data.get("parameters") or {}
                     args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
-                    tool_calls.append({
-                        "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {
-                            "name": str(data["name"]),
-                            "arguments": args_str,
-                        },
-                    })
+                    tool_calls.append(
+                        {
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": str(data["name"]),
+                                "arguments": args_str,
+                            },
+                        }
+                    )
                     cleaned = ""
                 elif "tool_calls" in data and isinstance(data["tool_calls"], list):
                     for tc in data["tool_calls"]:
                         if isinstance(tc, dict) and "name" in tc:
                             args = tc.get("arguments") or {}
                             args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
-                            tool_calls.append({
-                                "id": f"call_{uuid.uuid4().hex[:8]}",
-                                "type": "function",
-                                "function": {
-                                    "name": str(tc["name"]),
-                                    "arguments": args_str,
-                                },
-                            })
+                            tool_calls.append(
+                                {
+                                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": str(tc["name"]),
+                                        "arguments": args_str,
+                                    },
+                                }
+                            )
                     cleaned = ""
         except Exception:
             pass
 
     return cleaned, tool_calls
 
-def extract_prompt_from_messages(messages: list, tools: list = None, is_sse_mode: bool = False) -> str:
+
+def extract_prompt_from_messages(messages: list[Any], tools: list[Any] | None = None, is_sse_mode: bool = False) -> str:
     """Convert an OpenAI messages array into a clean unified prompt string for agy."""
     if not messages or not isinstance(messages, list):
         prompt = ""
@@ -681,8 +709,9 @@ def extract_prompt_from_messages(messages: list, tools: list = None, is_sse_mode
             else:
                 content = str(raw_content).strip()
 
-            if msg.get("tool_calls") and isinstance(msg.get("tool_calls"), list):
-                for tc in msg.get("tool_calls"):
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list):
+                for tc in tool_calls:
                     if isinstance(tc, dict):
                         fn = tc.get("function") or {}
                         content += f"\n[Tool Call: {fn.get('name')}({fn.get('arguments')})]"
@@ -727,8 +756,10 @@ def extract_prompt_from_messages(messages: list, tools: list = None, is_sse_mode
 
     return prompt
 
+
 class AgyDaemonHandler(BaseHTTPRequestHandler):
     """HTTP request handler for agy execution requests."""
+
     def log_message(self, format, *args):
         """Override to silence standard HTTP logging."""
         pass
@@ -743,20 +774,20 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 "auth": get_auth_status(),
                 "last_conversation_id": get_last_conversation_id(),
             }
-            body = json.dumps(res).encode('utf-8')
+            body = json.dumps(res).encode("utf-8")
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
 
         if self.path == "/run":
             res = {"status": "ok", "message": "Host agy daemon is running"}
-            body = json.dumps(res).encode('utf-8')
+            body = json.dumps(res).encode("utf-8")
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
@@ -765,7 +796,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                exec_res = loop.run_until_complete(execute_agy_print("/usage", model_override="gpt-oss-120b-medium", timeout=30.0))
+                exec_res = loop.run_until_complete(
+                    execute_agy_print("/usage", model_override="gpt-oss-120b-medium", timeout=30.0)
+                )
                 parsed = parse_usage_output(exec_res.get("stdout", ""))
                 parsed["returncode"] = exec_res.get("returncode", 0)
                 parsed["stderr"] = exec_res.get("stderr", "")
@@ -774,16 +807,17 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             finally:
                 loop.close()
 
-            body = json.dumps(parsed).encode('utf-8')
+            body = json.dumps(parsed).encode("utf-8")
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
 
         if self.path in ["/models", "/v1/models"]:
             import subprocess
+
             try:
                 result = subprocess.run([AGY_BINARY, "models"], capture_output=True, text=True, timeout=15)
                 models = parse_models_output(result.stdout)
@@ -814,10 +848,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 ]
                 res = {"object": "list", "data": openai_models}
 
-            body = json.dumps(res).encode('utf-8')
+            body = json.dumps(res).encode("utf-8")
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
@@ -833,14 +867,14 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
+            content_length = int(self.headers.get("Content-Length", 0))
             post_data = self.rfile.read(content_length) if content_length > 0 else b"{}"
-            body = json.loads(post_data.decode('utf-8')) if post_data else {}
+            body = json.loads(post_data.decode("utf-8")) if post_data else {}
         except (ValueError, json.JSONDecodeError) as e:
             self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"error": f"Invalid JSON payload: {e}"}).encode('utf-8'))
+            self.wfile.write(json.dumps({"error": f"Invalid JSON payload: {e}"}).encode("utf-8"))
             return
 
         if self.path in ["/v1/chat/completions", "/chat/completions"]:
@@ -859,54 +893,54 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 parsed = {"error": str(e), "quotas": []}
             finally:
                 loop.close()
-            body_bytes = json.dumps(parsed).encode('utf-8')
+            body_bytes = json.dumps(parsed).encode("utf-8")
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body_bytes)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_bytes)))
             self.end_headers()
             self.wfile.write(body_bytes)
             return
 
-        
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
         timeout = body.get("timeout", 600.0)
         stream = body.get("stream", False)
-        
+
         if stream:
             # 1. Send HTTP headers for streaming NDJSON
-            self.protocol_version = 'HTTP/1.1'
+            self.protocol_version = "HTTP/1.1"
             self.send_response(200)
-            self.send_header('Content-Type', 'application/x-ndjson')
-            self.send_header('Connection', 'close')
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Connection", "close")
             self.end_headers()
-            
+
             # 2. Setup loop to run async process and stream output
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            
+
             async def run_stream():
                 """Asynchronously execute agy and stream output via PTY."""
                 import pty
-                
+
                 env = os.environ.copy()
                 if model_override:
                     env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
                 else:
                     env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
-                    
+
                 cmd = [AGY_BINARY]
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
                 cmd.extend(["--print", prompt])
-                
+
                 master_fd, slave_fd = pty.openpty()
                 proc = None
                 try:
                     try:
                         proc = await asyncio.create_subprocess_exec(
-                            *cmd, env=env,
+                            *cmd,
+                            env=env,
                             stdout=slave_fd,
                             stderr=slave_fd,
                         )
@@ -915,7 +949,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         os.close(slave_fd)
                         # Write failure details as status
                         err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
-                        self.wfile.write(err_msg.encode('utf-8'))
+                        self.wfile.write(err_msg.encode("utf-8"))
                         self.wfile.flush()
                         return
 
@@ -932,21 +966,21 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         data = await loop_ref.run_in_executor(None, read_bytes)
                         if not data:
                             break
-                        text = data.decode('utf-8', errors='replace')
+                        text = data.decode("utf-8", errors="replace")
                         # PTY text can have \r\n, normalize to \n
-                        text_norm = text.replace('\r\n', '\n')
+                        text_norm = text.replace("\r\n", "\n")
                         # Yield token JSON line
                         chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
                         try:
-                            self.wfile.write(chunk_json.encode('utf-8'))
+                            self.wfile.write(chunk_json.encode("utf-8"))
                             self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError, OSError):
+                        except BrokenPipeError, ConnectionResetError, OSError:
                             break
 
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=timeout)
                         returncode = proc.returncode or 0
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         try:
                             proc.kill()
                             await proc.wait()
@@ -960,12 +994,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     result_conv_id = get_last_conversation_id()
 
                     # Write closing metadata
-                    meta_json = json.dumps({
-                        "type": "status",
-                        "returncode": returncode,
-                        "conversation_id": result_conv_id
-                    }) + "\n"
-                    self.wfile.write(meta_json.encode('utf-8'))
+                    meta_json = (
+                        json.dumps({"type": "status", "returncode": returncode, "conversation_id": result_conv_id})
+                        + "\n"
+                    )
+                    self.wfile.write(meta_json.encode("utf-8"))
                     self.wfile.flush()
                 finally:
                     try:
@@ -978,13 +1011,13 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             await proc.wait()
                         except Exception:
                             pass
-                
+
             try:
                 loop.run_until_complete(run_stream())
             finally:
                 loop.close()
             return
-            
+
         # Execute in new asyncio event loop (non-streaming path)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1000,11 +1033,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         finally:
             loop.close()
 
-        response_bytes = json.dumps(res).encode('utf-8')
+        response_bytes = json.dumps(res).encode("utf-8")
 
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(response_bytes)))
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response_bytes)))
         self.end_headers()
         self.wfile.write(response_bytes)
 
@@ -1015,7 +1048,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         model = body.get("model", "gemini-3.8-flash")
         model_lower = str(model).lower()
         is_sse_mode = "sse" in model_lower or "autonomous" in model_lower
-        prompt = extract_prompt_from_messages(messages, tools=tools, is_sse_mode=is_sse_mode) if messages else body.get("prompt", "")
+        prompt = (
+            extract_prompt_from_messages(messages, tools=tools, is_sse_mode=is_sse_mode)
+            if messages
+            else body.get("prompt", "")
+        )
         stream = body.get("stream", False)
         timeout = float(body.get("timeout", 600.0))
         raw_conv_id = body.get("conversation_id")
@@ -1056,11 +1093,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 model_override = "gemini-3.8-flash-low"
 
         if stream:
-            self.protocol_version = 'HTTP/1.1'
+            self.protocol_version = "HTTP/1.1"
             self.send_response(200)
-            self.send_header('Content-Type', 'text/event-stream')
-            self.send_header('Cache-Control', 'no-cache')
-            self.send_header('Connection', 'close')
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
             self.end_headers()
 
             loop = asyncio.new_event_loop()
@@ -1089,13 +1126,14 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         self.wfile.write(payload)
                         self.wfile.flush()
                         return True
-                    except (BrokenPipeError, ConnectionResetError, OSError):
+                    except BrokenPipeError, ConnectionResetError, OSError:
                         return False
 
                 proc = None
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        *cmd, env=env,
+                        *cmd,
+                        env=env,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
@@ -1108,11 +1146,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             "code": 502,
                         }
                     }
-                    safe_write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
+                    safe_write(b"data: " + json.dumps(err_chunk).encode("utf-8") + b"\n\n")
                     return
 
                 try:
-                    proc.stdin.write(input_msg.encode('utf-8'))
+                    proc.stdin.write(input_msg.encode("utf-8"))
                     await asyncio.wait_for(proc.stdin.drain(), timeout=min(5.0, timeout))
                     proc.stdin.close()
                     await proc.stdin.wait_closed()
@@ -1131,7 +1169,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
                         if not line:
                             break
-                        line_str = line.decode('utf-8', errors='replace').strip()
+                        line_str = line.decode("utf-8", errors="replace").strip()
                         if not line_str:
                             continue
                         try:
@@ -1182,7 +1220,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                         }
                                     ],
                                 }
-                                if not safe_write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n"):
+                                if not safe_write(b"data: " + json.dumps(chunk_data).encode("utf-8") + b"\n\n"):
                                     return
                             delta = su.get("text_delta")
                             if delta:
@@ -1203,7 +1241,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                             }
                                         ],
                                     }
-                                    if not safe_write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n"):
+                                    if not safe_write(b"data: " + json.dumps(chunk_data).encode("utf-8") + b"\n\n"):
                                         return
                         elif ev == "result":
                             res = event_obj.get("result", {})
@@ -1218,7 +1256,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         await asyncio.wait_for(proc.wait(), timeout=remaining)
                     if proc.returncode != 0 and not stream_error and not intercepted_tool_call:
                         stream_error = f"agy exited with returncode {proc.returncode}"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     stream_error = f"Execution timed out after {timeout} seconds"
                 except Exception as e:
                     stream_error = str(e)
@@ -1238,7 +1276,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                         if stderr_text:
                                             if stream_error:
                                                 stream_error = f"{stream_error} - {stderr_text}"
-                                            elif proc.returncode is not None and proc.returncode != 0 and not intercepted_tool_call:
+                                            elif (
+                                                proc.returncode is not None
+                                                and proc.returncode != 0
+                                                and not intercepted_tool_call
+                                            ):
                                                 stream_error = stderr_text
                             except Exception:
                                 pass
@@ -1252,9 +1294,17 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 # If an error occurred, emit an error payload and exit WITHOUT [DONE]
                 # so LiteLLM and clients detect stream failure and trigger fallback.
                 if stream_error:
-                    is_quota = any(x in stream_error.lower() for x in [
-                        "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
-                    ])
+                    is_quota = any(
+                        x in stream_error.lower()
+                        for x in [
+                            "quota",
+                            "rate",
+                            "429",
+                            "exhaust",
+                            "resource_exhausted",
+                            "resource has been exhausted",
+                        ]
+                    )
                     err_status = 429 if is_quota else 502
                     err_type = "rate_limit_error" if is_quota else "api_error"
                     err_chunk = {
@@ -1264,7 +1314,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             "code": err_status,
                         }
                     }
-                    safe_write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
+                    safe_write(b"data: " + json.dumps(err_chunk).encode("utf-8") + b"\n\n")
                     return
 
                 if intercepted_tool_call:
@@ -1292,7 +1342,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             }
                         ],
                     }
-                    if not safe_write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n"):
+                    if not safe_write(b"data: " + json.dumps(tool_chunk).encode("utf-8") + b"\n\n"):
                         return
                     finish_chunk = {
                         "id": chunk_id,
@@ -1307,7 +1357,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             }
                         ],
                     }
-                    if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                    if not safe_write(b"data: " + json.dumps(finish_chunk).encode("utf-8") + b"\n\n"):
                         return
                     safe_write(b"data: [DONE]\n\n")
                     return
@@ -1341,7 +1391,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        if not safe_write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n"):
+                        if not safe_write(b"data: " + json.dumps(tool_chunk).encode("utf-8") + b"\n\n"):
                             return
                         finish_chunk = {
                             "id": chunk_id,
@@ -1356,7 +1406,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode("utf-8") + b"\n\n"):
                             return
                     else:
                         text_chunk = {
@@ -1372,7 +1422,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        if not safe_write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n"):
+                        if not safe_write(b"data: " + json.dumps(text_chunk).encode("utf-8") + b"\n\n"):
                             return
                         finish_chunk = {
                             "id": chunk_id,
@@ -1387,7 +1437,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode("utf-8") + b"\n\n"):
                             return
                 else:
                     if not has_streamed_deltas and accumulated_chunks:
@@ -1405,7 +1455,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        if not safe_write(b"data: " + json.dumps(fallback_chunk).encode('utf-8') + b"\n\n"):
+                        if not safe_write(b"data: " + json.dumps(fallback_chunk).encode("utf-8") + b"\n\n"):
                             return
                     finish_data = {
                         "id": chunk_id,
@@ -1420,7 +1470,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             }
                         ],
                     }
-                    if not safe_write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n"):
+                    if not safe_write(b"data: " + json.dumps(finish_data).encode("utf-8") + b"\n\n"):
                         return
                 safe_write(b"data: [DONE]\n\n")
 
@@ -1435,6 +1485,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         asyncio.set_event_loop(loop)
         try:
             import inspect
+
             sig = inspect.signature(execute_agy_stream_json)
             kwargs = {
                 "prompt": prompt,
@@ -1442,13 +1493,19 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 "conversation_id": conversation_id,
                 "timeout": timeout,
             }
-            if "tools" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            if "tools" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
                 kwargs["tools"] = tools
-            if "intercept_tools" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            if "intercept_tools" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
                 kwargs["intercept_tools"] = not is_sse_mode
-            if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            if "effort" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
                 kwargs["effort"] = effort_cli
-            exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))
+            exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))  # type: ignore[arg-type]
         finally:
             loop.close()
 
@@ -1456,9 +1513,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         if retcode != 0:
             err_text = exec_res.get("stderr") or exec_res.get("stdout") or "Unknown error"
             err_lower = err_text.lower()
-            is_quota = any(x in err_lower for x in [
-                "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
-            ])
+            is_quota = any(
+                x in err_lower
+                for x in ["quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"]
+            )
             status_code = 429 if is_quota else 502
             err_type = "rate_limit_error" if is_quota else "api_error"
             err_resp = {
@@ -1468,10 +1526,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     "code": status_code,
                 }
             }
-            body_bytes = json.dumps(err_resp).encode('utf-8')
+            body_bytes = json.dumps(err_resp).encode("utf-8")
             self.send_response(status_code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body_bytes)))
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_bytes)))
             self.end_headers()
             self.wfile.write(body_bytes)
             return
@@ -1517,17 +1575,18 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 "total_tokens": prompt_tokens + completion_tokens,
             },
         }
-        body_bytes = json.dumps(resp).encode('utf-8')
+        body_bytes = json.dumps(resp).encode("utf-8")
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body_bytes)))
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_bytes)))
         self.end_headers()
         self.wfile.write(body_bytes)
         return
 
+
 def run_server():
     """Start the ThreadingHTTPServer on the configured port."""
-    server = ThreadingHTTPServer(('127.0.0.1', PORT), AgyDaemonHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), AgyDaemonHandler)
     print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
     try:
         server.serve_forever()
@@ -1535,6 +1594,7 @@ def run_server():
         pass
     finally:
         server.server_close()
+
 
 if __name__ == "__main__":
     run_server()

@@ -11,6 +11,7 @@ import pytest
 
 import host_agy_daemon
 
+
 def make_run_request(daemon_server, payload):
     return urllib.request.Request(
         f"{daemon_server}/run",
@@ -18,17 +19,19 @@ def make_run_request(daemon_server, payload):
         headers={"Content-Type": "application/json"},
     )
 
+
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('127.0.0.1', 0))
+        s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
 
 @pytest.fixture
 def daemon_server(monkeypatch):
     port = find_free_port()
     monkeypatch.setattr(host_agy_daemon, "PORT", port)
 
-    server = host_agy_daemon.ThreadingHTTPServer(('127.0.0.1', port), host_agy_daemon.AgyDaemonHandler)
+    server = host_agy_daemon.ThreadingHTTPServer(("127.0.0.1", port), host_agy_daemon.AgyDaemonHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
@@ -37,6 +40,7 @@ def daemon_server(monkeypatch):
     server.shutdown()
     server.server_close()
     server_thread.join(timeout=5)
+
 
 def test_get_last_conversation_id(monkeypatch, tmp_path):
     cache_file = tmp_path / "last_conversations.json"
@@ -50,9 +54,11 @@ def test_get_last_conversation_id(monkeypatch, tmp_path):
     monkeypatch.setattr(host_agy_daemon.os, "getcwd", lambda: "/other/cwd")
     assert host_agy_daemon.get_last_conversation_id() is None
 
+
 def test_get_last_conversation_id_no_file(monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", "/does/not/exist.json")
     assert host_agy_daemon.get_last_conversation_id() is None
+
 
 def test_get_last_conversation_id_invalid_json(monkeypatch, tmp_path):
     cache_file = tmp_path / "last_conversations.json"
@@ -61,13 +67,17 @@ def test_get_last_conversation_id_invalid_json(monkeypatch, tmp_path):
     monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", str(cache_file))
     assert host_agy_daemon.get_last_conversation_id() is None
 
+
 def test_get_last_conversation_id_io_error(monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "CACHE_FILE", "/fake/cache.json")
     monkeypatch.setattr(host_agy_daemon.os.path, "exists", lambda x: True)
+
     def mock_open_err(*args, **kwargs):
-        raise IOError("permission denied")
+        raise OSError("permission denied")
+
     monkeypatch.setattr("builtins.open", mock_open_err)
     assert host_agy_daemon.get_last_conversation_id() is None
+
 
 def test_daemon_post_404(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/invalid", method="POST")
@@ -75,10 +85,15 @@ def test_daemon_post_404(daemon_server):
         urllib.request.urlopen(req, timeout=5)
     assert exc.value.code == 404
 
+
 def test_daemon_post_stream_false(daemon_server, monkeypatch):
-    req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False, "conversation_id": "conv_abc", "model_override": "gpt-4"})
+    req = make_run_request(
+        daemon_server,
+        {"prompt": "test prompt", "stream": False, "conversation_id": "conv_abc", "model_override": "gpt-4"},
+    )
 
     captured = {}
+
     async def mock_exec(*args, **kwargs):
         captured["args"] = args
         captured["env"] = kwargs.get("env", {})
@@ -108,15 +123,18 @@ def test_daemon_post_stream_false(daemon_server, monkeypatch):
     assert data["stderr"] == "mocked stderr output"
     assert data["conversation_id"] == "last_conv_456"
 
+
 def test_daemon_post_stream_false_timeout(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False, "timeout": 0.1})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         # Make wait take longer than timeout
         async def slow_wait():
             await asyncio.sleep(0.5)
+
         mock_proc.wait = slow_wait
         # Make kill synchronous
         mock_proc.kill = lambda: None
@@ -130,10 +148,12 @@ def test_daemon_post_stream_false_timeout(daemon_server, monkeypatch):
     assert data["returncode"] == -1
     assert data["stderr"] == "TIMEOUT"
 
+
 def test_daemon_post_stream_true(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "model_override": "test-model"})
 
     captured = {}
+
     async def mock_exec(*args, **kwargs):
         captured["args"] = args
         captured["env"] = kwargs.get("env", {})
@@ -146,6 +166,7 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "last_conv_456")
 
     read_calls = 0
+
     def mock_read(fd, n):
         nonlocal read_calls
         if read_calls == 0:
@@ -169,6 +190,7 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
     assert json.loads(lines[1]) == {"type": "token", "content": "token2\n"}
     assert json.loads(lines[2]) == {"type": "status", "returncode": 0, "conversation_id": "last_conv_456"}
 
+
 def test_daemon_post_stream_true_exec_error(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True})
 
@@ -184,14 +206,17 @@ def test_daemon_post_stream_true_exec_error(daemon_server, monkeypatch):
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": -1, "stderr": "exec failed"}
 
+
 def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "timeout": 0.1})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         async def slow_wait():
             await asyncio.sleep(0.5)
+
         mock_proc.wait = slow_wait
         # Make kill synchronous
         mock_proc.kill = lambda: None
@@ -201,6 +226,7 @@ def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
 
     read_calls = 0
+
     def mock_read(fd, n):
         nonlocal read_calls
         if read_calls == 0:
@@ -218,14 +244,17 @@ def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
     assert json.loads(lines[0]) == {"type": "token", "content": "token1\n"}
     assert json.loads(lines[1]) == {"type": "status", "returncode": -1, "conversation_id": None}
 
+
 def test_log_message_silenced():
     # Instantiate the class, bypassing BaseHTTPRequestHandler.__init__
     handler = host_agy_daemon.AgyDaemonHandler.__new__(host_agy_daemon.AgyDaemonHandler)
     # Shouldn't raise any error
     handler.log_message("format %s", "arg")
 
+
 def test_run_server_interrupt(monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "PORT", find_free_port())
+
     # Mock serve_forever to raise KeyboardInterrupt
     def mock_serve_forever(self):
         raise KeyboardInterrupt()
@@ -235,6 +264,7 @@ def test_run_server_interrupt(monkeypatch):
     # Track if server_close was called
     close_called = False
     real_close = host_agy_daemon.ThreadingHTTPServer.server_close
+
     def mock_server_close(self):
         nonlocal close_called
         close_called = True
@@ -246,10 +276,12 @@ def test_run_server_interrupt(monkeypatch):
     host_agy_daemon.run_server()
     assert close_called
 
+
 def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False})
 
     captured = {}
+
     async def mock_exec(*args, **kwargs):
         captured["env"] = kwargs.get("env", {})
         mock_proc = AsyncMock()
@@ -265,6 +297,7 @@ def test_daemon_post_stream_false_no_model_override(daemon_server, monkeypatch):
 
     assert "CASCADE_DEFAULT_MODEL_OVERRIDE" not in captured.get("env", {})
     assert data["returncode"] == 0
+
 
 def test_daemon_post_stream_true_read_oserror(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True})
@@ -289,17 +322,22 @@ def test_daemon_post_stream_true_read_oserror(daemon_server, monkeypatch):
     assert len(lines) == 1
     assert json.loads(lines[0])["type"] == "status"
 
+
 def test_daemon_post_stream_true_timeout_kill_fail(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "timeout": 0.1})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         async def slow_wait():
             await asyncio.sleep(0.5)
+
         mock_proc.wait = slow_wait
+
         def mock_kill():
             raise Exception("kill failed")
+
         mock_proc.kill = mock_kill
         return mock_proc
 
@@ -314,14 +352,17 @@ def test_daemon_post_stream_true_timeout_kill_fail(daemon_server, monkeypatch):
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": -1, "conversation_id": None}
 
+
 def test_daemon_post_stream_true_wait_exception(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         async def mock_wait():
             raise Exception("wait failed")
+
         mock_proc.wait = mock_wait
         return mock_proc
 
@@ -336,17 +377,22 @@ def test_daemon_post_stream_true_wait_exception(daemon_server, monkeypatch):
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": -1, "conversation_id": None}
 
+
 def test_daemon_post_stream_false_timeout_kill_fail(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False, "timeout": 0.1})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         async def slow_wait():
             await asyncio.sleep(0.5)
+
         mock_proc.wait = slow_wait
+
         def mock_kill():
             raise Exception("kill failed")
+
         mock_proc.kill = mock_kill
         return mock_proc
 
@@ -358,14 +404,17 @@ def test_daemon_post_stream_false_timeout_kill_fail(daemon_server, monkeypatch):
     assert data["returncode"] == -1
     assert data["stderr"] == "TIMEOUT"
 
+
 def test_daemon_post_stream_false_wait_exception(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False})
 
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
+
         async def mock_wait():
             raise Exception("wait failed")
+
         mock_proc.wait = mock_wait
         return mock_proc
 
@@ -375,6 +424,7 @@ def test_daemon_post_stream_false_wait_exception(daemon_server, monkeypatch):
         data = json.loads(resp.read().decode())
 
     assert data["returncode"] == -1
+
 
 def test_daemon_post_stream_false_file_read_error(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False})
@@ -399,6 +449,7 @@ def test_daemon_post_stream_false_file_read_error(daemon_server, monkeypatch):
     assert data["stdout"] == ""
     assert data["stderr"] == ""
 
+
 def test_daemon_post_stream_false_unlink_error(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": False})
 
@@ -420,10 +471,12 @@ def test_daemon_post_stream_false_unlink_error(daemon_server, monkeypatch):
 
     assert data["returncode"] == 0
 
+
 def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True, "conversation_id": "conv_789"})
 
     captured = {}
+
     async def mock_exec(*args, **kwargs):
         captured["args"] = args
         mock_proc = AsyncMock()
@@ -443,17 +496,21 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": 0, "conversation_id": "conv_789"}
 
+
 def test_daemon_post_stream_true_finally_cleanup(daemon_server, monkeypatch):
     req = make_run_request(daemon_server, {"prompt": "test prompt", "stream": True})
 
     from unittest.mock import MagicMock
+
     mock_proc = MagicMock()
     mock_proc.returncode = None
     mock_proc.wait = AsyncMock()
     killed = False
+
     def mock_kill():
         nonlocal killed
         killed = True
+
     mock_proc.kill = mock_kill
 
     async def mock_exec(*args, **kwargs):
@@ -461,6 +518,7 @@ def test_daemon_post_stream_true_finally_cleanup(daemon_server, monkeypatch):
 
     closed_fds = []
     real_close = host_agy_daemon.os.close
+
     def mock_close(fd):
         closed_fds.append(fd)
         try:
@@ -478,6 +536,7 @@ def test_daemon_post_stream_true_finally_cleanup(daemon_server, monkeypatch):
     assert killed is True
     assert len(closed_fds) > 0
 
+
 def test_parse_usage_output():
     text = """Quota:
 Gemini Models          Weekly Limit Remaining     96%   2026-08-20T16:58:06Z
@@ -491,6 +550,7 @@ Claude and GPT models  Five Hour Limit Remaining  100%  2026-08-14T18:37:53Z"""
     assert result["quotas"][2]["category"] == "Claude and GPT models"
     assert result["quotas"][2]["remaining"] == "100%"
 
+
 def test_parse_models_output():
     text = """⠋ Fetching available models...
 gemini-3.7-flash-high     Gemini 3.7 Flash (High)
@@ -503,16 +563,21 @@ gpt-oss-120b-medium       GPT-OSS 120B (Medium)"""
     assert models[2]["id"] == "gpt-oss-120b-medium"
     assert models[2]["name"] == "GPT-OSS 120B (Medium)"
 
+
 def test_get_auth_status(tmp_path, monkeypatch):
     token_file = tmp_path / "antigravity-oauth-token"
-    token_file.write_text(json.dumps({
-        "auth_method": "consumer",
-        "token": {
-            "access_token": "mock_tok",
-            "refresh_token": "mock_ref",
-            "expiry": "2026-08-14T15:45:24.092546+02:00"
-        }
-    }))
+    token_file.write_text(
+        json.dumps(
+            {
+                "auth_method": "consumer",
+                "token": {
+                    "access_token": "mock_tok",
+                    "refresh_token": "mock_ref",
+                    "expiry": "2026-08-14T15:45:24.092546+02:00",
+                },
+            }
+        )
+    )
     monkeypatch.setattr(host_agy_daemon, "CLI_TOKEN_PATH", str(token_file))
 
     status = host_agy_daemon.get_auth_status()
@@ -525,6 +590,7 @@ def test_get_auth_status(tmp_path, monkeypatch):
     assert missing_status["authenticated"] is False
     assert missing_status["status"] == "missing"
 
+
 def test_daemon_get_health(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/health")
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -534,6 +600,7 @@ def test_daemon_get_health(daemon_server):
     assert "agy_binary" in data
     assert "auth" in data
 
+
 def test_daemon_get_run_probe(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/run")
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -541,14 +608,16 @@ def test_daemon_get_run_probe(daemon_server):
         data = json.loads(resp.read().decode())
     assert data["status"] == "ok"
 
+
 def test_daemon_get_usage(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {
             "returncode": 0,
             "stdout": "Quota:\nGemini Models  Weekly Limit Remaining  95%  2026-08-20Z",
             "stderr": "",
-            "conversation_id": None
+            "conversation_id": None,
         }
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
 
     req = urllib.request.Request(f"{daemon_server}/usage")
@@ -557,8 +626,10 @@ def test_daemon_get_usage(daemon_server, monkeypatch):
         data = json.loads(resp.read().decode())
     assert "quotas" in data
 
+
 def test_daemon_get_models(daemon_server, monkeypatch):
     from unittest.mock import MagicMock
+
     mock_run = MagicMock()
     mock_run.returncode = 0
     mock_run.stdout = "gpt-oss-120b-medium  GPT-OSS 120B (Medium)\n"
@@ -572,6 +643,7 @@ def test_daemon_get_models(daemon_server, monkeypatch):
     assert len(data["models"]) == 1
     assert data["models"][0]["id"] == "gpt-oss-120b-medium"
 
+
 def test_daemon_get_status(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/status")
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -580,6 +652,7 @@ def test_daemon_get_status(daemon_server):
     assert data["status"] == "ok"
     assert "auth" in data
 
+
 def test_extract_prompt_from_messages():
     assert host_agy_daemon.extract_prompt_from_messages([]) == ""
     assert host_agy_daemon.extract_prompt_from_messages(None) == ""
@@ -587,7 +660,11 @@ def test_extract_prompt_from_messages():
     msgs = [
         {"role": "system", "content": "You are a helpful bot"},
         {"role": "user", "content": [{"type": "text", "text": "Hello world"}]},
-        {"role": "assistant", "content": "Hi there!", "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}]},
+        {
+            "role": "assistant",
+            "content": "Hi there!",
+            "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}],
+        },
         {"role": "tool", "content": "Sunny 25C"},
         {"role": "user", "content": "Great!"},
     ]
@@ -601,6 +678,7 @@ def test_extract_prompt_from_messages():
     assert "Tool Output: Sunny 25C" in prompt
     assert "User: Great!" in prompt
 
+
 def test_daemon_get_v1_models(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/v1/models")
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -611,8 +689,10 @@ def test_daemon_get_v1_models(daemon_server):
     assert "gemini-3.8-flash" in model_ids
     assert "claude-opus-4.6" in model_ids
 
+
 def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         captured["prompt"] = prompt
         captured["model_override"] = model_override
@@ -624,13 +704,14 @@ def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
             "conversation_id": "conv_999",
             "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
         }
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
         "messages": [{"role": "user", "content": "Hi"}],
         "stream": False,
-        "conversation_id": "test_conv"
+        "conversation_id": "test_conv",
     }
     req = urllib.request.Request(
         f"{daemon_server}/v1/chat/completions",
@@ -647,11 +728,14 @@ def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
     assert captured["conversation_id"] == "test_conv"
     assert "User: Hi" in captured["prompt"]
 
+
 def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         captured["model_override"] = model_override
         return {"returncode": 0, "stdout": "Opus reply", "stderr": "", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -670,11 +754,14 @@ def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
     assert data["choices"][0]["message"]["content"] == "Opus reply"
     assert captured["model_override"] == "claude-opus-4-6-thinking"
 
+
 def test_daemon_chat_completions_gptoss_override(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         captured["model_override"] = model_override
         return {"returncode": 0, "stdout": "GPT-OSS reply", "stderr": "", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -693,11 +780,14 @@ def test_daemon_chat_completions_gptoss_override(daemon_server, monkeypatch):
     assert data["choices"][0]["message"]["content"] == "GPT-OSS reply"
     assert captured["model_override"] == "gpt-oss-120b-medium"
 
+
 def test_daemon_chat_completions_sonnet_override(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         captured["model_override"] = model_override
         return {"returncode": 0, "stdout": "Sonnet reply", "stderr": "", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -716,9 +806,16 @@ def test_daemon_chat_completions_sonnet_override(daemon_server, monkeypatch):
     assert data["choices"][0]["message"]["content"] == "Sonnet reply"
     assert captured["model_override"] == "claude-sonnet-4-6"
 
+
 def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
-        return {"returncode": 1, "stdout": "", "stderr": "Resource exhausted: quota limit reached (429)", "conversation_id": None}
+        return {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Resource exhausted: quota limit reached (429)",
+            "conversation_id": None,
+        }
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -736,9 +833,11 @@ def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
     err_data = json.loads(exc.value.read().decode())
     assert err_data["error"]["type"] == "rate_limit_error"
 
+
 def test_daemon_chat_completions_generic_error(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {"returncode": 2, "stdout": "", "stderr": "Crash or socket error", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -754,17 +853,20 @@ def test_daemon_chat_completions_generic_error(daemon_server, monkeypatch):
         urllib.request.urlopen(req, timeout=5)
     assert exc.value.code == 502
 
+
 def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
         mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(side_effect=[
-            b'{"event":"step_update","step_update":{"text_delta":"Hello world"}}\n',
-            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello world"}}\n',
-            b'',
-        ])
+        mock_proc.stdout.readline = AsyncMock(
+            side_effect=[
+                b'{"event":"step_update","step_update":{"text_delta":"Hello world"}}\n',
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Hello world"}}\n',
+                b"",
+            ]
+        )
         mock_proc.stdin = MagicMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
@@ -794,6 +896,7 @@ def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
     assert parsed_chunk["object"] == "chat.completion.chunk"
     assert parsed_chunk["choices"][0]["delta"]["content"] == "Hello world"
 
+
 def test_format_tools_instruction():
     assert host_agy_daemon.format_tools_instruction([]) == ""
     assert host_agy_daemon.format_tools_instruction(None) == ""
@@ -804,7 +907,7 @@ def test_format_tools_instruction():
                 "name": "terminal",
                 "description": "Run a command",
                 "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
-            }
+            },
         }
     ]
     instr = host_agy_daemon.format_tools_instruction(tools, is_sse_mode=False)
@@ -816,13 +919,14 @@ def test_format_tools_instruction():
     assert "# Available Client Tools" in instr_sse
     assert "<tools>" in instr_sse
 
+
 def test_parse_tool_calls_from_text():
     # Empty
     assert host_agy_daemon.parse_tool_calls_from_text("") == ("", [])
     assert host_agy_daemon.parse_tool_calls_from_text(None) == ("", [])
 
     # Standard XML tool call tag
-    text1 = "I will check uptime:\n<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>"
+    text1 = 'I will check uptime:\n<tool_call>\n{"name": "terminal", "arguments": {"command": "uptime"}}\n</tool_call>'
     cleaned1, calls1 = host_agy_daemon.parse_tool_calls_from_text(text1)
     assert cleaned1 == "I will check uptime:"
     assert len(calls1) == 1
@@ -831,14 +935,14 @@ def test_parse_tool_calls_from_text():
     assert calls1[0]["id"].startswith("call_")
 
     # Markdown fence tool call
-    text2 = "```tool_call\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"test.txt\"}}\n```"
+    text2 = '```tool_call\n{"name": "read_file", "arguments": {"path": "test.txt"}}\n```'
     cleaned2, calls2 = host_agy_daemon.parse_tool_calls_from_text(text2)
     assert cleaned2 == ""
     assert len(calls2) == 1
     assert calls2[0]["function"]["name"] == "read_file"
 
     # Multiple tool calls
-    text3 = "<tool_call>{\"name\": \"tool_a\", \"arguments\": {}}</tool_call>\n<tool_call>{\"name\": \"tool_b\", \"arguments\": {\"x\": 1}}</tool_call>"
+    text3 = '<tool_call>{"name": "tool_a", "arguments": {}}</tool_call>\n<tool_call>{"name": "tool_b", "arguments": {"x": 1}}</tool_call>'
     cleaned3, calls3 = host_agy_daemon.parse_tool_calls_from_text(text3)
     assert len(calls3) == 2
     assert calls3[0]["function"]["name"] == "tool_a"
@@ -856,6 +960,7 @@ def test_parse_tool_calls_from_text():
     assert cleaned5 == "Hello, I am an AI assistant."
     assert calls5 == []
 
+
 def test_extract_prompt_with_tools():
     msgs = [{"role": "user", "content": "What is the date?"}]
     tools = [{"type": "function", "function": {"name": "get_date", "parameters": {}}}]
@@ -867,14 +972,16 @@ def test_extract_prompt_with_tools():
     prompt_sse = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools, is_sse_mode=True)
     assert "System: # Available Client Tools" in prompt_sse
 
+
 def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {
             "returncode": 0,
-            "stdout": "<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>",
+            "stdout": '<tool_call>\n{"name": "terminal", "arguments": {"command": "uptime"}}\n</tool_call>',
             "stderr": "",
             "conversation_id": "conv_tool_1",
         }
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -887,7 +994,7 @@ def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeyp
                     "name": "terminal",
                     "description": "Run shell command",
                     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
-                }
+                },
             }
         ],
         "stream": False,
@@ -907,18 +1014,26 @@ def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeyp
     assert tool_calls[0]["function"]["name"] == "terminal"
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"command": "uptime"}
 
+
 def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
-        tc_line = json.dumps({
-            "event": "step_update",
-            "step_update": {
-                "text_delta": '<tool_call>\n{"name": "terminal", "arguments": {"command": "uname -a"}}\n</tool_call>'
-            }
-        }).encode("utf-8") + b"\n"
-        res_line = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": ""}}).encode("utf-8") + b"\n"
+        tc_line = (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "text_delta": '<tool_call>\n{"name": "terminal", "arguments": {"command": "uname -a"}}\n</tool_call>'
+                    },
+                }
+            ).encode("utf-8")
+            + b"\n"
+        )
+        res_line = (
+            json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": ""}}).encode("utf-8") + b"\n"
+        )
         mock_proc.stdout.readline = AsyncMock(side_effect=[tc_line, res_line, b""])
         mock_proc.stdin = MagicMock()
         mock_proc.stdin.write = MagicMock()
@@ -944,12 +1059,17 @@ def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch
         assert resp.status == 200
         lines = resp.read().decode("utf-8").split("\n\n")
 
-    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    sse_data = [
+        json.loads(l.replace("data: ", ""))
+        for l in lines
+        if l.startswith("data: ") and not l.startswith("data: [DONE]")
+    ]
     assert len(sse_data) >= 2
     # First chunk has tool_calls delta
     assert sse_data[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "terminal"
     # Second chunk has finish_reason = tool_calls
     assert sse_data[1]["choices"][0]["finish_reason"] == "tool_calls"
+
 
 def test_parse_tool_calls_with_embedded_code_fences():
     text = '<tool_call>\n{"name": "write_code", "arguments": {"code": "```python\\ndef hello():\\n    print(\'hi\')\\n```"}}\n</tool_call>'
@@ -960,6 +1080,7 @@ def test_parse_tool_calls_with_embedded_code_fences():
     args = json.loads(calls[0]["function"]["arguments"])
     assert "```python" in args["code"]
 
+
 def test_parse_tool_calls_with_null_arguments():
     text = '<tool_call>\n{"name": "no_arg_tool", "arguments": null}\n</tool_call>'
     cleaned, calls = host_agy_daemon.parse_tool_calls_from_text(text)
@@ -967,17 +1088,20 @@ def test_parse_tool_calls_with_null_arguments():
     assert calls[0]["function"]["name"] == "no_arg_tool"
     assert calls[0]["function"]["arguments"] == "{}"
 
+
 def test_daemon_chat_completions_with_tools_streaming_conversational(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
         mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(side_effect=[
-            b'{"event":"step_update","step_update":{"text_delta":"Hello, I am a conversational assistant!"}}\n',
-            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello, I am a conversational assistant!"}}\n',
-            b'',
-        ])
+        mock_proc.stdout.readline = AsyncMock(
+            side_effect=[
+                b'{"event":"step_update","step_update":{"text_delta":"Hello, I am a conversational assistant!"}}\n',
+                b'{"event":"result","result":{"status":"SUCCESS","response":"Hello, I am a conversational assistant!"}}\n',
+                b"",
+            ]
+        )
         mock_proc.stdin = MagicMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
@@ -1002,13 +1126,19 @@ def test_daemon_chat_completions_with_tools_streaming_conversational(daemon_serv
         assert resp.status == 200
         lines = resp.read().decode("utf-8").split("\n\n")
 
-    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    sse_data = [
+        json.loads(l.replace("data: ", ""))
+        for l in lines
+        if l.startswith("data: ") and not l.startswith("data: [DONE]")
+    ]
     assert len(sse_data) >= 2
     assert sse_data[0]["choices"][0]["delta"]["content"] == "Hello, I am a conversational assistant!"
     assert sse_data[1]["choices"][0]["finish_reason"] == "stop"
 
+
 def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
     captured_conv_id = None
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         nonlocal captured_conv_id
         captured_conv_id = conversation_id
@@ -1018,6 +1148,7 @@ def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
             "stderr": "",
             "conversation_id": "new_conv_1",
         }
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -1035,6 +1166,7 @@ def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
 
     # Ensure sess- session was ignored and not passed as agy --conversation
     assert captured_conv_id is None
+
 
 @pytest.mark.asyncio
 async def test_execute_agy_stream_json_success(monkeypatch):
@@ -1054,6 +1186,7 @@ async def test_execute_agy_stream_json_success(monkeypatch):
     assert res["conversation_id"] == "c123"
     assert res["usage"]["total_tokens"] == 120
 
+
 @pytest.mark.asyncio
 async def test_execute_agy_stream_json_error(monkeypatch):
     mock_proc = AsyncMock()
@@ -1067,27 +1200,34 @@ async def test_execute_agy_stream_json_error(monkeypatch):
     assert "bad stream input" in res["stderr"]
     assert "error details" in res["stderr"]
 
+
 @pytest.mark.asyncio
 async def test_execute_agy_stream_json_timeout(monkeypatch):
     mock_proc = AsyncMock()
     mock_proc.kill = MagicMock()
     mock_proc.wait = AsyncMock()
-    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+    mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
 
     res = await host_agy_daemon.execute_agy_stream_json("test prompt", timeout=0.01)
     assert res["returncode"] == -1
     assert "timed out" in res["stderr"]
 
+
 def test_daemon_chat_completions_streaming_error_propagated(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = AsyncMock()
-        err_line = json.dumps({
-            "event": "result",
-            "result": {"status": "ERROR", "error": "Resource exhausted: quota limit reached (429)"}
-        }).encode("utf-8") + b"\n"
+        err_line = (
+            json.dumps(
+                {
+                    "event": "result",
+                    "result": {"status": "ERROR", "error": "Resource exhausted: quota limit reached (429)"},
+                }
+            ).encode("utf-8")
+            + b"\n"
+        )
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[err_line, b""])
         mock_proc.stdin = MagicMock()
@@ -1123,6 +1263,7 @@ def test_daemon_chat_completions_streaming_error_propagated(daemon_server, monke
     # Crucially, stream must terminate WITHOUT [DONE] so client/LiteLLM detects error and triggers fallback
     assert "data: [DONE]" not in raw_body
 
+
 def test_daemon_chat_completions_streaming_timeout_error(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
@@ -1130,7 +1271,7 @@ def test_daemon_chat_completions_streaming_timeout_error(daemon_server, monkeypa
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
         mock_proc.stdout = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_proc.stdout.readline = AsyncMock(side_effect=TimeoutError())
         mock_proc.stdin = MagicMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
@@ -1162,16 +1303,19 @@ def test_daemon_chat_completions_streaming_timeout_error(daemon_server, monkeypa
     assert "timed out" in err_obj["error"]["message"].lower()
     assert "data: [DONE]" not in raw_body
 
+
 def test_daemon_chat_completions_streaming_fallback_when_deltas_omitted(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
         # No step_update events, text only in result.response
-        res_line = json.dumps({
-            "event": "result",
-            "result": {"status": "SUCCESS", "response": "Response delivered only in result"}
-        }).encode("utf-8") + b"\n"
+        res_line = (
+            json.dumps(
+                {"event": "result", "result": {"status": "SUCCESS", "response": "Response delivered only in result"}}
+            ).encode("utf-8")
+            + b"\n"
+        )
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[res_line, b""])
         mock_proc.stdin = MagicMock()
@@ -1198,25 +1342,34 @@ def test_daemon_chat_completions_streaming_fallback_when_deltas_omitted(daemon_s
         raw_body = resp.read().decode("utf-8")
 
     lines = raw_body.split("\n\n")
-    data_chunks = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    data_chunks = [
+        json.loads(l.replace("data: ", ""))
+        for l in lines
+        if l.startswith("data: ") and not l.startswith("data: [DONE]")
+    ]
     assert len(data_chunks) >= 2
     assert data_chunks[0]["choices"][0]["delta"]["content"] == "Response delivered only in result"
     assert data_chunks[1]["choices"][0]["finish_reason"] == "stop"
     assert "data: [DONE]" in raw_body
+
 
 def test_daemon_chat_completions_streaming_error_classified_via_stderr(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
         mock_proc.wait = AsyncMock()
-        err_line = json.dumps({
-            "event": "result",
-            "result": {"status": "ERROR", "error": "Agent execution terminated due to error."}
-        }).encode("utf-8") + b"\n"
+        err_line = (
+            json.dumps(
+                {"event": "result", "result": {"status": "ERROR", "error": "Agent execution terminated due to error."}}
+            ).encode("utf-8")
+            + b"\n"
+        )
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[err_line, b""])
         mock_proc.stderr = AsyncMock()
-        mock_proc.stderr.read = AsyncMock(return_value=b"calling model: RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).")
+        mock_proc.stderr.read = AsyncMock(
+            return_value=b"calling model: RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota)."
+        )
         mock_proc.stdin = MagicMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
@@ -1250,6 +1403,7 @@ def test_daemon_chat_completions_streaming_error_classified_via_stderr(daemon_se
     assert "RESOURCE_EXHAUSTED" in err_obj["error"]["message"]
     assert "data: [DONE]" not in raw_body
 
+
 def test_map_native_tool_call():
     client_tools = [
         {"type": "function", "function": {"name": "terminal", "parameters": {}}},
@@ -1270,23 +1424,26 @@ def test_map_native_tool_call():
     tc3 = host_agy_daemon.map_native_tool_call("grep_search", {"Query": "test"}, client_tools_custom)
     assert tc3["function"]["name"] == "custom_search"
 
+
 def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = None
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
-        step_tool_line = json.dumps({
-            "event": "step_update",
-            "step_update": {
-                "step_type": "tool",
-                "tool_name": "run_command",
-                "tool_info": {
-                    "name": "run_command",
-                    "parameters": {"CommandLine": "uptime; free -h"}
+        step_tool_line = (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "step_type": "tool",
+                        "tool_name": "run_command",
+                        "tool_info": {"name": "run_command", "parameters": {"CommandLine": "uptime; free -h"}},
+                    },
                 }
-            }
-        }).encode("utf-8") + b"\n"
+            ).encode("utf-8")
+            + b"\n"
+        )
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[step_tool_line, b""])
         mock_proc.stderr = AsyncMock()
@@ -1310,7 +1467,7 @@ def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_
                     "name": "terminal",
                     "description": "Run bash command",
                     "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
-                }
+                },
             }
         ],
         "stream": True,
@@ -1336,45 +1493,57 @@ def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_
     assert finish_chunk["choices"][0]["finish_reason"] == "tool_calls"
     assert "data: [DONE]" in raw_body
 
+
 def test_daemon_chat_completions_sse_autonomous_mode(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
-        step1 = json.dumps({
-            "event": "step_update",
-            "step_update": {
-                "step_type": "tool",
-                "tool_name": "run_command",
-                "tool_info": {
-                    "name": "run_command",
-                    "parameters": {"CommandLine": "uptime"}
+        step1 = (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "step_type": "tool",
+                        "tool_name": "run_command",
+                        "tool_info": {"name": "run_command", "parameters": {"CommandLine": "uptime"}},
+                    },
                 }
-            }
-        }).encode("utf-8") + b"\n"
-        step2 = json.dumps({
-            "event": "step_update",
-            "step_update": {
-                "step_type": "tool",
-                "tool_name": "run_command",
-                "tool_info": {
-                    "name": "run_command",
-                    "parameters": {"CommandLine": "uptime"},
-                    "output": "up 3 days\n"
+            ).encode("utf-8")
+            + b"\n"
+        )
+        step2 = (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "step_type": "tool",
+                        "tool_name": "run_command",
+                        "tool_info": {
+                            "name": "run_command",
+                            "parameters": {"CommandLine": "uptime"},
+                            "output": "up 3 days\n",
+                        },
+                    },
                 }
-            }
-        }).encode("utf-8") + b"\n"
-        step3 = json.dumps({
-            "event": "step_update",
-            "step_update": {
-                "step_type": "agent_response",
-                "text_delta": "System is healthy."
-            }
-        }).encode("utf-8") + b"\n"
-        res = json.dumps({
-            "event": "result",
-            "result": {"status": "SUCCESS", "response": "System is healthy."}
-        }).encode("utf-8") + b"\n"
+            ).encode("utf-8")
+            + b"\n"
+        )
+        step3 = (
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {"step_type": "agent_response", "text_delta": "System is healthy."},
+                }
+            ).encode("utf-8")
+            + b"\n"
+        )
+        res = (
+            json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "System is healthy."}}).encode(
+                "utf-8"
+            )
+            + b"\n"
+        )
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[step1, step2, step3, res, b""])
         mock_proc.stderr = AsyncMock()
@@ -1408,8 +1577,10 @@ def test_daemon_chat_completions_sse_autonomous_mode(daemon_server, monkeypatch)
     assert "System is healthy." in raw_body
     assert "data: [DONE]" in raw_body
 
+
 def test_extract_reasoning_effort():
     from scripts.host_agy_daemon import extract_reasoning_effort
+
     assert extract_reasoning_effort({}) is None
     assert extract_reasoning_effort({"reasoning_effort": "high"}) == "high"
     assert extract_reasoning_effort({"reasoning_effort": "max"}) == "high"
@@ -1424,12 +1595,15 @@ def test_extract_reasoning_effort():
     assert extract_reasoning_effort({"reasoning_effort": 0}) == "low"
     assert extract_reasoning_effort({"reasoning_effort": "0"}) == "low"
 
+
 def test_daemon_chat_completions_dynamic_reasoning_high(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0, effort=None, **kwargs):
         captured["model_override"] = model_override
         captured["effort"] = effort
         return {"returncode": 0, "stdout": "High reasoning reply", "stderr": "", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -1450,12 +1624,15 @@ def test_daemon_chat_completions_dynamic_reasoning_high(daemon_server, monkeypat
     assert captured["model_override"] == "gemini-3.8-flash-high"
     assert captured["effort"] == "high"
 
+
 def test_daemon_chat_completions_dynamic_reasoning_medium(daemon_server, monkeypatch):
     captured = {}
+
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0, effort=None, **kwargs):
         captured["model_override"] = model_override
         captured["effort"] = effort
         return {"returncode": 0, "stdout": "Med reply", "stderr": "", "conversation_id": None}
+
     monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
@@ -1474,16 +1651,15 @@ def test_daemon_chat_completions_dynamic_reasoning_medium(daemon_server, monkeyp
     assert captured["model_override"] == "gemini-3.8-flash-medium"
     assert captured["effort"] == "medium"
 
+
 def test_daemon_chat_completions_dynamic_reasoning_streaming(daemon_server, monkeypatch):
     captured_cmd = []
+
     async def mock_exec(*cmd, **kwargs):
         captured_cmd.extend(cmd)
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
-        res = json.dumps({
-            "event": "result",
-            "result": {"status": "SUCCESS", "response": "OK"}
-        }).encode("utf-8") + b"\n"
+        res = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "OK"}}).encode("utf-8") + b"\n"
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.readline = AsyncMock(side_effect=[res, b""])
         mock_proc.stderr = AsyncMock()
@@ -1535,14 +1711,19 @@ async def test_execute_agy_stream_json_tool_interception(monkeypatch):
     mock_proc.returncode = 0
     mock_proc.kill = MagicMock()
     mock_proc.wait = AsyncMock()
-    step_tool = json.dumps({
-        "event": "step_update",
-        "step_update": {
-            "step_type": "tool",
-            "tool_name": "run_command",
-            "tool_info": {"parameters": {"CommandLine": "ls -la"}}
-        }
-    }).encode("utf-8") + b"\n"
+    step_tool = (
+        json.dumps(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "step_type": "tool",
+                    "tool_name": "run_command",
+                    "tool_info": {"parameters": {"CommandLine": "ls -la"}},
+                },
+            }
+        ).encode("utf-8")
+        + b"\n"
+    )
     mock_proc.stdout = AsyncMock()
     mock_proc.stdout.readline = AsyncMock(side_effect=[step_tool, b""])
     mock_proc.stderr = AsyncMock()
@@ -1561,10 +1742,3 @@ async def test_execute_agy_stream_json_tool_interception(monkeypatch):
     assert res["tool_calls"][0]["function"]["name"] == "terminal"
     assert json.loads(res["tool_calls"][0]["function"]["arguments"]) == {"command": "ls -la"}
     mock_proc.kill.assert_called_once()
-
-
-
-
-
-
-

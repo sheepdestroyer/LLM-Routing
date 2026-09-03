@@ -5,6 +5,7 @@ import pytest
 
 import router.main as main
 
+
 @pytest.fixture(autouse=True)
 def reset_redis_globals(monkeypatch):
     """Reset the global variables before and after each test."""
@@ -20,12 +21,14 @@ def reset_redis_globals(monkeypatch):
     main._redis_client = original_client
     main._redis_last_init_attempt = original_last_attempt
 
+
 def test_get_redis_already_initialized():
     """If the client is already initialized, it should return the client immediately."""
     mock_client = MagicMock()
     main._redis_client = mock_client
 
     assert main.get_redis() is mock_client
+
 
 @patch("router.main.time.monotonic")
 def test_get_redis_cooldown(mock_monotonic):
@@ -37,6 +40,7 @@ def test_get_redis_cooldown(mock_monotonic):
     mock_monotonic.return_value = 103.0
 
     assert main.get_redis() is None
+
 
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis")
@@ -59,6 +63,7 @@ def test_get_redis_initialization_success(mock_redis, mock_monotonic):
     assert main._redis_last_init_attempt == 110.0
     mock_redis.assert_called_once_with(host="my-host", port=1234, decode_responses=True, socket_timeout=1.0)
 
+
 @patch("router.main.time.monotonic")
 @patch("router.main.logger.warning")
 @patch.dict(os.environ, {"VALKEY_HOST": "my-host", "VALKEY_PORT": "invalid"})
@@ -78,6 +83,7 @@ def test_valkey_cache_port_invalid_fallback(mock_logger_warning):
     assert port == 6379
     mock_logger_warning.assert_called_once()
     assert "Invalid Valkey port 'not_an_int'" in mock_logger_warning.call_args[0][0]
+
 
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis")
@@ -101,6 +107,7 @@ def test_get_redis_initialization_failure(mock_logger_warning, mock_redis, mock_
     mock_logger_warning.assert_called_once()
     assert "Connection refused" in mock_logger_warning.call_args[0][0]
 
+
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis")
 @patch("router.main.logger.warning")
@@ -121,6 +128,7 @@ def test_get_redis_initialization_exception(mock_logger_warning, mock_redis, moc
     assert main._redis_last_init_attempt == 110.0
     mock_logger_warning.assert_called_once()
     assert "Test Exception" in mock_logger_warning.call_args[0][0]
+
 
 @patch("router.main.time.monotonic")
 @patch("router.main.aioredis.Redis.from_url")

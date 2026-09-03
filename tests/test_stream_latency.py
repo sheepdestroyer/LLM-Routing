@@ -4,19 +4,15 @@ import httpx
 import json
 import time
 
+
 async def main():
     url = "http://localhost:5000/v1/chat/completions"
     payload = {
         "model": "agent-complex-core",
-        "messages": [
-            {"role": "user", "content": "Write a 50-word story about a spaceship"}
-        ],
-        "stream": True
+        "messages": [{"role": "user", "content": "Write a 50-word story about a spaceship"}],
+        "stream": True,
     }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer gateway-pass"
-    }
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer gateway-pass"}
 
     print("=" * 60)
     print("Testing Stream Latency (TTFT Verification)")
@@ -34,13 +30,13 @@ async def main():
                 if response.status_code != 200:
                     print(f"❌ Error: Triage router returned status code {response.status_code}")
                     text = await response.aread()
-                    print(text.decode('utf-8', errors='replace'))
+                    print(text.decode("utf-8", errors="replace"))
                     return
 
                 async for chunk in response.aiter_bytes():
                     # Parse the SSE data format
                     # data: {"choices": [{"delta": {"content": "..."}}]}
-                    lines = chunk.decode('utf-8', errors='replace').split('\n')
+                    lines = chunk.decode("utf-8", errors="replace").split("\n")
                     for line in lines:
                         if not line.strip():
                             continue
@@ -87,6 +83,7 @@ async def main():
 
     except Exception as e:
         print(f"❌ Exception occurred: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

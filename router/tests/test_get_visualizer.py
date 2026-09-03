@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from fastapi.responses import HTMLResponse
 from router.main import get_visualizer
 
+
 @pytest.mark.anyio
 async def test_get_visualizer_exists():
     with patch("router.main.STATIC_DIR") as mock_static_dir:
@@ -16,6 +17,7 @@ async def test_get_visualizer_exists():
         assert isinstance(response, HTMLResponse)
         assert response.status_code == 200
         assert response.body == b"<html>Visualizer Content</html>"
+
 
 @pytest.mark.anyio
 async def test_get_visualizer_not_found():

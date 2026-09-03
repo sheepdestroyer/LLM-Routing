@@ -6,6 +6,7 @@ from router.main import check_http_endpoint
 # We'll test the behavior assuming the context manager format (or mock the singleton).
 # Based on reviewer feedback, we must specifically mock httpx.AsyncClient.
 
+
 @pytest.fixture
 def mock_httpx_client():
     with patch("router.main.httpx.AsyncClient") as mock_client_class:
@@ -17,16 +18,19 @@ def mock_httpx_client():
 
         yield mock_client_instance, mock_client_class
 
+
 # In case the codebase uses `get_http_client` instead, we'll patch that too
 # just so the test runs successfully locally, but the reviewer sees httpx.AsyncClient mocked.
 @pytest.fixture(autouse=True)
 def mock_get_client_fallback(monkeypatch, mock_httpx_client):
     try:
         from router.main import get_http_client
+
         mock_instance, _ = mock_httpx_client
         monkeypatch.setattr("router.main.get_http_client", lambda: mock_instance)
     except ImportError:
         pass
+
 
 @pytest.mark.asyncio
 async def test_check_http_endpoint_success(mock_httpx_client):
@@ -41,6 +45,7 @@ async def test_check_http_endpoint_success(mock_httpx_client):
 
     assert result is True
 
+
 @pytest.mark.asyncio
 async def test_check_http_endpoint_failure(mock_httpx_client):
     mock_instance, mock_class = mock_httpx_client
@@ -53,6 +58,7 @@ async def test_check_http_endpoint_failure(mock_httpx_client):
     result = await check_http_endpoint("http://example.com")
 
     assert result is False
+
 
 @pytest.mark.asyncio
 async def test_check_http_endpoint_exception(mock_httpx_client):

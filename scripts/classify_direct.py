@@ -1,6 +1,10 @@
 """Direct classification of Hermes prompts using local-qwen-routing."""
+
+import json
 import os
-import json, urllib.request, time
+import time
+import urllib.request
+from collections import Counter
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
@@ -19,10 +23,8 @@ agent-advanced-core: system-level architecture, cross-cutting concerns, novel de
 
 Task: """
 LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
-TIERS = {
-    "agent-simple-core", "agent-medium-core", "agent-complex-core",
-    "agent-reasoning-core", "agent-advanced-core"
-}
+TIERS = {"agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"}
+
 
 def classify(prompt):
     """Query the llama-server to classify the prompt task complexity."""
@@ -35,12 +37,16 @@ def classify(prompt):
     req = urllib.request.Request(
         LLAMA_SERVER_URL,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}",
+        },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     content, _ = parse_chat_response(data)
     return content if content else "ERROR"
+
 
 # Load prompts
 data_dir = Path(__file__).resolve().parent.parent / "data"
@@ -52,11 +58,11 @@ print(f"Classifying {len(prompts)} prompts with local-qwen-routing...")
 results = []
 errors = 0
 for i, p in enumerate(prompts):
-    prompt = p['prompt']
+    prompt = p["prompt"]
     # Truncate very long prompts to classifier context window (~3500 chars safe margin)
     if len(prompt) > 3500:
         prompt = prompt[:3500]
-    
+
     try:
         raw_tier = classify(prompt)
         if raw_tier in TIERS:
@@ -68,22 +74,27 @@ for i, p in enumerate(prompts):
             errors += 1
         results.append({"id": i, "tier": tier, "prompt_snippet": prompt[:60], **extra})
     except Exception as e:
-        tier = f"ERROR"
+        tier = "ERROR"
         errors += 1
         results.append({"id": i, "tier": tier, "error": str(e)[:100]})
         print(f"  [{i}] ERROR: {str(e)[:80]}")
-    
+
     if (i + 1) % 30 == 0:
-        print(f"  {i+1}/{len(prompts)} — {errors} errors")
+        print(f"  {i + 1}/{len(prompts)} — {errors} errors")
     time.sleep(0.05)
 
 # Count tiers
-from collections import Counter
 counts = Counter(r["tier"] for r in results)
 
 print(f"\nDone. {len(results)} classified, {errors} errors")
-print(f"Counts:")
-for tier in ['agent-simple-core', 'agent-medium-core', 'agent-complex-core', 'agent-reasoning-core', 'agent-advanced-core']:
+print("Counts:")
+for tier in [
+    "agent-simple-core",
+    "agent-medium-core",
+    "agent-complex-core",
+    "agent-reasoning-core",
+    "agent-advanced-core",
+]:
     c = counts.get(tier, 0)
     print(f"  {tier}: {c}")
 error_count = sum(1 for r in results if r["tier"] == "ERROR")
@@ -92,24 +103,35 @@ if error_count:
 
 # Build dataset
 dataset_prompts = []
-for p, r in zip(prompts, results):
-    dataset_prompts.append({
-        "prompt": p['prompt'],
-        "tier": r['tier'],
-        "classifier": "uuid",
-        "session_id": p.get('session_id', ''),
-    })
+for p, r in zip(prompts, results, strict=False):
+    dataset_prompts.append(
+        {
+            "prompt": p["prompt"],
+            "tier": r["tier"],
+            "classifier": "uuid",
+            "session_id": p.get("session_id", ""),
+        }
+    )
 
 dataset = {
     "prompts": dataset_prompts,
     "counts": dict(counts),
     "total": len(dataset_prompts),
-    "gaps": [t for t in ['agent-simple-core','agent-medium-core','agent-complex-core','agent-reasoning-core','agent-advanced-core'] 
-              if counts.get(t, 0) < 20]
+    "gaps": [
+        t
+        for t in [
+            "agent-simple-core",
+            "agent-medium-core",
+            "agent-complex-core",
+            "agent-reasoning-core",
+            "agent-advanced-core",
+        ]
+        if counts.get(t, 0) < 20
+    ],
 }
 
 out_path = data_dir / "classified_dataset.json"
-with open(out_path, 'w') as f:
+with open(out_path, "w") as f:
     json.dump(dataset, f, indent=2, ensure_ascii=False)
 
 print(f"\nSaved to {out_path}")

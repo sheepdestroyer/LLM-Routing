@@ -13,13 +13,16 @@ def reset_router_main():
         importlib.reload(router.main)
 
 
-@pytest.mark.parametrize("env_val, expected", [
-    ("invalid", 300),
-    ("-10", 300),
-    ("0", 300),
-    ("600", 600),
-    (None, 300),
-])
+@pytest.mark.parametrize(
+    "env_val, expected",
+    [
+        ("invalid", 300),
+        ("-10", 300),
+        ("0", 300),
+        ("600", 600),
+        (None, 300),
+    ],
+)
 def test_ollama_cooldown_config(env_val, expected):
     env_changes = {}
     if env_val is not None:

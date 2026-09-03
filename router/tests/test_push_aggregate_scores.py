@@ -27,12 +27,13 @@ async def test_push_aggregate_scores_success():
         "routing_paths": {"google_oauth_direct": 25},
     }
 
-    with patch("router.main.get_langfuse", return_value=mock_lf), \
-         patch("router.main.get_breaker", return_value=mock_router), \
-         patch.dict("router.main.stats", mock_stats, clear=True), \
-         patch("router.main.logger") as mock_logger, \
-         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
+    with (
+        patch("router.main.get_langfuse", return_value=mock_lf),
+        patch("router.main.get_breaker", return_value=mock_router),
+        patch.dict("router.main.stats", mock_stats, clear=True),
+        patch("router.main.logger") as mock_logger,
+        patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
         # Make sleep raise CancelledError on second call to break the infinite loop
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
@@ -46,10 +47,7 @@ async def test_push_aggregate_scores_success():
         mock_lf.start_observation.assert_called_once()
 
         # Dynamically verify pushed score names and values derived from mock_stats
-        pushed_scores = {
-            kwargs["name"]: kwargs["value"]
-            for _, kwargs in mock_lf.create_score.call_args_list
-        }
+        pushed_scores = {kwargs["name"]: kwargs["value"] for _, kwargs in mock_lf.create_score.call_args_list}
         expected_scores = {
             "simple_ratio_pct": 20.0,
             "medium_ratio_pct": 30.0,
@@ -73,9 +71,10 @@ async def test_push_aggregate_scores_success():
 
 @pytest.mark.asyncio
 async def test_push_aggregate_scores_no_langfuse():
-    with patch("router.main.get_langfuse", return_value=None), \
-         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
+    with (
+        patch("router.main.get_langfuse", return_value=None),
+        patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
         try:
@@ -92,10 +91,11 @@ async def test_push_aggregate_scores_zero_requests():
     mock_lf = MagicMock()
     mock_stats = {"total_requests": 0}
 
-    with patch("router.main.get_langfuse", return_value=mock_lf), \
-         patch.dict("router.main.stats", mock_stats, clear=True), \
-         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
+    with (
+        patch("router.main.get_langfuse", return_value=mock_lf),
+        patch.dict("router.main.stats", mock_stats, clear=True),
+        patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
         try:
@@ -127,12 +127,13 @@ async def test_push_aggregate_scores_exception_handling():
         "routing_paths": {"google_oauth_direct": 25},
     }
 
-    with patch("router.main.get_langfuse", return_value=mock_lf), \
-         patch("router.main.get_breaker", return_value=mock_router), \
-         patch.dict("router.main.stats", mock_stats, clear=True), \
-         patch("router.main.logger") as mock_logger, \
-         patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-
+    with (
+        patch("router.main.get_langfuse", return_value=mock_lf),
+        patch("router.main.get_breaker", return_value=mock_router),
+        patch.dict("router.main.stats", mock_stats, clear=True),
+        patch("router.main.logger") as mock_logger,
+        patch("router.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
         mock_sleep.side_effect = [None, asyncio.CancelledError()]
 
         try:

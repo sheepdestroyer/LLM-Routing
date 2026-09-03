@@ -37,8 +37,7 @@ def mock_breaker():
 
 @pytest.mark.asyncio
 async def test_sync_no_redis(mock_globals):
-    with patch("router.main.get_redis", return_value=None), \
-         patch("router.main.get_breaker") as mock_get_breaker:
+    with patch("router.main.get_redis", return_value=None), patch("router.main.get_breaker") as mock_get_breaker:
         await sync_cooldowns_from_valkey()
         mock_get_breaker.assert_not_called()
 
@@ -47,11 +46,12 @@ async def test_sync_no_redis(mock_globals):
 async def test_sync_redis_value_future(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = "110.0"
 
-    with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker", return_value=mock_breaker), \
-         patch("router.main.time.time", return_value=100.0), \
-         patch("router.main.time.monotonic", return_value=50.0):
-
+    with (
+        patch("router.main.get_redis", return_value=mock_redis),
+        patch("router.main.get_breaker", return_value=mock_breaker),
+        patch("router.main.time.time", return_value=100.0),
+        patch("router.main.time.monotonic", return_value=50.0),
+    ):
         await sync_cooldowns_from_valkey()
 
         # remaining = 110.0 - 100.0 = 10.0
@@ -64,10 +64,11 @@ async def test_sync_redis_value_future(mock_globals, mock_redis, mock_breaker):
 async def test_sync_redis_value_past(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = "90.0"
 
-    with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker", return_value=mock_breaker), \
-         patch("router.main.time.time", return_value=100.0):
-
+    with (
+        patch("router.main.get_redis", return_value=mock_redis),
+        patch("router.main.get_breaker", return_value=mock_breaker),
+        patch("router.main.time.time", return_value=100.0),
+    ):
         # Set cooldown to a positive value first to ensure it gets zeroed
         router.main._ollama_cooldown_until = 999.0
 
@@ -83,10 +84,11 @@ async def test_sync_redis_value_past(mock_globals, mock_redis, mock_breaker):
 async def test_sync_redis_value_none_past_cooldown(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = None
 
-    with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker", return_value=mock_breaker), \
-         patch("router.main.time.monotonic", return_value=50.0):
-
+    with (
+        patch("router.main.get_redis", return_value=mock_redis),
+        patch("router.main.get_breaker", return_value=mock_breaker),
+        patch("router.main.time.monotonic", return_value=50.0),
+    ):
         # Current cooldown is in the past
         router.main._ollama_cooldown_until = 40.0
 
@@ -100,10 +102,11 @@ async def test_sync_redis_value_none_past_cooldown(mock_globals, mock_redis, moc
 async def test_sync_redis_value_none_future_cooldown(mock_globals, mock_redis, mock_breaker):
     mock_redis.get.return_value = None
 
-    with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.get_breaker", return_value=mock_breaker), \
-         patch("router.main.time.monotonic", return_value=50.0):
-
+    with (
+        patch("router.main.get_redis", return_value=mock_redis),
+        patch("router.main.get_breaker", return_value=mock_breaker),
+        patch("router.main.time.monotonic", return_value=50.0),
+    ):
         # Current cooldown is in the future
         router.main._ollama_cooldown_until = 60.0
 
@@ -123,9 +126,10 @@ async def test_sync_redis_exception(mock_globals, mock_redis):
     router.main._redis_client = mock_redis
     router.main._redis_last_init_attempt = 0.0
 
-    with patch("router.main.get_redis", return_value=mock_redis), \
-         patch("router.main.time.monotonic", return_value=123.45):
-
+    with (
+        patch("router.main.get_redis", return_value=mock_redis),
+        patch("router.main.time.monotonic", return_value=123.45),
+    ):
         await sync_cooldowns_from_valkey()
 
         # Verify error handling resets redis client and updates last init attempt

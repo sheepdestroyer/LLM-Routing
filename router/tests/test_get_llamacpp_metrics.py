@@ -19,6 +19,7 @@ def mock_http_client():
         mock.return_value = client
         yield client
 
+
 @pytest.mark.asyncio
 async def test_get_llamacpp_metrics_success(mock_http_client):
     # Mock responses for all endpoints
@@ -30,21 +31,14 @@ async def test_get_llamacpp_metrics_success(mock_http_client):
             {
                 "id": "model-1",
                 "status": {"value": "loaded"},
-                "meta": {
-                    "n_params": 1000000,
-                    "n_ctx": 2048,
-                    "size": 2000000,
-                    "n_embd": 512
-                }
+                "meta": {"n_params": 1000000, "n_ctx": 2048, "size": 2000000, "n_embd": 512},
             }
         ]
     }
 
     # 2. /props response
     props_response = MagicMock(status_code=200)
-    props_response.json.return_value = {
-        "build_info": "1.0.0-mock"
-    }
+    props_response.json.return_value = {"build_info": "1.0.0-mock"}
 
     # 3. /slots response
     slots_response = MagicMock(status_code=200)
@@ -56,12 +50,12 @@ async def test_get_llamacpp_metrics_success(mock_http_client):
             "n_prompt_tokens": 100,
             "n_prompt_tokens_processed": 50,
             "next_token": {"n_decoded": 10},
-            "speculative": False
+            "speculative": False,
         },
         {
-             "id": 2,
-             "next_token": [{"n_decoded": 20}] # test list format
-        }
+            "id": 2,
+            "next_token": [{"n_decoded": 20}],  # test list format
+        },
     ]
 
     # 4. /metrics response (to satisfy potential legacy references)
@@ -96,20 +90,14 @@ async def test_get_llamacpp_metrics_success(mock_http_client):
     assert result["slots"][0]["n_decoded"] == 10
     assert result["slots"][1]["n_decoded"] == 20
 
+
 @pytest.mark.asyncio
 async def test_get_llamacpp_metrics_partial(mock_http_client):
     # Test when only models endpoint works, others fail
 
     # 1. /v1/models response
     models_response = MagicMock(status_code=200)
-    models_response.json.return_value = {
-        "data": [
-            {
-                "id": "model-1",
-                "status": {"value": "unloaded"}
-            }
-        ]
-    }
+    models_response.json.return_value = {"data": [{"id": "model-1", "status": {"value": "unloaded"}}]}
 
     def mock_get(url, *args, **kwargs):
         if url.endswith("/v1/models"):
@@ -128,6 +116,7 @@ async def test_get_llamacpp_metrics_partial(mock_http_client):
 
     assert len(result["slots"]) == 0
 
+
 @pytest.mark.asyncio
 async def test_get_llamacpp_metrics_no_models(mock_http_client):
     models_response = MagicMock(status_code=200)
@@ -141,6 +130,7 @@ async def test_get_llamacpp_metrics_no_models(mock_http_client):
     result = await get_llamacpp_metrics()
     assert result["models"] == []
     assert result["slots"] == []
+
 
 @pytest.mark.asyncio
 async def test_get_llamacpp_metrics_exception(mock_http_client):

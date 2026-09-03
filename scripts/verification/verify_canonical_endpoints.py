@@ -8,16 +8,17 @@ Usage:
     python scripts/verification/verify_canonical_endpoints.py --dev    # dev overlay
     python scripts/verification/verify_canonical_endpoints.py --prod  # explicit prod
 """
+
+import argparse
+import datetime
 import os
 import re
 import sys
-
 import time
-import datetime
-import argparse
 import urllib.parse
-import httpx
 from pathlib import Path
+
+import httpx
 
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 
@@ -102,8 +103,11 @@ def test_router_endpoints(cfg: dict) -> tuple[int, int]:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
         ok = r.status_code == 200
         models = r.json() if ok else {}
-        model_ids = [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m] \
-            if isinstance(models, dict) and isinstance(models.get("data"), list) else []
+        model_ids = (
+            [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m]
+            if isinstance(models, dict) and isinstance(models.get("data"), list)
+            else []
+        )
         ok = ok and len(model_ids) > 0
         passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
@@ -181,8 +185,11 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
         r = httpx.get(f"{base}/v1/models", headers=headers, timeout=10)
         ok = r.status_code == 200
         models = r.json() if ok else {}
-        model_ids = [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m] \
-            if isinstance(models, dict) and isinstance(models.get("data"), list) else []
+        model_ids = (
+            [m["id"] for m in models.get("data", []) if isinstance(m, dict) and "id" in m]
+            if isinstance(models, dict) and isinstance(models.get("data"), list)
+            else []
+        )
         ok = ok and len(model_ids) > 0
         passed += check("/v1/models", ok, f"{len(model_ids)} models" if ok else f"HTTP {r.status_code}")
     except Exception as e:
@@ -192,7 +199,12 @@ def test_litellm_endpoints(cfg: dict) -> tuple[int, int]:
     total += 1
     try:
         r = httpx.get(f"{base}/ui/", timeout=10, follow_redirects=True)
-        ok = (r.status_code == 200 or r.status_code == 302) and ("<html" in r.text.lower() or "swagger" in r.text.lower() or "litellm" in r.text.lower() or r.status_code == 302)
+        ok = (r.status_code == 200 or r.status_code == 302) and (
+            "<html" in r.text.lower()
+            or "swagger" in r.text.lower()
+            or "litellm" in r.text.lower()
+            or r.status_code == 302
+        )
         passed += check("/ui/", ok)
     except Exception as e:
         passed += check("/ui/", False, str(e))
@@ -325,12 +337,9 @@ def test_ha_tool_calling(cfg: dict) -> tuple[int, int]:
             "description": "Turn on a device or entity in Home Assistant",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "domain": {"type": "string"},
-                    "entity_id": {"type": "string"}
-                },
-                "required": ["domain"]
-            }
+                "properties": {"domain": {"type": "string"}, "entity_id": {"type": "string"}},
+                "required": ["domain"],
+            },
         }
     ]
 
@@ -370,13 +379,10 @@ def test_ha_tool_calling(cfg: dict) -> tuple[int, int]:
                 "description": "Turn on a device or entity in Home Assistant",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "domain": {"type": "string"},
-                        "entity_id": {"type": "string"}
-                    },
-                    "required": ["domain"]
-                }
-            }
+                    "properties": {"domain": {"type": "string"}, "entity_id": {"type": "string"}},
+                    "required": ["domain"],
+                },
+            },
         }
     ]
 
@@ -494,10 +500,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     key = cfg["router_api_key"]
 
     if not pk or not sk:
-        print(
-            "\n── Langfuse session propagation — SKIPPED "
-            "(LANGFUSE_PUBLIC_KEY/SECRET_KEY not set) ──"
-        )
+        print("\n── Langfuse session propagation — SKIPPED (LANGFUSE_PUBLIC_KEY/SECRET_KEY not set) ──")
         return 0, 0
 
     auth = (pk, sk)
@@ -528,10 +531,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             timeout=120,
         )
         if r.status_code != 200:
-            passed += check(
-                "Session request (200)", False,
-                f"HTTP {r.status_code}: {r.text[:100]}"
-            )
+            passed += check("Session request (200)", False, f"HTTP {r.status_code}: {r.text[:100]}")
             return passed, total
         passed += check("Session request (200)", True, session_id[:16])
     except Exception as e:
@@ -551,7 +551,8 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         try:
             resp = httpx.get(
                 f"{lf_base}/api/public/traces?page=1&limit=50&orderBy=timestamp.desc",
-                auth=auth, timeout=10,
+                auth=auth,
+                timeout=10,
             )
             if resp.status_code == 404 and "events_only" in resp.text:
                 events_only_mode = True
@@ -576,18 +577,21 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     total += 1
     if session_trace_id:
         passed += check(
-            "Trace has session+user", True,
+            "Trace has session+user",
+            True,
             f"session={session_id[:12]} user={user_id} "
-            f"(found after {_attempt+1}s, {len(step1_trace_ids)} matching traces)",
+            f"(found after {_attempt + 1}s, {len(step1_trace_ids)} matching traces)",
         )
     elif events_only_mode:
         passed += check(
-            "Trace has session+user", True,
+            "Trace has session+user",
+            True,
             f"session={session_id[:12]} user={user_id} (Langfuse v4 events_only mode active)",
         )
     else:
         passed += check(
-            "Trace has session+user", False,
+            "Trace has session+user",
+            False,
             f"session={session_id[:12]} not found after 20s polling",
         )
 
@@ -607,10 +611,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             timeout=120,
         )
         if r2.status_code != 200:
-            passed += check(
-                "No-session request (200)", False,
-                f"HTTP {r2.status_code}: {r2.text[:100]}"
-            )
+            passed += check("No-session request (200)", False, f"HTTP {r2.status_code}: {r2.text[:100]}")
             return passed, total
         passed += check("No-session request (200)", True, "clean")
     except Exception as e:
@@ -622,9 +623,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     # Compute cutoff as timezone-aware datetime for robust comparison.
     # Parsing timestamps avoids lexicographic pitfalls between Z/+00:00
     # suffixes and differing sub-second precision.
-    step2_cutoff = datetime.datetime.fromtimestamp(
-        step2_request_time - 2, tz=datetime.timezone.utc
-    )
+    step2_cutoff = datetime.datetime.fromtimestamp(step2_request_time - 2, tz=datetime.UTC)
     step2_traces = []
     seen_step2_ids = set()
     for _attempt2 in range(10):
@@ -632,7 +631,8 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
         try:
             resp2 = httpx.get(
                 f"{lf_base}/api/public/traces?page=1&limit=50&orderBy=timestamp.desc",
-                auth=auth, timeout=10,
+                auth=auth,
+                timeout=10,
             )
             if resp2.status_code != 200:
                 continue
@@ -650,9 +650,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
                 try:
                     # Normalize 'Z' suffix for fromisoformat (Python 3.11+ handles
                     # Z natively, but we support older Pythons).
-                    t_dt = datetime.datetime.fromisoformat(
-                        t_ts.replace("Z", "+00:00")
-                    )
+                    t_dt = datetime.datetime.fromisoformat(t_ts.replace("Z", "+00:00"))
                     if t_dt > step2_cutoff:
                         step2_traces.append(t)
                         seen_step2_ids.add(tid)
@@ -684,33 +682,29 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
 
     total += 1
     if not step2_traces:
-        print(
-            "  ⚠ No session leak — INCONCLUSIVE "
-            "(second request trace not flushed within 10s)"
-        )
+        print("  ⚠ No session leak — INCONCLUSIVE (second request trace not flushed within 10s)")
         return passed, total
 
     # Only check step 2 traces (filtered by timestamp and step1 exclusion)
-    leaked = any(
-        t.get("sessionId") == session_id
-        for t in step2_traces
-    )
+    leaked = any(t.get("sessionId") == session_id for t in step2_traces)
 
     if leaked:
         passed += check(
-            "No session leak", False,
+            "No session leak",
+            False,
             f"Previous session leaked into no-session request! "
             f"({len(step2_traces)} step-2 traces checked, "
-            f"{len(step1_trace_ids)} step-1 IDs excluded)"
+            f"{len(step1_trace_ids)} step-1 IDs excluded)",
         )
     else:
         passed += check(
-            "No session leak", True,
-            f"{len(step2_traces)} step-2 traces clean "
-            f"({len(step1_trace_ids)} step-1 IDs excluded)"
+            "No session leak",
+            True,
+            f"{len(step2_traces)} step-2 traces clean ({len(step1_trace_ids)} step-1 IDs excluded)",
         )
 
     return passed, total
+
 
 def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     """Verify canonical HTTPS URLs are reachable (if PUBLIC_BASE_URL is set).
@@ -744,8 +738,9 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
     for url, label in endpoints:
         total += 1
         try:
-            r = httpx.get(url, timeout=15, follow_redirects=True,
-                          headers={"Authorization": f"Bearer {cfg['router_api_key']}"})
+            r = httpx.get(
+                url, timeout=15, follow_redirects=True, headers={"Authorization": f"Bearer {cfg['router_api_key']}"}
+            )
             ok = r.status_code == 200
             passed += check(f"GET {url} ({label})", ok, f"HTTP {r.status_code}")
         except httpx.RequestError:
@@ -764,7 +759,13 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
             "messages": [{"role": "user", "content": "What is 2+2? Answer with just the number."}],
             "max_tokens": 5,
         }
-        r = httpx.post(url, json=payload, headers={"Authorization": f"Bearer {cfg['router_api_key']}"}, timeout=60, follow_redirects=True)
+        r = httpx.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {cfg['router_api_key']}"},
+            timeout=60,
+            follow_redirects=True,
+        )
         if r.status_code == 200:
             data = r.json()
             content, reasoning = parse_chat_response(data)
@@ -787,12 +788,8 @@ def test_canonical_urls(cfg: dict) -> tuple[int, int, int]:
 def main():
     """Main entrypoint for canonical endpoint verification."""
     parser = argparse.ArgumentParser(description="Verify canonical endpoints")
-    parser.add_argument(
-        "--dev", action="store_true", help="Test dev environment (dev-router-pod)"
-    )
-    parser.add_argument(
-        "--prod", action="store_true", help="Test prod environment (prod-router-pod, default)"
-    )
+    parser.add_argument("--dev", action="store_true", help="Test dev environment (dev-router-pod)")
+    parser.add_argument("--prod", action="store_true", help="Test prod environment (prod-router-pod, default)")
     args = parser.parse_args()
 
     dev = args.dev and not args.prod
@@ -828,7 +825,7 @@ def main():
         total_passed += p
         total_tests += t
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     actual_tests = total_tests - total_skipped
     parts = [f"{total_passed}/{actual_tests} passed"]
     if total_skipped:

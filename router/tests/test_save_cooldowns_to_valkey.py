@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 import router.main as main
 
+
 @pytest.fixture(autouse=True)
 def reset_globals(monkeypatch):
     """Reset global variables related to cooldowns and redis."""
@@ -19,12 +20,14 @@ def reset_globals(monkeypatch):
     main._redis_last_init_attempt = original_last_attempt
     main._ollama_cooldown_until = original_cooldown
 
+
 @pytest.mark.asyncio
 @patch("router.main.get_redis")
 async def test_save_cooldowns_no_redis(mock_get_redis):
     mock_get_redis.return_value = None
     await main.save_cooldowns_to_valkey()
     mock_get_redis.assert_called_once()
+
 
 @pytest.mark.asyncio
 @patch("router.main.get_redis")
@@ -43,19 +46,16 @@ async def test_save_cooldowns_with_cooldown(mock_time, mock_monotonic, mock_get_
     mock_time.return_value = 1600000000.0
 
     # Set active cooldown
-    main._ollama_cooldown_until = 110.0 # 10 seconds remaining
+    main._ollama_cooldown_until = 110.0  # 10 seconds remaining
 
     await main.save_cooldowns_to_valkey()
 
     # Check if redis.set was called correctly for ollama cooldown
-    mock_redis.set.assert_called_once_with(
-        "cooldown:ollama",
-        str(1600000000.0 + 10.0),
-        ex=10
-    )
+    mock_redis.set.assert_called_once_with("cooldown:ollama", str(1600000000.0 + 10.0), ex=10)
 
     # Check if breaker.save_to_valkey was called
     mock_breaker.save_to_valkey.assert_called_once_with(mock_redis)
+
 
 @pytest.mark.asyncio
 @patch("router.main.get_redis")
@@ -72,7 +72,7 @@ async def test_save_cooldowns_without_cooldown(mock_monotonic, mock_get_breaker,
     mock_monotonic.return_value = 100.0
 
     # Set expired cooldown
-    main._ollama_cooldown_until = 90.0 # expired
+    main._ollama_cooldown_until = 90.0  # expired
 
     await main.save_cooldowns_to_valkey()
 
@@ -81,6 +81,7 @@ async def test_save_cooldowns_without_cooldown(mock_monotonic, mock_get_breaker,
 
     # Check if breaker.save_to_valkey was called
     mock_breaker.save_to_valkey.assert_called_once_with(mock_redis)
+
 
 @pytest.mark.asyncio
 @patch("router.main.get_redis")

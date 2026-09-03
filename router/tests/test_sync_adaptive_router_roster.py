@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import sys
 import os
 
+
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_empty_key():
     router_path = os.path.join(os.getcwd(), "router")
@@ -15,6 +16,7 @@ async def test_sync_adaptive_router_roster_empty_key():
     with patch("main.logger.warning") as mock_warning:
         await main.sync_adaptive_router_roster("")
         mock_warning.assert_called_with("No LITELLM_MASTER_KEY — skipping roster sync")
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_happy_path():
@@ -33,14 +35,14 @@ async def test_sync_adaptive_router_roster_happy_path():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
                 "id": "model-2",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": 0.0, "completion": 0.0},
-                "context_length": 8192
-            }
+                "context_length": 8192,
+            },
         ]
     }
 
@@ -52,12 +54,13 @@ async def test_sync_adaptive_router_roster_happy_path():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0, 70.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock) as mock_purge, \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0, 70.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock) as mock_purge,
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         # Set globals for testing
         main.LITELLM_URL = "http://test-litellm"
         main._AA_SCORES_LOADED = True
@@ -101,9 +104,7 @@ async def test_sync_adaptive_router_roster_openrouter_failure():
     mock_client_instance = AsyncMock()
     mock_client_instance.get.return_value = mock_openrouter_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.logger.warning") as mock_warning:
-
+    with patch("main.get_http_client", return_value=mock_client_instance), patch("main.logger.warning") as mock_warning:
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call was made
@@ -114,6 +115,7 @@ async def test_sync_adaptive_router_roster_openrouter_failure():
 
         # Verify warning was logged
         mock_warning.assert_called_with("OpenRouter models API returned 500")
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_no_free_models():
@@ -131,8 +133,8 @@ async def test_sync_adaptive_router_roster_no_free_models():
             {
                 "id": "model-1",
                 "supported_parameters": ["tools"],
-                "pricing": {"prompt": "0.1", "completion": "0.1"}, # Not free
-                "context_length": 4096
+                "pricing": {"prompt": "0.1", "completion": "0.1"},  # Not free
+                "context_length": 4096,
             }
         ]
     }
@@ -141,10 +143,11 @@ async def test_sync_adaptive_router_roster_no_free_models():
     mock_client_instance = AsyncMock()
     mock_client_instance.get.return_value = mock_openrouter_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main._load_aa_scores"), \
-         patch("main.logger.warning") as mock_warning:
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main._load_aa_scores"),
+        patch("main.logger.warning") as mock_warning,
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -157,6 +160,7 @@ async def test_sync_adaptive_router_roster_no_free_models():
 
         # Verify warning was logged
         mock_warning.assert_called_with("No free models found — skipping roster sync")
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_denylist_and_internal_ids():
@@ -172,35 +176,35 @@ async def test_sync_adaptive_router_roster_denylist_and_internal_ids():
     mock_openrouter_response.json.return_value = {
         "data": [
             {
-                "id": "meta-llama/llama-3-70b", # Denylisted
+                "id": "meta-llama/llama-3-70b",  # Denylisted
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
-                "id": "nousresearch/hermes-3-llama", # Denylisted
+                "id": "nousresearch/hermes-3-llama",  # Denylisted
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
-                "id": "a" * 65, # Internal OpenRouter ID (len > 64 and no /)
+                "id": "a" * 65,  # Internal OpenRouter ID (len > 64 and no /)
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
-                "id": "", # Empty ID
+                "id": "",  # Empty ID
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
-                "id": "model-1", # Valid model but no tools
+                "id": "model-1",  # Valid model but no tools
                 "supported_parameters": ["max_tokens"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
-            }
+                "context_length": 4096,
+            },
         ]
     }
 
@@ -208,11 +212,12 @@ async def test_sync_adaptive_router_roster_denylist_and_internal_ids():
     mock_client_instance = AsyncMock()
     mock_client_instance.get.return_value = mock_openrouter_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main._load_aa_scores"), \
-         patch("main.logger.warning") as mock_warning, \
-         patch("main.logger.info") as mock_info:
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main._load_aa_scores"),
+        patch("main.logger.warning") as mock_warning,
+        patch("main.logger.info") as mock_info,
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -227,8 +232,14 @@ async def test_sync_adaptive_router_roster_denylist_and_internal_ids():
         mock_warning.assert_called_with("No free models found — skipping roster sync")
 
         # Verify info logs for skipping models
-        assert any("model-1" in call[0][0] and "does not support tool calling" in call[0][0] for call in mock_info.call_args_list)
-        assert any("meta-llama/llama-3-70b" in call[0][0] and "denylisted" in call[0][0] for call in mock_info.call_args_list)
+        assert any(
+            "model-1" in call[0][0] and "does not support tool calling" in call[0][0]
+            for call in mock_info.call_args_list
+        )
+        assert any(
+            "meta-llama/llama-3-70b" in call[0][0] and "denylisted" in call[0][0] for call in mock_info.call_args_list
+        )
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_exception():
@@ -242,9 +253,7 @@ async def test_sync_adaptive_router_roster_exception():
     mock_client_instance = AsyncMock()
     mock_client_instance.get.side_effect = Exception("Test Exception")
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.logger.warning") as mock_warning:
-
+    with patch("main.get_http_client", return_value=mock_client_instance), patch("main.logger.warning") as mock_warning:
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call
@@ -252,6 +261,7 @@ async def test_sync_adaptive_router_roster_exception():
 
         # Verify warning was logged
         mock_warning.assert_called_with("Failed to fetch OpenRouter models: Test Exception")
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_purge_exception():
@@ -270,7 +280,7 @@ async def test_sync_adaptive_router_roster_purge_exception():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -283,13 +293,14 @@ async def test_sync_adaptive_router_roster_purge_exception():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", side_effect=Exception("Purge Exception")), \
-         patch("main.logger.warning") as mock_warning, \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", side_effect=Exception("Purge Exception")),
+        patch("main.logger.warning") as mock_warning,
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -299,6 +310,7 @@ async def test_sync_adaptive_router_roster_purge_exception():
 
         # Verify warning about purge failure
         assert any("Failed to purge stale deployments" in call[0][0] for call in mock_warning.call_args_list)
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_litellm_post_failure():
@@ -317,7 +329,7 @@ async def test_sync_adaptive_router_roster_litellm_post_failure():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -331,19 +343,21 @@ async def test_sync_adaptive_router_roster_litellm_post_failure():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch("main.logger.warning") as mock_warning, \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch("main.logger.warning") as mock_warning,
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify warning for failed post
         assert any("model/new model-1" in call[0][0] for call in mock_warning.call_args_list)
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_compute_score_exception():
@@ -362,7 +376,7 @@ async def test_sync_adaptive_router_roster_compute_score_exception():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -375,12 +389,13 @@ async def test_sync_adaptive_router_roster_compute_score_exception():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=Exception("Score Exception")), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=Exception("Score Exception")),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -406,7 +421,7 @@ async def test_sync_adaptive_router_roster_post_exception():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -416,19 +431,21 @@ async def test_sync_adaptive_router_roster_post_exception():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.side_effect = Exception("Post Exception")
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch("main.logger.warning") as mock_warning, \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch("main.logger.warning") as mock_warning,
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify warning for failed post exception
         assert any("Failed to register model-1 under" in call[0][0] for call in mock_warning.call_args_list)
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_max_score_less_than_1():
@@ -447,7 +464,7 @@ async def test_sync_adaptive_router_roster_max_score_less_than_1():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -460,12 +477,13 @@ async def test_sync_adaptive_router_roster_max_score_less_than_1():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[0.5]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[0.5]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -479,6 +497,7 @@ async def test_sync_adaptive_router_roster_max_score_less_than_1():
         # if not models, tier_assignments[tier_name] = top_two[:]
 
         assert mock_client_instance.post.call_count > 0
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_load_aa_scores():
@@ -497,7 +516,7 @@ async def test_sync_adaptive_router_roster_load_aa_scores():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -510,12 +529,13 @@ async def test_sync_adaptive_router_roster_load_aa_scores():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0]), \
-         patch("main._load_aa_scores") as mock_load_aa, \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0]),
+        patch("main._load_aa_scores") as mock_load_aa,
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = False
 
         await main.sync_adaptive_router_roster("test_key")
@@ -541,14 +561,14 @@ async def test_sync_adaptive_router_roster_tier_distribution():
                 "id": "model-complex",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
                 "id": "model-medium",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
-            }
+                "context_length": 4096,
+            },
         ]
     }
 
@@ -560,12 +580,13 @@ async def test_sync_adaptive_router_roster_tier_distribution():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[70.0, 62.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[70.0, 62.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         # We need normalized scores to hit the complex/medium tiers:
@@ -580,14 +601,17 @@ async def test_sync_adaptive_router_roster_tier_distribution():
         # We need compute_free_model_score to return these.
 
         # Let's add a dummy model that sets the max score high so normalization works as intended.
-        mock_openrouter_response.json.return_value["data"].append({
-            "id": "model-max",
-            "supported_parameters": ["tools"],
-            "pricing": {"prompt": "0", "completion": "0"},
-            "context_length": 4096
-        })
+        mock_openrouter_response.json.return_value["data"].append(
+            {
+                "id": "model-max",
+                "supported_parameters": ["tools"],
+                "pricing": {"prompt": "0", "completion": "0"},
+                "context_length": 4096,
+            }
+        )
 
-        pass # we'll patch with side_effect=[70.0, 62.0, 100.0]
+        pass  # we'll patch with side_effect=[70.0, 62.0, 100.0]
+
 
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_tier_coverage():
@@ -606,20 +630,20 @@ async def test_sync_adaptive_router_roster_tier_coverage():
                 "id": "model-70",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
                 "id": "model-62",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             },
             {
                 "id": "model-100",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
-            }
+                "context_length": 4096,
+            },
         ]
     }
 
@@ -631,12 +655,13 @@ async def test_sync_adaptive_router_roster_tier_coverage():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[70.0, 62.0, 100.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main._purge_stale_deployments", new_callable=AsyncMock), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}):
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[70.0, 62.0, 100.0]),
+        patch("main._load_aa_scores"),
+        patch("main._purge_stale_deployments", new_callable=AsyncMock),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+    ):
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
@@ -659,8 +684,11 @@ async def test_purge_stale_deployments():
     with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}):
         await main._purge_stale_deployments("postgres://test", "agent-%")
 
-        mock_conn.execute.assert_called_with('DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', 'agent-%')
+        mock_conn.execute.assert_called_with(
+            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', "agent-%"
+        )
         mock_conn.close.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_purge_stale_deployments_exception_closes_conn():
@@ -681,6 +709,7 @@ async def test_purge_stale_deployments_exception_closes_conn():
 
         mock_conn.close.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_sync_adaptive_router_roster_no_db_url():
     router_path = os.path.join(os.getcwd(), "router")
@@ -698,7 +727,7 @@ async def test_sync_adaptive_router_roster_no_db_url():
                 "id": "model-1",
                 "supported_parameters": ["tools"],
                 "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": 4096
+                "context_length": 4096,
             }
         ]
     }
@@ -711,15 +740,19 @@ async def test_sync_adaptive_router_roster_no_db_url():
     mock_client_instance.get.return_value = mock_openrouter_response
     mock_client_instance.post.return_value = mock_litellm_response
 
-    with patch("main.get_http_client", return_value=mock_client_instance), \
-         patch("main.compute_free_model_score", side_effect=[90.0]), \
-         patch("main._load_aa_scores"), \
-         patch("main.logger.warning") as mock_warning, \
-         patch.dict(os.environ, {}, clear=True): # Ensure DATABASE_URL is not set
-
+    with (
+        patch("main.get_http_client", return_value=mock_client_instance),
+        patch("main.compute_free_model_score", side_effect=[90.0]),
+        patch("main._load_aa_scores"),
+        patch("main.logger.warning") as mock_warning,
+        patch.dict(os.environ, {}, clear=True),
+    ):  # Ensure DATABASE_URL is not set
         main._AA_SCORES_LOADED = True
 
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify warning for missing db url
-        assert any("DATABASE_URL is not set; skipping purge of stale agent-* deployments" in call[0][0] for call in mock_warning.call_args_list)
+        assert any(
+            "DATABASE_URL is not set; skipping purge of stale agent-* deployments" in call[0][0]
+            for call in mock_warning.call_args_list
+        )

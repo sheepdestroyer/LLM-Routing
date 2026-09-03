@@ -11,13 +11,13 @@ async def test_register_langfuse_models_in_db_success():
     mock_asyncpg = MagicMock()
     mock_asyncpg.connect = AsyncMock(return_value=mock_conn)
 
-    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}):
+    with (
+        patch.dict("sys.modules", {"asyncpg": mock_asyncpg}),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}),
+    ):
         result = await _register_langfuse_models_in_db(max_retries=3, retry_delay=0.01)
         assert result is True
-        mock_asyncpg.connect.assert_called_once_with(
-            "postgresql://postgres:pwd@127.0.0.1:5432/langfuse", timeout=5.0
-        )
+        mock_asyncpg.connect.assert_called_once_with("postgresql://postgres:pwd@127.0.0.1:5432/langfuse", timeout=5.0)
         assert mock_conn.execute.call_count == len(LANGFUSE_MANAGED_MODELS)
         assert mock_conn.close.called
 
@@ -43,8 +43,10 @@ async def test_register_langfuse_models_in_db_retry_success():
     # First attempt fails, second attempt succeeds
     mock_asyncpg.connect = AsyncMock(side_effect=[Exception("DB starting up"), mock_conn])
 
-    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}):
+    with (
+        patch.dict("sys.modules", {"asyncpg": mock_asyncpg}),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}),
+    ):
         result = await _register_langfuse_models_in_db(max_retries=3, retry_delay=0.01)
         assert result is True
         assert mock_asyncpg.connect.call_count == 2
@@ -57,8 +59,7 @@ async def test_register_langfuse_models_in_db_no_db_url():
     mock_asyncpg = MagicMock()
     mock_asyncpg.connect = AsyncMock()
 
-    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}), \
-         patch.dict(os.environ, {}, clear=True):
+    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}), patch.dict(os.environ, {}, clear=True):
         result = await _register_langfuse_models_in_db()
         assert result is False
         mock_asyncpg.connect.assert_not_called()
@@ -66,8 +67,10 @@ async def test_register_langfuse_models_in_db_no_db_url():
 
 @pytest.mark.asyncio
 async def test_register_langfuse_models_in_db_no_asyncpg():
-    with patch.dict("sys.modules", {"asyncpg": None}), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}):
+    with (
+        patch.dict("sys.modules", {"asyncpg": None}),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}),
+    ):
         result = await _register_langfuse_models_in_db()
         assert result is False
 
@@ -77,8 +80,10 @@ async def test_register_langfuse_models_in_db_exhaust_retries():
     mock_asyncpg = MagicMock()
     mock_asyncpg.connect = AsyncMock(side_effect=Exception("DB connection refused"))
 
-    with patch.dict("sys.modules", {"asyncpg": mock_asyncpg}), \
-         patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}):
+    with (
+        patch.dict("sys.modules", {"asyncpg": mock_asyncpg}),
+        patch.dict(os.environ, {"DATABASE_URL": "postgresql://postgres:pwd@127.0.0.1:5432/postgres"}),
+    ):
         result = await _register_langfuse_models_in_db(max_retries=3, retry_delay=0.01)
         assert result is False
         assert mock_asyncpg.connect.call_count == 3

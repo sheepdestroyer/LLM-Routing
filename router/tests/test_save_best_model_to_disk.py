@@ -1,6 +1,7 @@
 from unittest.mock import patch
 from router import main
 
+
 def test_save_best_model_to_disk_success():
     best_model = {"model_name": "agent-gemma", "score": 100}
 
@@ -13,6 +14,7 @@ def test_save_best_model_to_disk_success():
         assert payload["model_name"] == "agent-gemma"
         assert payload["score"] == 100
         assert "updated_at" in payload
+
 
 def test_save_best_model_to_disk_exception_handled():
     best_model = {"model_name": "agent-gemma"}

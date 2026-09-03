@@ -1,29 +1,34 @@
 """Shared verification helpers for cooldown and routing integration tests."""
+
 # Shared verification helpers for cooldown and routing tests
 try:
     from scripts.chat_helpers import parse_chat_response
 except ImportError:
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from scripts.chat_helpers import parse_chat_response
 import os
-import uuid
 import time
+import uuid
+
 import httpx
+
 
 def load_litellm_key(workspace_dir: str) -> str:
     """Read LITELLM_MASTER_KEY from .env, defaulting to 'gateway-pass'."""
     env_path = os.path.join(workspace_dir, ".env")
     litellm_key = "gateway-pass"
     if os.path.exists(env_path):
-        with open(env_path, "r") as f:
+        with open(env_path) as f:
             for line in f:
                 if line.startswith("LITELLM_MASTER_KEY="):
                     # extract value inside quotes
                     litellm_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                     break
     return litellm_key
+
 
 def get_triage_request_count(metrics_url: str = "http://localhost:5000/metrics") -> int:
     """Parse Prometheus metrics to retrieve the total triage request count."""
@@ -43,24 +48,25 @@ def get_triage_request_count(metrics_url: str = "http://localhost:5000/metrics")
         print(f"Error fetching metrics: {e}")
     return 0
 
-def send_litellm_request(model: str, prompt: str, litellm_url: str = "http://localhost:4000/v1/chat/completions", litellm_key: str = "gateway-pass") -> tuple[bool, str]:
+
+def send_litellm_request(
+    model: str,
+    prompt: str,
+    litellm_url: str = "http://localhost:4000/v1/chat/completions",
+    litellm_key: str = "gateway-pass",
+) -> tuple[bool, str]:
     """Send a request to LiteLLM and return (success_bool, result_model_or_error_msg)."""
     unique_prompt = f"{prompt} [id: {uuid.uuid4()}]"
     payload = {
         "model": model,
-        "messages": [
-            {"role": "user", "content": unique_prompt}
-        ],
+        "messages": [{"role": "user", "content": unique_prompt}],
         "temperature": 0.0,
-        "max_tokens": 10
+        "max_tokens": 10,
     }
     start_time = time.time()
     try:
         response = httpx.post(
-            litellm_url,
-            json=payload,
-            headers={"Authorization": f"Bearer {litellm_key}"},
-            timeout=120.0
+            litellm_url, json=payload, headers={"Authorization": f"Bearer {litellm_key}"}, timeout=120.0
         )
         response.raise_for_status()
         result = response.json()

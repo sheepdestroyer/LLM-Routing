@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import sys
-import httpx
 from pathlib import Path
+
+import httpx
 
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 try:
@@ -22,22 +23,11 @@ except ImportError:
 # Read LITELLM_MASTER_KEY from .env
 litellm_key = load_litellm_key(workspace_dir)
 
+
 def send_request(model: str, prompt: str, expected_model: str):
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.0,
-        "max_tokens": 10
-    }
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.0, "max_tokens": 10}
     try:
-        response = httpx.post(
-            URL,
-            json=payload,
-            headers={"Authorization": f"Bearer {litellm_key}"},
-            timeout=30.0
-        )
+        response = httpx.post(URL, json=payload, headers={"Authorization": f"Bearer {litellm_key}"}, timeout=30.0)
         response.raise_for_status()
         result = response.json()
         model_returned = result.get("model", "unknown")
@@ -49,7 +39,10 @@ def send_request(model: str, prompt: str, expected_model: str):
             sys.exit(1)
         print("✓ SUCCESS: Routed correctly!")
     except httpx.HTTPStatusError as e:
-        print(f"❌ HTTP ERROR: Request to model={model} failed with status {e.response.status_code}: {e}\nResponse body:\n{e.response.text}", file=sys.stderr)
+        print(
+            f"❌ HTTP ERROR: Request to model={model} failed with status {e.response.status_code}: {e}\nResponse body:\n{e.response.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except httpx.HTTPError as e:
         print(f"❌ HTTP ERROR: Request to model={model} failed: {e}", file=sys.stderr)
@@ -58,26 +51,38 @@ def send_request(model: str, prompt: str, expected_model: str):
         print(f"❌ PARSE ERROR: Failed to parse response for model={model}: {e}", file=sys.stderr)
         sys.exit(1)
 
+
 def main():
     print("--- 1. Testing llm-routing-auto-ollama ---")
     # Simple prompt -> should route to agent-simple-core
     send_request("llm-routing-auto-ollama", "Write a hello world in Python", "agent-simple-core")
-    
+
     # Complex prompt -> should route to ollama-deepseek-v4-flash
-    send_request("llm-routing-auto-ollama", "Implement a custom memory-efficient Trie in C++", "ollama-deepseek-v4-flash")
-    
+    send_request(
+        "llm-routing-auto-ollama", "Implement a custom memory-efficient Trie in C++", "ollama-deepseek-v4-flash"
+    )
+
     # Reasoning prompt -> should route to ollama-deepseek-v4-pro
-    send_request("llm-routing-auto-ollama", "Design a distributed pub/sub system with Valkey and describe failover states", "ollama-deepseek-v4-pro")
+    send_request(
+        "llm-routing-auto-ollama",
+        "Design a distributed pub/sub system with Valkey and describe failover states",
+        "ollama-deepseek-v4-pro",
+    )
 
     print("\n--- 2. Testing llm-routing-ollama ---")
     # Simple prompt -> should route to ollama-deepseek-v4-flash
     send_request("llm-routing-ollama", "Write a hello world in Python", "ollama-deepseek-v4-flash")
-    
+
     # Complex prompt -> should route to ollama-deepseek-v4-flash
     send_request("llm-routing-ollama", "Implement a custom memory-efficient Trie in C++", "ollama-deepseek-v4-flash")
-    
+
     # Reasoning prompt -> should route to ollama-deepseek-v4-pro
-    send_request("llm-routing-ollama", "Design a distributed pub/sub system with Valkey and describe failover states", "ollama-deepseek-v4-pro")
+    send_request(
+        "llm-routing-ollama",
+        "Design a distributed pub/sub system with Valkey and describe failover states",
+        "ollama-deepseek-v4-pro",
+    )
+
 
 if __name__ == "__main__":
     main()

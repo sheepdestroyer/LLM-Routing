@@ -12,14 +12,16 @@ Tool names match the built-in Memory MCP exactly:
   - remove_memory_category(category, is_global)
   - remove_specific_memory(category, memory_content, is_global)
 """
-import sys
-import json
-import orjson
-import time
-import hashlib
-import httpx
-import urllib.parse
+
 import asyncio
+import hashlib
+import json
+import sys
+import time
+import urllib.parse
+
+import httpx
+import orjson
 
 API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
@@ -74,6 +76,7 @@ def _parse_key(key: str):
 # json-encoded metadata so we can support tags and categories.
 # ---------------------------------------------------------------------------
 
+
 def _is_memory_key(key: str) -> bool:
     """Check if a key follows the memory:{scope}:{category}:: format."""
     if not isinstance(key, str):
@@ -84,7 +87,7 @@ def _is_memory_key(key: str) -> bool:
 def _memory_value(data: str, tags: list | None) -> str:
     """Encode data + tags into the stored value JSON."""
     payload = {"data": data, "tags": tags or []}
-    return orjson.dumps(payload).decode('utf-8')
+    return orjson.dumps(payload).decode("utf-8")
 
 
 def _parse_memory_value(raw: str) -> dict:
@@ -102,13 +105,14 @@ def _parse_memory_value(raw: str) -> dict:
         else:
             tags_val = val["tags"]
         return {"data": data_val, "tags": tags_val}
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return {"data": str(raw) if raw is not None else "", "tags": []}
 
 
 # ---------------------------------------------------------------------------
 # MCP handlers
 # ---------------------------------------------------------------------------
+
 
 async def _list_all_memories(client: httpx.AsyncClient) -> list[dict]:
     """Fetch all memories from LiteLLM."""
@@ -151,7 +155,7 @@ async def handle_remember_memory(args: dict) -> str:
 
     key = _make_key(category, is_global, data)
     value = _memory_value(data, tags)
-    
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.post(API_URL, json={"key": key, "value": value})
         if r.status_code == 200:
@@ -198,7 +202,7 @@ async def handle_retrieve_memories(args: dict) -> str:
         return f"No memories found for category '{category}' ({scope_label})."
 
     # Group by category for display
-    by_category = {}
+    by_category: dict[str, list[dict]] = {}
     for r in results:
         by_category.setdefault(r["category"], []).append(r)
 
@@ -239,7 +243,7 @@ async def handle_remove_memory_category(args: dict) -> str:
         return f"No memories found to remove in category '{category}' ({scope_label})."
 
     deleted_count = 0
-    
+
     async def delete_item(client, entry, sem):
         """Delete a single memory item from the backend."""
         nonlocal deleted_count
@@ -303,7 +307,7 @@ async def handle_remove_specific_memory(args: dict) -> str:
         )
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        quoted_key = urllib.parse.quote(target['key'], safe="")
+        quoted_key = urllib.parse.quote(target["key"], safe="")
         r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
         if r.status_code == 200:
             return f"Removed memory in category '{category}' ({target['data'][:60]}...)."
@@ -314,6 +318,7 @@ async def handle_remove_specific_memory(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # JSON-RPC dispatcher
 # ---------------------------------------------------------------------------
+
 
 def log(msg: str):
     """Log a message to stderr for MCP diagnostics."""
@@ -329,13 +334,8 @@ async def handle_request(req: dict) -> dict | None:
     if method == "initialize":
         return {
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {
-                "tools": {}
-            },
-            "serverInfo": {
-                "name": SERVER_NAME,
-                "version": SERVER_VERSION
-            }
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         }
 
     elif method == "tools/list":
@@ -351,93 +351,57 @@ async def handle_request(req: dict) -> dict | None:
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "Category to store the memory under."
-                            },
-                            "data": {
-                                "type": "string",
-                                "description": "The content/value of the memory."
-                            },
+                            "category": {"type": "string", "description": "Category to store the memory under."},
+                            "data": {"type": "string", "description": "The content/value of the memory."},
                             "tags": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Optional tags for categorization."
+                                "description": "Optional tags for categorization.",
                             },
-                            "is_global": {
-                                "type": "boolean",
-                                "description": "Global (true) or project-local (false)."
-                            }
+                            "is_global": {"type": "boolean", "description": "Global (true) or project-local (false)."},
                         },
-                        "required": ["category", "data"]
-                    }
+                        "required": ["category", "data"],
+                    },
                 },
                 {
                     "name": "retrieve_memories",
                     "description": (
-                        "Retrieve memories by category. Use \"*\" to retrieve all. "
-                        "Memories are fetched from PostgreSQL."
+                        'Retrieve memories by category. Use "*" to retrieve all. Memories are fetched from PostgreSQL.'
                     ),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "Category to retrieve. Use \"*\" for all."
-                            },
-                            "is_global": {
-                                "type": "boolean",
-                                "description": "Global (true) or project-local (false)."
-                            }
+                            "category": {"type": "string", "description": 'Category to retrieve. Use "*" for all.'},
+                            "is_global": {"type": "boolean", "description": "Global (true) or project-local (false)."},
                         },
-                        "required": ["category"]
-                    }
+                        "required": ["category"],
+                    },
                 },
                 {
                     "name": "remove_memory_category",
-                    "description": (
-                        "Remove all memories in a category. Use \"*\" to clear all."
-                    ),
+                    "description": ('Remove all memories in a category. Use "*" to clear all.'),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "Category to clear. Use \"*\" for all."
-                            },
-                            "is_global": {
-                                "type": "boolean",
-                                "description": "Global (true) or project-local (false)."
-                            }
+                            "category": {"type": "string", "description": 'Category to clear. Use "*" for all.'},
+                            "is_global": {"type": "boolean", "description": "Global (true) or project-local (false)."},
                         },
-                        "required": ["category"]
-                    }
+                        "required": ["category"],
+                    },
                 },
                 {
                     "name": "remove_specific_memory",
-                    "description": (
-                        "Remove a single memory by matching its content within "
-                        "a category."
-                    ),
+                    "description": ("Remove a single memory by matching its content within a category."),
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "Category the memory belongs to."
-                            },
-                            "memory_content": {
-                                "type": "string",
-                                "description": "Content text to match for deletion."
-                            },
-                            "is_global": {
-                                "type": "boolean",
-                                "description": "Global (true) or project-local (false)."
-                            }
+                            "category": {"type": "string", "description": "Category the memory belongs to."},
+                            "memory_content": {"type": "string", "description": "Content text to match for deletion."},
+                            "is_global": {"type": "boolean", "description": "Global (true) or project-local (false)."},
                         },
-                        "required": ["category", "memory_content"]
-                    }
-                }
+                        "required": ["category", "memory_content"],
+                    },
+                },
             ]
         }
 
@@ -457,20 +421,12 @@ async def handle_request(req: dict) -> dict | None:
             elif tool_name == "remove_specific_memory":
                 text = await handle_remove_specific_memory(args)
             else:
-                return {
-                    "isError": True,
-                    "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]
-                }
+                return {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]}
 
-            return {
-                "content": [{"type": "text", "text": text}]
-            }
+            return {"content": [{"type": "text", "text": text}]}
         except Exception as e:
             log(f"Error executing {tool_name}: {e}")
-            return {
-                "isError": True,
-                "content": [{"type": "text", "text": f"Error: {e}"}]
-            }
+            return {"isError": True, "content": [{"type": "text", "text": f"Error: {e}"}]}
 
     return None
 
@@ -478,6 +434,7 @@ async def handle_request(req: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 # Main loop — JSON-RPC over stdio
 # ---------------------------------------------------------------------------
+
 
 async def main_loop():
     """Main execution loop for the MCP server, reading from stdin."""
@@ -496,12 +453,8 @@ async def main_loop():
 
             result = await handle_request(req)
             if result is not None:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "result": result
-                }
-                sys.stdout.write(orjson.dumps(response).decode('utf-8') + "\n")
+                response = {"jsonrpc": "2.0", "id": req_id, "result": result}
+                sys.stdout.write(orjson.dumps(response).decode("utf-8") + "\n")
                 sys.stdout.flush()
         except orjson.JSONDecodeError as e:
             log(f"JSON parse error: {e}")
@@ -511,4 +464,5 @@ async def main_loop():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main_loop())

@@ -4,17 +4,19 @@ import time
 import os
 from unittest.mock import AsyncMock, patch
 
+
 @pytest.mark.asyncio
 async def test_maybe_trigger_roster_sync():
     import router.main as main
 
     now = time.monotonic()
 
-    with patch.object(main, "_last_roster_sync", now - 1000.0), \
-         patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync, \
-         patch("router.main.logger") as mock_logger, \
-         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
-
+    with (
+        patch.object(main, "_last_roster_sync", now - 1000.0),
+        patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync,
+        patch("router.main.logger") as mock_logger,
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
+    ):
         # Test forced trigger (force=True)
         await main.maybe_trigger_roster_sync(force=True)
         mock_sync.assert_awaited_once_with("test-key")
@@ -34,18 +36,21 @@ async def test_maybe_trigger_roster_sync():
             await main.maybe_trigger_roster_sync(force=False)
             mock_sync.assert_awaited_once_with("test-key")
 
+
 @pytest.mark.asyncio
 async def test_maybe_trigger_roster_sync_no_master_key():
     import router.main as main
 
     now = time.monotonic()
 
-    with patch.object(main, "_last_roster_sync", now - 1000.0), \
-         patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync, \
-         patch.dict(os.environ, {}, clear=True):
-
+    with (
+        patch.object(main, "_last_roster_sync", now - 1000.0),
+        patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync,
+        patch.dict(os.environ, {}, clear=True),
+    ):
         await main.maybe_trigger_roster_sync(force=True)
         mock_sync.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_maybe_trigger_roster_sync_lock():
@@ -53,9 +58,10 @@ async def test_maybe_trigger_roster_sync_lock():
 
     now = time.monotonic()
 
-    with patch.object(main, "_last_roster_sync", now - 1000.0), \
-         patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync:
-
+    with (
+        patch.object(main, "_last_roster_sync", now - 1000.0),
+        patch.object(main, "sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync,
+    ):
         # Simulate lock being acquired
         await main._roster_sync_lock.acquire()
         try:

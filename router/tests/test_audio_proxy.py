@@ -4,6 +4,7 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from router.main import app, proxy_audio
 
+
 @pytest.mark.asyncio
 async def test_proxy_audio_ssrf_path_traversal():
     """Test that path traversal attempts (..) trigger 400 Bad Request."""
@@ -12,6 +13,7 @@ async def test_proxy_audio_ssrf_path_traversal():
         await proxy_audio(mock_request, path="../etc/passwd")
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid path"
+
 
 @pytest.mark.asyncio
 async def test_proxy_audio_ssrf_authority_override():
@@ -22,6 +24,7 @@ async def test_proxy_audio_ssrf_authority_override():
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid path"
 
+
 @pytest.mark.asyncio
 async def test_proxy_audio_ssrf_scheme_injection():
     """Test that scheme injection attempts (://) trigger 400 Bad Request."""
@@ -31,6 +34,7 @@ async def test_proxy_audio_ssrf_scheme_injection():
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid path"
 
+
 @pytest.mark.asyncio
 async def test_proxy_audio_ssrf_null_byte_injection():
     """Test that null byte injection attempts (\x00) trigger 400 Bad Request."""
@@ -39,6 +43,7 @@ async def test_proxy_audio_ssrf_null_byte_injection():
         await proxy_audio(mock_request, path="secret\x00.py")
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid path"
+
 
 @pytest.mark.asyncio
 async def test_proxy_audio_valid_request():
@@ -58,6 +63,7 @@ async def test_proxy_audio_valid_request():
         mock_http_client.request.assert_awaited_once()
         call_kwargs = mock_http_client.request.call_args.kwargs
         assert call_kwargs["url"] == "http://127.0.0.1:4000/v1/audio/transcriptions"
+
 
 @pytest.mark.asyncio
 async def test_proxy_audio_failure_502():

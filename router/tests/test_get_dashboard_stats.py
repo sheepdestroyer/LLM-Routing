@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import Request
 
+
 @pytest.mark.asyncio
 async def test_get_dashboard_stats():
     from router import main
@@ -16,9 +17,10 @@ async def test_get_dashboard_stats():
     mock_template = MagicMock()
     mock_template.render.return_value = "<div>Mocked HTML</div>"
 
-    with patch("router.main.get_dashboard_data", new_callable=AsyncMock) as mock_get_dashboard_data, \
-         patch("router.main.templates.get_template") as mock_get_template:
-
+    with (
+        patch("router.main.get_dashboard_data", new_callable=AsyncMock) as mock_get_dashboard_data,
+        patch("router.main.templates.get_template") as mock_get_template,
+    ):
         mock_get_dashboard_data.return_value = mock_data
         mock_get_template.return_value = mock_template
 

@@ -24,14 +24,14 @@ from memory_mcp import (
     handle_remove_memory_category,
     handle_request,
     main_loop,
-    log
+    log,
 )
-
 
 
 # =====================================================================
 # Tests from router/test_memory_mcp.py
 # =====================================================================
+
 
 def test_make_key_global():
     """Test generating a key for global scope."""
@@ -167,15 +167,12 @@ def test_parse_memory_value_invalid_json_string():
 # Tests from test_memory_mcp.py (root)
 # =====================================================================
 
+
 def test_memory_entry_happy_path():
     """Test correctly formatted and complete memory entry."""
     valid_key = "memory:global:project_standards::1689201948123:a1b2c3d4e5f6"
     valid_value = json.dumps({"data": "Use pytest for all tests", "tags": ["testing", "python"]})
-    lmem = {
-        "key": valid_key,
-        "value": valid_value,
-        "memory_id": "test_id_123"
-    }
+    lmem = {"key": valid_key, "value": valid_value, "memory_id": "test_id_123"}
 
     result = _memory_entry(lmem)
 
@@ -191,10 +188,7 @@ def test_memory_entry_happy_path():
 
 def test_memory_entry_invalid_key():
     """Test with a key that does not start with 'memory:'."""
-    lmem = {
-        "key": "notamemory:global:cat::123:hash",
-        "value": json.dumps({"data": "test", "tags": []})
-    }
+    lmem = {"key": "notamemory:global:cat::123:hash", "value": json.dumps({"data": "test", "tags": []})}
 
     result = _memory_entry(lmem)
     assert result is None
@@ -204,16 +198,13 @@ def test_memory_entry_malformed_json_value():
     """Test with malformed/string value where JSON parsing fails."""
     valid_key = "memory:local:notes::1689201948123:a1b2c3d4e5f6"
     # value is just a raw string, not JSON
-    lmem = {
-        "key": valid_key,
-        "value": "This is just a raw string without tags"
-    }
+    lmem = {"key": valid_key, "value": "This is just a raw string without tags"}
 
     result = _memory_entry(lmem)
 
     assert result is not None
     assert result["data"] == "This is just a raw string without tags"
-    assert result["tags"] == [] # Falls back to empty tags list
+    assert result["tags"] == []  # Falls back to empty tags list
     assert result["category"] == "notes"
     assert result["scope"] == "local"
 
@@ -221,9 +212,7 @@ def test_memory_entry_malformed_json_value():
 def test_memory_entry_missing_fields():
     """Test gracefully handling dictionaries with missing keys."""
     # Missing 'value' and 'memory_id'
-    lmem1 = {
-        "key": "memory:global:ideas::123:hash"
-    }
+    lmem1 = {"key": "memory:global:ideas::123:hash"}
     result1 = _memory_entry(lmem1)
     assert result1 is not None
     assert result1["data"] == ""
@@ -231,15 +220,14 @@ def test_memory_entry_missing_fields():
     assert result1["memory_id"] == ""
 
     # Missing 'key'
-    lmem2 = {
-        "value": json.dumps({"data": "test", "tags": []})
-    }
+    lmem2 = {"value": json.dumps({"data": "test", "tags": []})}
     result2 = _memory_entry(lmem2)
     assert result2 is None
 
     # Empty dict
     result3 = _memory_entry({})
     assert result3 is None
+
 
 def test_is_memory_key_types():
     """Test _is_memory_key works with both string and non-string inputs."""
@@ -300,12 +288,13 @@ def test_is_memory_key_types():
         "extra_colons_in_category",
         "missing_hash_but_has_timestamp",
         "v2_escaped_category",
-    ]
+    ],
 )
 def test_parse_key(key, expected):
     """Test _parse_key with various valid and invalid formats."""
     result = _parse_key(key)
     assert result == expected
+
 
 def test_parse_memory_value_valid_json():
     raw_data = json.dumps({"data": "some data", "tags": ["tag1", "tag2"]})
@@ -321,7 +310,7 @@ def test_parse_memory_value_invalid_json_fallback():
 
 def test_parse_memory_value_type_error_fallback():
     raw_data = 12345
-    result = _parse_memory_value(raw_data)  # type: ignore[arg-type]
+    result = _parse_memory_value(raw_data)
     assert result == {"data": "12345", "tags": []}
 
 
@@ -347,10 +336,10 @@ def test_make_key_and_parse_key_round_trip():
     """Verify that _make_key and _parse_key correctly quote and unquote complex categories."""
     category = "proj:alpha/100% ready"
     key = _make_key(category, is_global=False, data="test-data")
-    
+
     # Assert that the category in the key is URL-encoded
     assert "proj%3Aalpha%2F100%25%20ready" in key
-    
+
     # Assert that the parsed key returns the original unencoded category
     parsed = _parse_key(key)
     assert parsed["scope"] == "local"
@@ -360,35 +349,28 @@ def test_make_key_and_parse_key_round_trip():
 @pytest.mark.asyncio
 async def test_handle_remove_memory_category_url_encoding():
     from memory_mcp import handle_remove_memory_category
-    
+
     category = "test:cat/100%_done"
     key = _make_key(category, is_global=False, data="some-value")
-    
+
     mock_list_response = MagicMock()
     mock_list_response.status_code = 200
-    mock_list_response.json.return_value = {
-        "memories": [
-            {
-                "key": key,
-                "value": _memory_value("some-value", ["tag1"])
-            }
-        ]
-    }
-    
+    mock_list_response.json.return_value = {"memories": [{"key": key, "value": _memory_value("some-value", ["tag1"])}]}
+
     mock_delete_response = MagicMock()
     mock_delete_response.status_code = 200
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_list_response
     mock_client.delete.return_value = mock_delete_response
-    
+
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client_class.return_value.__aenter__.return_value = mock_client
-        
+
         result = await handle_remove_memory_category({"category": category, "is_global": False})
-        
+
         assert "Removed 1 memory" in result
-        
+
         expected_quoted_key = urllib.parse.quote(key, safe="")
         mock_client.delete.assert_called_once()
         called_url = mock_client.delete.call_args[0][0]
@@ -398,39 +380,30 @@ async def test_handle_remove_memory_category_url_encoding():
 @pytest.mark.asyncio
 async def test_handle_remove_specific_memory_url_encoding():
     from memory_mcp import handle_remove_specific_memory
-    
+
     category = "test:cat/100%_done"
     key = _make_key(category, is_global=False, data="some-value")
-    
+
     mock_list_response = MagicMock()
     mock_list_response.status_code = 200
-    mock_list_response.json.return_value = {
-        "memories": [
-            {
-                "key": key,
-                "value": _memory_value("some-value", ["tag1"])
-            }
-        ]
-    }
-    
+    mock_list_response.json.return_value = {"memories": [{"key": key, "value": _memory_value("some-value", ["tag1"])}]}
+
     mock_delete_response = MagicMock()
     mock_delete_response.status_code = 200
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_list_response
     mock_client.delete.return_value = mock_delete_response
-    
+
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client_class.return_value.__aenter__.return_value = mock_client
-        
-        result = await handle_remove_specific_memory({
-            "category": category,
-            "memory_content": "some-value",
-            "is_global": False
-        })
-        
+
+        result = await handle_remove_specific_memory(
+            {"category": category, "memory_content": "some-value", "is_global": False}
+        )
+
         assert "Removed memory" in result
-        
+
         expected_quoted_key = urllib.parse.quote(key, safe="")
         mock_client.delete.assert_called_once()
         called_url = mock_client.delete.call_args[0][0]
@@ -440,34 +413,34 @@ async def test_handle_remove_specific_memory_url_encoding():
 @pytest.mark.asyncio
 async def test_handle_remove_memory_category_failure():
     from memory_mcp import handle_remove_memory_category
-    
+
     key1 = _make_key("cat", is_global=False, data="val1")
     key2 = _make_key("cat", is_global=False, data="val2")
-    
+
     mock_list_response = MagicMock()
     mock_list_response.status_code = 200
     mock_list_response.json.return_value = {
         "memories": [
             {"key": key1, "value": _memory_value("val1", [])},
-            {"key": key2, "value": _memory_value("val2", [])}
+            {"key": key2, "value": _memory_value("val2", [])},
         ]
     }
-    
+
     mock_response_200 = MagicMock()
     mock_response_200.status_code = 200
     mock_response_500 = MagicMock()
     mock_response_500.status_code = 500
     mock_response_500.text = "Internal Server Error"
-    
+
     mock_client = AsyncMock()
     mock_client.get.return_value = mock_list_response
     mock_client.delete.side_effect = [mock_response_200, mock_response_500]
-    
+
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client_class.return_value.__aenter__.return_value = mock_client
-        
+
         result = await handle_remove_memory_category({"category": "cat", "is_global": False})
-        
+
         assert "Error removing memory" in result
         assert "deleted 1 of 2" in result
         assert "Internal Server Error" in result
@@ -484,6 +457,7 @@ async def test_list_all_memories_success():
     result = await _list_all_memories(mock_client)
     assert result == [{"key": "test_key", "value": "test_value"}]
 
+
 @pytest.mark.asyncio
 async def test_list_all_memories_error():
     mock_client = AsyncMock()
@@ -493,6 +467,7 @@ async def test_list_all_memories_error():
 
     result = await _list_all_memories(mock_client)
     assert result == []
+
 
 @pytest.mark.asyncio
 async def test_handle_remember_memory_success():
@@ -513,6 +488,7 @@ async def test_handle_remember_memory_success():
         assert "tag1" in result
         assert "global" in result
 
+
 @pytest.mark.asyncio
 async def test_handle_remember_memory_error():
     mock_client = AsyncMock()
@@ -530,6 +506,7 @@ async def test_handle_remember_memory_error():
         assert "Error saving memory" in result
         assert "Internal Error" in result
 
+
 @pytest.mark.asyncio
 async def test_handle_retrieve_memories_found():
     key = _make_key("test_cat", is_global=False, data="test_data")
@@ -546,6 +523,7 @@ async def test_handle_retrieve_memories_found():
         assert "test_data" in result
         assert "tag1" in result
 
+
 @pytest.mark.asyncio
 async def test_handle_retrieve_memories_not_found():
     mock_list_all = AsyncMock()
@@ -557,6 +535,7 @@ async def test_handle_retrieve_memories_not_found():
 
         assert "No memories found for category 'test_cat'" in result
 
+
 @pytest.mark.asyncio
 async def test_handle_remove_specific_memory_not_found():
     mock_list_all = AsyncMock()
@@ -567,6 +546,7 @@ async def test_handle_remove_specific_memory_not_found():
         result = await handle_remove_specific_memory(args)
 
         assert "No matching memory found" in result
+
 
 @pytest.mark.asyncio
 async def test_handle_remove_specific_memory_error():
@@ -591,6 +571,7 @@ async def test_handle_remove_specific_memory_error():
 
             assert "Error removing memory" in result
 
+
 @pytest.mark.asyncio
 async def test_handle_request_initialize():
     req = {"method": "initialize"}
@@ -599,6 +580,7 @@ async def test_handle_request_initialize():
     assert "protocolVersion" in result
     assert "capabilities" in result
     assert "serverInfo" in result
+
 
 @pytest.mark.asyncio
 async def test_handle_request_tools_list():
@@ -609,14 +591,12 @@ async def test_handle_request_tools_list():
     tools = {t["name"] for t in result["tools"]}
     assert tools == {"remember_memory", "retrieve_memories", "remove_memory_category", "remove_specific_memory"}
 
+
 @pytest.mark.asyncio
 async def test_handle_request_tools_call():
     req = {
         "method": "tools/call",
-        "params": {
-            "name": "remember_memory",
-            "arguments": {"category": "test", "data": "test_data"}
-        }
+        "params": {"name": "remember_memory", "arguments": {"category": "test", "data": "test_data"}},
     }
 
     mock_handler = AsyncMock()
@@ -629,30 +609,20 @@ async def test_handle_request_tools_call():
         assert not result.get("isError")
         assert result["content"][0]["text"] == "Memory remembered"
 
+
 @pytest.mark.asyncio
 async def test_handle_request_tools_call_unknown():
-    req = {
-        "method": "tools/call",
-        "params": {
-            "name": "unknown_tool",
-            "arguments": {}
-        }
-    }
+    req = {"method": "tools/call", "params": {"name": "unknown_tool", "arguments": {}}}
 
     result = await handle_request(req)
     assert result is not None
     assert result["isError"] is True
     assert "Unknown tool" in result["content"][0]["text"]
 
+
 @pytest.mark.asyncio
 async def test_handle_request_tools_call_error():
-    req = {
-        "method": "tools/call",
-        "params": {
-            "name": "remember_memory",
-            "arguments": {}
-        }
-    }
+    req = {"method": "tools/call", "params": {"name": "remember_memory", "arguments": {}}}
 
     mock_handler = AsyncMock()
     mock_handler.side_effect = Exception("Test Error")
@@ -664,14 +634,18 @@ async def test_handle_request_tools_call_error():
         assert result["isError"] is True
         assert "Test Error" in result["content"][0]["text"]
 
+
 @pytest.mark.asyncio
 async def test_main_loop():
     # Simulate a stream of stdin JSON-RPC requests
     mock_stdin = io.StringIO(
-        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) + "\n" +
-        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}) + "\n" +
-        "invalid json\n" +
-        json.dumps({"jsonrpc": "2.0", "method": "notification_no_id"}) + "\n"
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        + "\n"
+        + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        + "\n"
+        + "invalid json\n"
+        + json.dumps({"jsonrpc": "2.0", "method": "notification_no_id"})
+        + "\n"
     )
 
     mock_stdout = io.StringIO()
@@ -689,6 +663,7 @@ async def test_main_loop():
     assert responses[1]["id"] == 2
     assert "tools" in responses[1]["result"]
 
+
 def test_log():
     mock_stderr = io.StringIO()
     with patch("sys.stderr", mock_stderr):
@@ -696,12 +671,14 @@ def test_log():
 
     assert "[memory-mcp] Test message\n" in mock_stderr.getvalue()
 
+
 @pytest.mark.asyncio
 async def test_main_loop_errors():
     mock_stdin = io.StringIO(
-        "\n" + # Empty line to hit continue
-        "invalid json format\n" + # JSON parse error
-        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "test_unhandled_error"}) + "\n" # triggers Exception
+        "\n"  # Empty line to hit continue
+        + "invalid json format\n"  # JSON parse error
+        + json.dumps({"jsonrpc": "2.0", "id": 3, "method": "test_unhandled_error"})
+        + "\n"  # triggers Exception
     )
 
     mock_stdout = io.StringIO()
@@ -713,7 +690,12 @@ async def test_main_loop_errors():
             raise RuntimeError("Fake unexpected error")
         return None
 
-    with patch("sys.stdin", mock_stdin), patch("sys.stdout", mock_stdout), patch("sys.stderr", mock_stderr), patch("memory_mcp.handle_request", side_effect=mock_handle_request):
+    with (
+        patch("sys.stdin", mock_stdin),
+        patch("sys.stdout", mock_stdout),
+        patch("sys.stderr", mock_stderr),
+        patch("memory_mcp.handle_request", side_effect=mock_handle_request),
+    ):
         await main_loop()
 
     err_output = mock_stderr.getvalue()
@@ -723,13 +705,7 @@ async def test_main_loop_errors():
 
 @pytest.mark.asyncio
 async def test_handle_request_tools_call_retrieve_memories():
-    req = {
-        "method": "tools/call",
-        "params": {
-            "name": "retrieve_memories",
-            "arguments": {"category": "test"}
-        }
-    }
+    req = {"method": "tools/call", "params": {"name": "retrieve_memories", "arguments": {"category": "test"}}}
 
     mock_handler = AsyncMock()
     mock_handler.return_value = "Memories retrieved"
@@ -741,15 +717,10 @@ async def test_handle_request_tools_call_retrieve_memories():
         assert not result.get("isError")
         assert result["content"][0]["text"] == "Memories retrieved"
 
+
 @pytest.mark.asyncio
 async def test_handle_request_tools_call_remove_memory_category():
-    req = {
-        "method": "tools/call",
-        "params": {
-            "name": "remove_memory_category",
-            "arguments": {"category": "test"}
-        }
-    }
+    req = {"method": "tools/call", "params": {"name": "remove_memory_category", "arguments": {"category": "test"}}}
 
     mock_handler = AsyncMock()
     mock_handler.return_value = "Category removed"
@@ -761,14 +732,12 @@ async def test_handle_request_tools_call_remove_memory_category():
         assert not result.get("isError")
         assert result["content"][0]["text"] == "Category removed"
 
+
 @pytest.mark.asyncio
 async def test_handle_request_tools_call_remove_specific_memory():
     req = {
         "method": "tools/call",
-        "params": {
-            "name": "remove_specific_memory",
-            "arguments": {"category": "test", "memory_content": "data"}
-        }
+        "params": {"name": "remove_specific_memory", "arguments": {"category": "test", "memory_content": "data"}},
     }
 
     mock_handler = AsyncMock()
@@ -781,6 +750,7 @@ async def test_handle_request_tools_call_remove_specific_memory():
         assert not result.get("isError")
         assert result["content"][0]["text"] == "Memory removed"
 
+
 @pytest.mark.asyncio
 async def test_handle_retrieve_memories_filters():
     key_local_cat1 = _make_key("cat1", is_global=False, data="d1")
@@ -792,7 +762,7 @@ async def test_handle_retrieve_memories_filters():
         {"key": key_local_cat1, "value": _memory_value("d1", [])},
         {"key": key_global_cat1, "value": _memory_value("d2", [])},
         {"key": key_local_cat2, "value": _memory_value("d3", [])},
-        {"key": key_invalid, "value": "{}"}
+        {"key": key_invalid, "value": "{}"},
     ]
 
     mock_list_all = AsyncMock()
@@ -836,6 +806,7 @@ async def test_delete_item_httpx_error():
             assert "Error removing memory" in res
             assert "Network failure" in res
 
+
 @pytest.mark.asyncio
 async def test_handle_remove_memory_category_filters():
     key_local_cat1 = _make_key("cat1", is_global=False, data="d1")
@@ -845,7 +816,7 @@ async def test_handle_remove_memory_category_filters():
     memories = [
         {"key": key_local_cat1, "value": _memory_value("d1", [])},
         {"key": key_global_cat1, "value": _memory_value("d2", [])},
-        {"key": key_invalid, "value": "{}"}
+        {"key": key_invalid, "value": "{}"},
     ]
 
     mock_list_all = AsyncMock()
@@ -881,7 +852,7 @@ async def test_handle_remove_specific_memory_filters():
         {"key": key_local_cat1, "value": _memory_value("d1", [])},
         {"key": key_global_cat1, "value": _memory_value("d2", [])},
         {"key": key_local_cat2, "value": _memory_value("d3", [])},
-        {"key": key_invalid, "value": "{}"}
+        {"key": key_invalid, "value": "{}"},
     ]
 
     mock_list_all = AsyncMock()
@@ -900,6 +871,7 @@ async def test_handle_remove_specific_memory_filters():
 def test_parse_memory_value_none():
     res = _parse_memory_value(None)
     assert res == {"data": "", "tags": []}
+
 
 @pytest.mark.asyncio
 async def test_handle_request_none():

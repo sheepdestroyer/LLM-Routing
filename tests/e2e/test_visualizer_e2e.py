@@ -47,15 +47,17 @@ async def test_visualizer_dataset_rendering_and_selection(page: Page, base_url: 
     }
 
     # Intercept data files
-    await page.route("**/data/classified_dataset.json", lambda route: route.fulfill(
-        status=200, content_type="application/json", json=mock_dataset
-    ))
-    await page.route("**/data/benchmark_results.json", lambda route: route.fulfill(
-        status=200, content_type="application/json", json={}
-    ))
-    await page.route("**/data/annotations.json", lambda route: route.fulfill(
-        status=200, content_type="application/json", json={}
-    ))
+    await page.route(
+        "**/data/classified_dataset.json",
+        lambda route: route.fulfill(status=200, content_type="application/json", json=mock_dataset),
+    )
+    await page.route(
+        "**/data/benchmark_results.json",
+        lambda route: route.fulfill(status=200, content_type="application/json", json={}),
+    )
+    await page.route(
+        "**/data/annotations.json", lambda route: route.fulfill(status=200, content_type="application/json", json={})
+    )
 
     await page.goto(f"{base_url}/visualizer")
 
@@ -99,9 +101,10 @@ async def test_visualizer_filters(page: Page, base_url: str):
         ]
     }
 
-    await page.route("**/data/classified_dataset.json", lambda route: route.fulfill(
-        status=200, content_type="application/json", json=mock_dataset
-    ))
+    await page.route(
+        "**/data/classified_dataset.json",
+        lambda route: route.fulfill(status=200, content_type="application/json", json=mock_dataset),
+    )
     await page.route("**/data/benchmark_results.json", lambda route: route.fulfill(status=200, json={}))
     await page.route("**/data/annotations.json", lambda route: route.fulfill(status=200, json={}))
 
@@ -204,8 +207,16 @@ async def test_visualizer_keyboard_navigation(page: Page, base_url: str):
     """Test that list items can be focused and selected via keyboard Enter key."""
     mock_dataset = {
         "prompts": [
-            {"prompt": "First keyboard navigable prompt", "llm_tier": "agent-simple-core", "clf_tier": "agent-simple-core"},
-            {"prompt": "Second keyboard navigable prompt", "llm_tier": "agent-medium-core", "clf_tier": "agent-medium-core"},
+            {
+                "prompt": "First keyboard navigable prompt",
+                "llm_tier": "agent-simple-core",
+                "clf_tier": "agent-simple-core",
+            },
+            {
+                "prompt": "Second keyboard navigable prompt",
+                "llm_tier": "agent-medium-core",
+                "clf_tier": "agent-medium-core",
+            },
         ]
     }
 

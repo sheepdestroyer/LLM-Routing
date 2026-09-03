@@ -3,6 +3,7 @@
 Test script for agy proxy fallback tiers.
 Tests all 3 model tiers and verifies session continuation.
 """
+
 import asyncio
 import json
 import os
@@ -14,9 +15,10 @@ CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversati
 
 TIERS = [
     {"name": "GPT-OSS 120B (Medium)", "override": "gpt-oss-120b-medium"},
-    {"name": "Gemini 3.5 Flash",      "override": ""},
-    {"name": "Claude Opus 4.6",       "override": "claude-opus-4-6@default"},
+    {"name": "Gemini 3.5 Flash", "override": ""},
+    {"name": "Claude Opus 4.6", "override": "claude-opus-4-6@default"},
 ]
+
 
 async def run_tier_test(tier, prompt="say hello in one word", conversation_id=None):
     """Test a single agy tier and return (success, output, conv_id)."""
@@ -37,7 +39,8 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
 
     start = time.time()
     proc = await asyncio.create_subprocess_exec(
-        *cmd, env=env,
+        *cmd,
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -55,7 +58,7 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
                 with open(CACHE_FILE) as f:
                     data = json.load(f)
                 conv_id = data.get(os.getcwd())
-        except:
+        except Exception:
             pass
 
         # Check for quota exhaustion
@@ -73,11 +76,12 @@ async def run_tier_test(tier, prompt="say hello in one word", conversation_id=No
             print(f"     stderr: {stderr[:200]}")
             return False, None, None
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.communicate()
-        print(f"❌ TIMEOUT (30s)")
+        print("❌ TIMEOUT (30s)")
         return False, None, None
+
 
 async def main():
     print("=" * 60)
@@ -107,9 +111,7 @@ async def main():
         print(f"  Continuing conversation {successful_conv[:8]}...")
         for tier in TIERS:
             success, output, _ = await run_tier_test(
-                tier,
-                prompt="continue our conversation, say one more word",
-                conversation_id=successful_conv
+                tier, prompt="continue our conversation, say one more word", conversation_id=successful_conv
             )
             if success:
                 break
@@ -128,6 +130,7 @@ async def main():
     print("\n" + "=" * 60)
     print("  Tests complete!")
     print("=" * 60)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

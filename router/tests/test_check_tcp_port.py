@@ -27,7 +27,7 @@ async def test_check_tcp_port_success():
 @pytest.mark.asyncio
 async def test_check_tcp_port_failure_timeout():
     with patch("router.main.asyncio.open_connection", new_callable=AsyncMock) as mock_open_connection:
-        mock_open_connection.side_effect = asyncio.TimeoutError()
+        mock_open_connection.side_effect = TimeoutError()
 
         result = await main.check_tcp_port("127.0.0.1", 8080)
 

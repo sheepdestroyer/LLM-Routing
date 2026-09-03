@@ -153,7 +153,9 @@ class ModelRegistrySync:
             # Sort deployments by updated_at or created_at if present
             sorted_deps = sorted(
                 deployments,
-                key=lambda d: str((d.get("model_info") or {}).get("updated_at") or (d.get("model_info") or {}).get("created_at") or ""),
+                key=lambda d: str(
+                    (d.get("model_info") or {}).get("updated_at") or (d.get("model_info") or {}).get("created_at") or ""
+                ),
             )
 
             # Keep the last deployment, delete preceding duplicates
@@ -241,15 +243,9 @@ class ModelRegistrySync:
 
     def build_locallama_models(self) -> list[dict[str, Any]]:
         """Build model definitions for local host backends (llama-server & whisper-server)."""
-        llama_base = (
-            self.llama_server_url
-            if self.llama_server_url.endswith("/v1")
-            else f"{self.llama_server_url}/v1"
-        )
+        llama_base = self.llama_server_url if self.llama_server_url.endswith("/v1") else f"{self.llama_server_url}/v1"
         whisper_base = (
-            self.whisper_server_url
-            if self.whisper_server_url.endswith("/v1")
-            else f"{self.whisper_server_url}/v1"
+            self.whisper_server_url if self.whisper_server_url.endswith("/v1") else f"{self.whisper_server_url}/v1"
         )
         return [
             {
@@ -259,9 +255,7 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
-                    "extra_body": {
-                        "chat_template_kwargs": {"preserve_thinking": True}
-                    },
+                    "extra_body": {"chat_template_kwargs": {"preserve_thinking": True}},
                 },
                 "model_info": {
                     "mode": "chat",
@@ -280,9 +274,7 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
-                    "extra_body": {
-                        "chat_template_kwargs": {"enable_thinking": False}
-                    },
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
                 },
                 "model_info": {
                     "mode": "chat",
@@ -342,11 +334,7 @@ class ModelRegistrySync:
 
     def build_agy_models(self, latest_flash: str = "gemini-3.8-flash") -> list[dict[str, Any]]:
         """Build model definitions for agy daemon, updating Flash to latest discovered version."""
-        agy_base = (
-            self.agy_daemon_url
-            if self.agy_daemon_url.endswith("/v1")
-            else f"{self.agy_daemon_url}/v1"
-        )
+        agy_base = self.agy_daemon_url if self.agy_daemon_url.endswith("/v1") else f"{self.agy_daemon_url}/v1"
         return [
             {
                 "model_name": "agy-gemini",
@@ -625,9 +613,7 @@ class ModelRegistrySync:
                 if resp.status_code in (200, 201):
                     logger.info(f"Registered new DB model: {name}")
                     return ("created", True)
-                logger.warning(
-                    f"Failed to register model '{name}': HTTP {resp.status_code} - {resp.text[:200]}"
-                )
+                logger.warning(f"Failed to register model '{name}': HTTP {resp.status_code} - {resp.text[:200]}")
                 return ("failed", False)
             except Exception as e:
                 logger.warning(f"Exception registering model '{name}': {e}")
@@ -682,9 +668,7 @@ class ModelRegistrySync:
             if resp.status_code == 200:
                 logger.info(f"Updated DB model '{name}' (id: {model_id}) with new parameters")
                 return ("updated", True)
-            logger.warning(
-                f"Failed to update model '{name}': HTTP {resp.status_code} - {resp.text[:200]}"
-            )
+            logger.warning(f"Failed to update model '{name}': HTTP {resp.status_code} - {resp.text[:200]}")
             return ("failed", False)
         except Exception as e:
             logger.warning(f"Exception updating model '{name}': {e}")
