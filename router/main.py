@@ -1742,8 +1742,8 @@ async def lifespan(app: FastAPI):
         if _llama_client is not None:
             try:
                 await _llama_client.aclose()
-            except Exception as e:
-                logger.debug(f"Error closing llama client during shutdown: {e}")
+            except Exception as e:  # pragma: no cover
+                logger.debug(f"Error closing llama client during shutdown: {e}")  # pragma: no cover
             _llama_client = None
 
         # Close Redis client

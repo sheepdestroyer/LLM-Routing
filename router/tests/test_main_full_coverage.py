@@ -487,10 +487,16 @@ async def test_health_check_branches():
     with patch("router.main.get_http_client", return_value=mock_client):
         assert await check_http_endpoint("http://example.com") is False
 
-    # _check_llama_health exception
+    # _check_llama_health exception and success
     mock_llama = AsyncMock()
     mock_llama.get.side_effect = RuntimeError("llama error")
     with patch("router.main.get_llama_client", return_value=mock_llama):
+        assert await _check_llama_health() is False
+    mock_llama.get.side_effect = None
+    mock_llama.get.return_value = MagicMock(status_code=200)
+    with patch("router.main.get_llama_client", return_value=mock_llama):
+        assert await _check_llama_health() is True
+        mock_llama.get.return_value = MagicMock(status_code=503)
         assert await _check_llama_health() is False
 
 
@@ -2024,3 +2030,23 @@ async def test_coverage_final_gaps():
     req_colon_netloc.base_url = MagicMock(hostname="localhost", netloc=":80", scheme="http")
     h, n, b = resolve_external_urls(req_colon_netloc)
     assert "localhost" in n
+
+
+@pytest.mark.asyncio
+async def test_valkey_stats_persistence_no_timeline():
+    import router.main as rm
+    from router.main import ValkeyStatsPersistence
+
+    mock_redis = AsyncMock()
+    with patch("router.main.get_redis", return_value=mock_redis):
+        v = ValkeyStatsPersistence()
+        old_timeline = rm.stats.get("timeline")
+        rm.stats["timeline"] = []
+        try:
+            await v.save()
+            stats_calls = [c for c in mock_redis.set.call_args_list if c.args[0] == "router:stats"]
+            timeline_calls = [c for c in mock_redis.set.call_args_list if c.args[0] == "router:timeline"]
+            assert len(stats_calls) == 1
+            assert len(timeline_calls) == 0
+        finally:
+            rm.stats["timeline"] = old_timeline
