@@ -1408,6 +1408,114 @@ def test_daemon_chat_completions_sse_autonomous_mode(daemon_server, monkeypatch)
     assert "System is healthy." in raw_body
     assert "data: [DONE]" in raw_body
 
+def test_extract_reasoning_effort():
+    from scripts.host_agy_daemon import extract_reasoning_effort
+    assert extract_reasoning_effort({}) is None
+    assert extract_reasoning_effort({"reasoning_effort": "high"}) == "high"
+    assert extract_reasoning_effort({"reasoning_effort": "max"}) == "high"
+    assert extract_reasoning_effort({"reasoning_effort": "ultra"}) == "high"
+    assert extract_reasoning_effort({"reasoning_effort": "medium"}) == "medium"
+    assert extract_reasoning_effort({"reasoning_effort": "low"}) == "low"
+    assert extract_reasoning_effort({"reasoning_effort": "minimal"}) == "low"
+    assert extract_reasoning_effort({"reasoning_effort": "none"}) == "low"
+    assert extract_reasoning_effort({"reasoning": {"effort": "high"}}) == "high"
+    assert extract_reasoning_effort({"extra_body": {"reasoning_effort": "medium"}}) == "medium"
+    assert extract_reasoning_effort({"extra_body": {"reasoning": {"effort": "max"}}}) == "high"
+    assert extract_reasoning_effort({"reasoning_effort": {"effort": "high"}}) == "high"
+
+def test_daemon_chat_completions_dynamic_reasoning_high(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0, effort=None, **kwargs):
+        captured["model_override"] = model_override
+        captured["effort"] = effort
+        return {"returncode": 0, "stdout": "High reasoning reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "llm-routing-agy",
+        "messages": [{"role": "user", "content": "Solve math puzzle"}],
+        "reasoning_effort": "high",
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["message"]["content"] == "High reasoning reply"
+    assert captured["model_override"] == "gemini-3.8-flash-high"
+    assert captured["effort"] == "high"
+
+def test_daemon_chat_completions_dynamic_reasoning_medium(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0, effort=None, **kwargs):
+        captured["model_override"] = model_override
+        captured["effort"] = effort
+        return {"returncode": 0, "stdout": "Med reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "llm-routing-agy",
+        "messages": [{"role": "user", "content": "Explain photosynthesis"}],
+        "reasoning_effort": "medium",
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+
+    assert captured["model_override"] == "gemini-3.8-flash-medium"
+    assert captured["effort"] == "medium"
+
+def test_daemon_chat_completions_dynamic_reasoning_streaming(daemon_server, monkeypatch):
+    captured_cmd = []
+    async def mock_exec(*cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        res = json.dumps({
+            "event": "result",
+            "result": {"status": "SUCCESS", "response": "OK"}
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[res, b""])
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "llm-routing-agy",
+        "messages": [{"role": "user", "content": "Think deeply"}],
+        "reasoning_effort": "max",
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        resp.read()
+
+    assert "--effort" in captured_cmd
+    idx = captured_cmd.index("--effort")
+    assert captured_cmd[idx + 1] == "high"
+
+
 
 
 
