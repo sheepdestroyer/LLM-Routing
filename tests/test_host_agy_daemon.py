@@ -594,7 +594,7 @@ def test_extract_prompt_from_messages():
     prompt = host_agy_daemon.extract_prompt_from_messages(msgs)
     assert "System: You are a helpful bot" in prompt
     assert "Execution Guidelines" in prompt
-    assert "MUST NOT execute any commands" in prompt
+    assert "intelligent autonomous backend" in prompt
     assert "User: Hello world" in prompt
     assert "Assistant: Hi there!" in prompt
     assert "[Tool Call: get_weather" in prompt
@@ -762,7 +762,7 @@ def test_format_tools_instruction():
         }
     ]
     instr = host_agy_daemon.format_tools_instruction(tools)
-    assert "# Available Tools" in instr
+    assert "# Available Client Tools" in instr
     assert "<tools>" in instr
     assert "terminal" in instr
     assert "<tool_call>" in instr
@@ -811,7 +811,7 @@ def test_extract_prompt_with_tools():
     msgs = [{"role": "user", "content": "What is the date?"}]
     tools = [{"type": "function", "function": {"name": "get_date", "parameters": {}}}]
     prompt = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools)
-    assert "System: # Available Tools" in prompt
+    assert "System: # Available Client Tools" in prompt
     assert "get_date" in prompt
     assert "User: What is the date?" in prompt
 
