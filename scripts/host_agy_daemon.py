@@ -130,7 +130,7 @@ def parse_models_output(text: str) -> list[dict]:
             models.append({"id": parts[0], "name": parts[0]})
     return models
 
-async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 300.0):
+async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 600.0):
     """Asynchronously execute agy and capture full output."""
     env = os.environ.copy()
     if model_override:
@@ -216,7 +216,7 @@ async def execute_agy_stream_json(
     prompt: str,
     model_override: str = "",
     conversation_id: str = None,
-    timeout: float = 300.0,
+    timeout: float = 600.0,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
     env = os.environ.copy()
@@ -339,17 +339,17 @@ def format_tools_instruction(tools: list) -> str:
         tools_json = str(tools)
 
     return (
-        "# Available Tools\n"
-        "You have access to the following functions to call:\n"
+        "# Available Client Tools\n"
+        "The upstream client provides the following external function definitions:\n"
         f"<tools>\n{tools_json}\n</tools>\n\n"
         "# Tool Calling Protocol\n"
-        "If you need to invoke one or more tools to fulfill the user's request, you MUST NOT execute any commands, "
-        "scripts, or actions on the host system yourself.\n"
-        "Instead, you MUST respond ONLY with one or more tool call blocks in this exact format:\n"
+        "You operate as an autonomous backend with full access to your native workspace tools (file inspection, command execution, and codebase searches).\n"
+        "If a user request requires calling one of the external client tools defined above that you cannot perform natively,\n"
+        "you MUST respond with one or more tool call blocks in this exact format:\n"
         "<tool_call>\n"
         '{"name": "<function_name>", "arguments": <json_object_of_arguments>}\n'
         "</tool_call>\n\n"
-        "If you do not need to call any tool, answer normally with conversational text."
+        "Otherwise, execute any necessary inspections using your native tools and provide a clear, concise conversational report."
     )
 
 def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
@@ -475,9 +475,9 @@ def extract_prompt_from_messages(messages: list, tools: list = None) -> str:
     else:
         completion_instr = (
             "# Execution Guidelines\n"
-            "You are acting strictly as an LLM completion backend.\n"
-            "You MUST NOT execute any commands, scripts, tools, or file system operations on the host system yourself.\n"
-            "Respond ONLY with conversational text to the user's request."
+            "You are acting as an intelligent autonomous backend for the client.\n"
+            "You have full access to your native workspace tools to inspect files, execute commands, or analyze context as needed to fulfill the user's request.\n"
+            "Provide a clear, concise conversational report."
         )
         if prompt.startswith("System:"):
             prompt = f"System: {completion_instr}\n\n" + prompt
@@ -619,7 +619,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
-        timeout = body.get("timeout", 300.0)
+        timeout = body.get("timeout", 600.0)
         stream = body.get("stream", False)
         
         if stream:
@@ -760,7 +760,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         prompt = extract_prompt_from_messages(messages, tools=tools) if messages else body.get("prompt", "")
         model = body.get("model", "gemini-3.8-flash")
         stream = body.get("stream", False)
-        timeout = float(body.get("timeout", 300.0))
+        timeout = float(body.get("timeout", 600.0))
         raw_conv_id = body.get("conversation_id")
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
