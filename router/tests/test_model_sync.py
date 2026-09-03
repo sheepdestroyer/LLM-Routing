@@ -189,11 +189,11 @@ def test_build_model_suites(sync_engine):
 
     ollama = sync_engine.build_ollama_models()
     assert any(m["model_name"] == "ollama-deepseek-v4-pro" for m in ollama)
-    assert any(m["model_name"] == "ollama-gpt-5.6-luna" for m in ollama)
+    assert any(m["model_name"] == "ollama-deepseek-v4-flash" for m in ollama)
 
     openrouter = sync_engine.build_openrouter_models()
     assert any(m["model_name"] == "openrouter-auto" for m in openrouter)
-    assert any(m["model_name"] == "openrouter-tts" for m in openrouter)
+    assert any(m["model_name"] == "openrouter-gpt-5.6-luna" for m in openrouter)
 
     aliases = sync_engine.build_legacy_aliases(latest_flash="gemini-3.8-flash")
     assert aliases == []

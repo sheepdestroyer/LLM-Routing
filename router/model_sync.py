@@ -37,6 +37,9 @@ DEPRECATED_MODEL_NAMES = [
     "llm-routing-agy",
     "llm-routing-agy-sse",
     "agy-sse",
+    "ollama-gpt-5.6-luna",
+    "ollama-gpt-5.6-luna-max",
+    "openrouter-tts",
 ]
 
 
@@ -320,7 +323,7 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-nomic-embed",
                 "litellm_params": {
-                    "model": "openai/nomic-embed-text-v1.5-Q4_K_M",
+                    "model": "openai/locallama-nomic-embed",
                     "api_base": self.llama_server_url,
                     "api_key": "local-token",
                     "request_timeout": 30,
@@ -529,48 +532,6 @@ class ModelRegistrySync:
                     "is_public_model_group": True,
                 },
             },
-            {
-                "model_name": "ollama-gpt-5.6-luna",
-                "litellm_params": {
-                    "model": "ollama_chat/gpt-5.6-luna",
-                    "api_base": self.ollama_api_base,
-                    "api_key": "os.environ/OLLAMA_API_KEY",
-                    "reasoning_effort": "max",
-                    "request_timeout": 120,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "ollama-gpt-5.6-luna-max",
-                "litellm_params": {
-                    "model": "ollama_chat/gpt-5.6-luna",
-                    "api_base": self.ollama_api_base,
-                    "api_key": "os.environ/OLLAMA_API_KEY",
-                    "reasoning_effort": "max",
-                    "request_timeout": 120,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
         ]
 
     def build_openrouter_models(self) -> list[dict[str, Any]]:
@@ -629,17 +590,6 @@ class ModelRegistrySync:
                     "supports_vision": True,
                     "supports_reasoning": True,
                     "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "openrouter-tts",
-                "litellm_params": {
-                    "model": "openrouter/openai/tts-1",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "audio_speech",
                     "is_public_model_group": True,
                 },
             },
