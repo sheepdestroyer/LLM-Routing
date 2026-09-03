@@ -27,6 +27,16 @@ DEPRECATED_MODEL_NAMES = [
     "ollama/GPT-5.6 Luna (max)",
     "ollama/gpt-5.6-luna",
     "gpt-5.6-luna",
+    "local-qwen",
+    "local-qwen-hass",
+    "local-qwen-routing",
+    "whisper-1",
+    "gpt-4o-mini-transcribe",
+    "gpt-4o-mini-tts",
+    "tts-1",
+    "llm-routing-agy",
+    "llm-routing-agy-sse",
+    "agy-sse",
 ]
 
 
@@ -237,7 +247,7 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-qwen",
                 "litellm_params": {
-                    "model": "openai/local-qwen",
+                    "model": "openai/locallama-qwen",
                     "api_base": self.llama_server_url,
                     "api_key": "local-token",
                     "request_timeout": 600,
@@ -258,7 +268,7 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-qwen-hass",
                 "litellm_params": {
-                    "model": "openai/local-qwen",
+                    "model": "openai/locallama-qwen-hass",
                     "api_base": self.llama_server_url,
                     "api_key": "local-token",
                     "request_timeout": 600,
@@ -279,7 +289,7 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-qwen-routing",
                 "litellm_params": {
-                    "model": "openai/local-qwen-routing",
+                    "model": "openai/locallama-qwen-routing",
                     "api_base": self.classifier_url,
                     "api_key": "local-token",
                     "request_timeout": 60,
@@ -297,7 +307,7 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-whisper",
                 "litellm_params": {
-                    "model": "openai/whisper-1",
+                    "model": "openai/locallama-whisper",
                     "api_base": whisper_base,
                     "api_key": "local-token",
                     "request_timeout": 60,
@@ -636,178 +646,8 @@ class ModelRegistrySync:
         ]
 
     def build_legacy_aliases(self, latest_flash: str = "gemini-3.8-flash") -> list[dict[str, Any]]:
-        """Build backward-compatibility aliases mapping legacy model names to unified deployments."""
-        agy_base = (
-            self.agy_daemon_url
-            if self.agy_daemon_url.endswith("/v1")
-            else f"{self.agy_daemon_url}/v1"
-        )
-        whisper_base = (
-            self.whisper_server_url
-            if self.whisper_server_url.endswith("/v1")
-            else f"{self.whisper_server_url}/v1"
-        )
-        return [
-            {
-                "model_name": "local-qwen",
-                "litellm_params": {
-                    "model": "openai/local-qwen",
-                    "api_base": self.llama_server_url,
-                    "api_key": "local-token",
-                    "request_timeout": 600,
-                    "extra_body": {
-                        "chat_template_kwargs": {"preserve_thinking": True}
-                    },
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "local-qwen-hass",
-                "litellm_params": {
-                    "model": "openai/local-qwen",
-                    "api_base": self.llama_server_url,
-                    "api_key": "local-token",
-                    "request_timeout": 600,
-                    "extra_body": {
-                        "chat_template_kwargs": {"enable_thinking": False}
-                    },
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
-                    "supports_vision": True,
-                    "supports_reasoning": False,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "local-qwen-routing",
-                "litellm_params": {
-                    "model": "openai/local-qwen-routing",
-                    "api_base": self.classifier_url,
-                    "api_key": "local-token",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 8192,
-                    "max_input_tokens": 8192,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "whisper-1",
-                "litellm_params": {
-                    "model": "openai/whisper-1",
-                    "api_base": whisper_base,
-                    "api_key": "local-token",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "audio_transcription",
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "gpt-4o-mini-transcribe",
-                "litellm_params": {
-                    "model": "openai/whisper-1",
-                    "api_base": whisper_base,
-                    "api_key": "local-token",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "audio_transcription",
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "llm-routing-agy",
-                "litellm_params": {
-                    "model": f"openai/{latest_flash}",
-                    "api_base": agy_base,
-                    "api_key": "dummy",
-                    "request_timeout": 600,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 65536,
-                    "max_input_tokens": 1048576,
-                    "supports_vision": False,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "llm-routing-agy-sse",
-                "litellm_params": {
-                    "model": f"openai/{latest_flash}-sse",
-                    "api_base": agy_base,
-                    "api_key": "dummy",
-                    "request_timeout": 600,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 65536,
-                    "max_input_tokens": 1048576,
-                    "supports_vision": False,
-                    "supports_reasoning": True,
-                    "supports_function_calling": False,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "agy-sse",
-                "litellm_params": {
-                    "model": f"openai/{latest_flash}-sse",
-                    "api_base": agy_base,
-                    "api_key": "dummy",
-                    "request_timeout": 600,
-                },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 65536,
-                    "max_input_tokens": 1048576,
-                    "supports_vision": False,
-                    "supports_reasoning": True,
-                    "supports_function_calling": False,
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "tts-1",
-                "litellm_params": {
-                    "model": "openrouter/openai/tts-1",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "audio_speech",
-                    "is_public_model_group": True,
-                },
-            },
-            {
-                "model_name": "gpt-4o-mini-tts",
-                "litellm_params": {
-                    "model": "openrouter/openai/tts-1",
-                    "request_timeout": 60,
-                },
-                "model_info": {
-                    "mode": "audio_speech",
-                    "is_public_model_group": True,
-                },
-            },
-        ]
+        """Legacy aliases removed: all clients use canonical provider-model names."""
+        return []
 
     async def upsert_model(
         self,
@@ -923,7 +763,6 @@ class ModelRegistrySync:
         all_targets.extend(self.build_agy_models(latest_flash=latest_flash))
         all_targets.extend(self.build_ollama_models())
         all_targets.extend(self.build_openrouter_models())
-        all_targets.extend(self.build_legacy_aliases(latest_flash=latest_flash))
 
         managed_names = {t["model_name"] for t in all_targets}
 

@@ -196,9 +196,7 @@ def test_build_model_suites(sync_engine):
     assert any(m["model_name"] == "openrouter-tts" for m in openrouter)
 
     aliases = sync_engine.build_legacy_aliases(latest_flash="gemini-3.8-flash")
-    assert any(m["model_name"] == "local-qwen" for m in aliases)
-    assert any(m["model_name"] == "whisper-1" for m in aliases)
-    assert any(m["model_name"] == "llm-routing-agy" for m in aliases)
+    assert aliases == []
 
 
 @pytest.mark.asyncio

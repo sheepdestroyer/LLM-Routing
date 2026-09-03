@@ -90,7 +90,7 @@ async def test_responses_api_auto_model_triage():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("model_alias", [
-    "local-qwen-hass",
+    "locallama-qwen-hass",
     "gpt-4o-mini",
     "gpt-4o",
 ])
@@ -148,7 +148,7 @@ async def test_responses_api_with_tools(model_alias):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("model_alias", [
-    "local-qwen-hass",
+    "locallama-qwen-hass",
     "gpt-4o-mini",
     "gpt-4o",
 ])
