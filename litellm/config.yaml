@@ -34,12 +34,9 @@ litellm_settings:
     - agy-gptoss-sse
     - ollama-deepseek-v4-pro
     - ollama-deepseek-v4-flash
-    - ollama-gpt-5.6-luna
-    - ollama-gpt-5.6-luna-max
     - openrouter-auto
     - openrouter-gpt-5.6-luna
     - openrouter-gpt-5.6-luna-max
-    - openrouter-tts
     - agent-advanced-core
     - agent-reasoning-core
     - agent-complex-core
@@ -262,5 +259,5 @@ router_settings:
 vector_store_settings:
   collection_name: litellm_semantic_cache
   connection_string: os.environ/DATABASE_URL
-  embedding_model: local-nomic-embed
+  embedding_model: locallama-nomic-embed
   store_type: postgres

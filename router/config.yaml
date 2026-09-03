@@ -95,12 +95,6 @@ backends:
   - name: "ollama-deepseek-v4-flash"
     api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
-  - name: "ollama-gpt-5.6-luna-max"
-    api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
-    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
-  - name: "ollama-gpt-5.6-luna"
-    api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
-    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
   - name: "openrouter-auto"
     api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
@@ -110,6 +104,5 @@ backends:
   - name: "openrouter-gpt-5.6-luna-max"
     api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
     api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
-  - name: "openrouter-tts"
-    api_base: "http://127.0.0.1:LITELLM_PORT_PLACEHOLDER/v1"
-    api_key: "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER"
+
+
