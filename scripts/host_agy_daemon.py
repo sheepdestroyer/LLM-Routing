@@ -130,7 +130,7 @@ def parse_models_output(text: str) -> list[dict]:
             models.append({"id": parts[0], "name": parts[0]})
     return models
 
-async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 120.0):
+async def execute_agy_print(prompt: str, model_override: str = "", conversation_id: str = None, timeout: float = 300.0):
     """Asynchronously execute agy and capture full output."""
     env = os.environ.copy()
     if model_override:
@@ -216,7 +216,7 @@ async def execute_agy_stream_json(
     prompt: str,
     model_override: str = "",
     conversation_id: str = None,
-    timeout: float = 120.0,
+    timeout: float = 300.0,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
     env = os.environ.copy()
@@ -300,10 +300,11 @@ async def execute_agy_stream_json(
                 res = event_obj.get("result", {})
                 if res.get("status") == "ERROR":
                     err_msg = res.get("error") or "Unknown stream-json error"
+                    combined_err = f"{err_msg} - {stderr_text}" if stderr_text else err_msg
                     return {
                         "returncode": 1,
                         "stdout": "",
-                        "stderr": err_msg,
+                        "stderr": combined_err,
                         "conversation_id": res.get("conversation_id") or res_conv_id,
                         "usage": None,
                     }
@@ -461,13 +462,27 @@ def extract_prompt_from_messages(messages: list, tools: list = None) -> str:
                 parts.append(f"User: {content}")
         prompt = "\n\n".join(parts)
 
+    if not prompt:
+        return ""
+
     if tools:
         tool_instr = format_tools_instruction(tools)
         if tool_instr:
             if prompt.startswith("System:"):
                 prompt = f"System: {tool_instr}\n\n" + prompt
             else:
-                prompt = f"System: {tool_instr}\n\n{prompt}" if prompt else tool_instr
+                prompt = f"System: {tool_instr}\n\n{prompt}"
+    else:
+        completion_instr = (
+            "# Execution Guidelines\n"
+            "You are acting strictly as an LLM completion backend.\n"
+            "You MUST NOT execute any commands, scripts, tools, or file system operations on the host system yourself.\n"
+            "Respond ONLY with conversational text to the user's request."
+        )
+        if prompt.startswith("System:"):
+            prompt = f"System: {completion_instr}\n\n" + prompt
+        else:
+            prompt = f"System: {completion_instr}\n\n{prompt}"
 
     return prompt
 
@@ -604,7 +619,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
-        timeout = body.get("timeout", 120.0)
+        timeout = body.get("timeout", 300.0)
         stream = body.get("stream", False)
         
         if stream:
@@ -745,7 +760,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         prompt = extract_prompt_from_messages(messages, tools=tools) if messages else body.get("prompt", "")
         model = body.get("model", "gemini-3.8-flash")
         stream = body.get("stream", False)
-        timeout = float(body.get("timeout", 120.0))
+        timeout = float(body.get("timeout", 300.0))
         raw_conv_id = body.get("conversation_id")
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
@@ -883,17 +898,38 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     stream_error = str(e)
                 finally:
-                    if proc is not None and proc.returncode is None:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
+                    if proc is not None:
+                        if getattr(proc, "stderr", None) is not None:
+                            try:
+                                read_fn = getattr(proc.stderr, "read", None)
+                                if callable(read_fn):
+                                    res_read = read_fn()
+                                    if asyncio.iscoroutine(res_read):
+                                        stderr_bytes = await asyncio.wait_for(res_read, timeout=1.0)
+                                    else:
+                                        stderr_bytes = res_read
+                                    if isinstance(stderr_bytes, (bytes, bytearray)):
+                                        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                                        if stderr_text:
+                                            if stream_error:
+                                                stream_error = f"{stream_error} - {stderr_text}"
+                                            elif proc.returncode is not None and proc.returncode != 0:
+                                                stream_error = stderr_text
+                            except Exception:
+                                pass
+                        if proc.returncode is None:
+                            try:
+                                proc.kill()
+                                await proc.wait()
+                            except Exception:
+                                pass
 
                 # If an error occurred, emit an error payload and exit WITHOUT [DONE]
                 # so LiteLLM and clients detect stream failure and trigger fallback.
                 if stream_error:
-                    is_quota = any(x in stream_error.lower() for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+                    is_quota = any(x in stream_error.lower() for x in [
+                        "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
+                    ])
                     err_status = 429 if is_quota else 502
                     err_type = "rate_limit_error" if is_quota else "api_error"
                     err_chunk = {
@@ -1043,7 +1079,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         if retcode != 0:
             err_text = exec_res.get("stderr") or exec_res.get("stdout") or "Unknown error"
             err_lower = err_text.lower()
-            is_quota = any(x in err_lower for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+            is_quota = any(x in err_lower for x in [
+                "quota", "rate", "429", "exhaust", "resource_exhausted", "resource has been exhausted"
+            ])
             status_code = 429 if is_quota else 502
             err_type = "rate_limit_error" if is_quota else "api_error"
             err_resp = {

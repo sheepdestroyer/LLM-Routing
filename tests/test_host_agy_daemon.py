@@ -593,6 +593,8 @@ def test_extract_prompt_from_messages():
     ]
     prompt = host_agy_daemon.extract_prompt_from_messages(msgs)
     assert "System: You are a helpful bot" in prompt
+    assert "Execution Guidelines" in prompt
+    assert "MUST NOT execute any commands" in prompt
     assert "User: Hello world" in prompt
     assert "Assistant: Hi there!" in prompt
     assert "[Tool Call: get_weather" in prompt
@@ -1010,7 +1012,8 @@ async def test_execute_agy_stream_json_error(monkeypatch):
 
     res = await host_agy_daemon.execute_agy_stream_json("test prompt")
     assert res["returncode"] == 1
-    assert res["stderr"] == "bad stream input"
+    assert "bad stream input" in res["stderr"]
+    assert "error details" in res["stderr"]
 
 @pytest.mark.asyncio
 async def test_execute_agy_stream_json_timeout(monkeypatch):
@@ -1148,6 +1151,53 @@ def test_daemon_chat_completions_streaming_fallback_when_deltas_omitted(daemon_s
     assert data_chunks[0]["choices"][0]["delta"]["content"] == "Response delivered only in result"
     assert data_chunks[1]["choices"][0]["finish_reason"] == "stop"
     assert "data: [DONE]" in raw_body
+
+def test_daemon_chat_completions_streaming_error_classified_via_stderr(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        err_line = json.dumps({
+            "event": "result",
+            "result": {"status": "ERROR", "error": "Agent execution terminated due to error."}
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[err_line, b""])
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.read = AsyncMock(return_value=b"calling model: RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).")
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    lines = raw_body.split("\n\n")
+    data_lines = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(data_lines) == 1
+    err_obj = json.loads(data_lines[0].replace("data: ", ""))
+    assert "error" in err_obj
+    assert err_obj["error"]["code"] == 429
+    assert err_obj["error"]["type"] == "rate_limit_error"
+    assert "RESOURCE_EXHAUSTED" in err_obj["error"]["message"]
+    assert "data: [DONE]" not in raw_body
+
 
 
 
