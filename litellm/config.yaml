@@ -1,13 +1,10 @@
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true
 litellm_settings:
   # -------------------------------------------------------------------------
   # FALLBACK CHAINS (cascading, in order of escalation)
-  # Simple → medium → complex → reasoning → advanced → local-qwen → ollama → openrouter-auto
-  # Static entries chain-route upward — only advanced-core hits local-qwen directly.
-  # When one tier fails, LiteLLM tries the next model in the chain.
-  # Static safety-net entries in model_list (local-qwen per tier) guarantee
-  # each agent tier has at least one deployment even during OpenRouter outages.
+  # Simple → medium → complex → reasoning → advanced → locallama-qwen → ollama → openrouter-auto
   # -------------------------------------------------------------------------
   cache: true
   cache_params:
@@ -22,290 +19,163 @@ litellm_settings:
   detailed_debug: false
   drop_params: true
   public_model_groups:
+    - locallama-qwen
+    - locallama-qwen-hass
+    - locallama-qwen-routing
+    - locallama-whisper
+    - locallama-nomic-embed
+    - agy-gemini
+    - agy-gemini-sse
+    - agy-opus
+    - agy-opus-sse
+    - agy-sonnet
+    - agy-sonnet-sse
+    - agy-gptoss
+    - agy-gptoss-sse
+    - ollama-deepseek-v4-pro
+    - ollama-deepseek-v4-flash
+    - ollama-gpt-5.6-luna
+    - ollama-gpt-5.6-luna-max
     - openrouter-auto
     - openrouter-gpt-5.6-luna
     - openrouter-gpt-5.6-luna-max
-    - gpt-5.6-luna
-    - llm-routing-ollama
-    - ollama-deepseek-v4-pro
-    - ollama-deepseek-v4-flash
-    - "ollama/GPT-5.6 Luna (max)"
-    - ollama-gpt-5.6-luna-max
-    - "ollama/gpt-5.6-luna"
-    - ollama-gpt-5.6-luna
+    - openrouter-tts
     - agent-advanced-core
     - agent-reasoning-core
     - agent-complex-core
     - agent-medium-core
     - agent-simple-core
+    # Legacy aliases
+    - local-qwen
+    - local-qwen-hass
+    - local-qwen-routing
     - whisper-1
     - gpt-4o-mini-transcribe
     - gpt-4o-mini-tts
     - tts-1
-    - local-qwen
-    - local-qwen-hass
-    - local-qwen-routing
+    - llm-routing-agy
+    - llm-routing-agy-sse
+    - agy-sse
     - gpt-4o-mini
     - gpt-4o
-    - llm-routing-agy
-    - agy-gemini
-    - agy-opus
   fallbacks:
-  - llm-routing-agy:
-    - agy-opus
-    - agent-advanced-core
-    - llm-routing-ollama
-    - openrouter-auto
   - agy-gemini:
     - agy-opus
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
+    - openrouter-auto
+  - agy-gemini-sse:
+    - agy-opus-sse
+    - agent-advanced-core
+    - ollama-deepseek-v4-pro
+    - openrouter-auto
+  - llm-routing-agy:
+    - agy-opus
+    - agent-advanced-core
+    - ollama-deepseek-v4-pro
+    - openrouter-auto
+  - llm-routing-agy-sse:
+    - agy-opus-sse
+    - agent-advanced-core
+    - ollama-deepseek-v4-pro
+    - openrouter-auto
+  - agy-sse:
+    - agy-opus-sse
+    - agent-advanced-core
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agy-opus:
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
+    - openrouter-auto
+  - agy-opus-sse:
+    - agent-advanced-core
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agent-simple-core:
     - agent-medium-core
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agent-medium-core:
     - agent-complex-core
     - agent-reasoning-core
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agent-complex-core:
     - agent-reasoning-core
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agent-reasoning-core:
     - agent-advanced-core
-    - llm-routing-ollama
+    - ollama-deepseek-v4-pro
     - openrouter-auto
   - agent-advanced-core:
-    - local-qwen
-    - llm-routing-ollama
+    - locallama-qwen
+    - ollama-deepseek-v4-pro
     - openrouter-auto
 
+# ================================================================================
+# MINIMAL SAFETY-NET BOOTSTRAP MODEL LIST
+# Primary model deployments are dynamically synchronized and managed in the
+# PostgreSQL database (LiteLLM_ProxyModelTable) via router/model_sync.py.
+# This static bootstrap guarantees that core local fallbacks exist immediately
+# upon cold start before DB synchronization completes.
+# ================================================================================
 model_list:
 - litellm_params:
-    model: openai/gemini-3.8-flash
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen
+    extra_body:
+      chat_template_kwargs:
+        preserve_thinking: true
     request_timeout: 600
-  model_name: llm-routing-agy
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 1048576
-    is_public_model_group: true
-- litellm_params:
-    model: openai/gemini-3.8-flash
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-gemini
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 1048576
-    is_public_model_group: true
-- litellm_params:
-    model: openai/claude-opus-4.6
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-opus
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 200000
-    is_public_model_group: true
-- litellm_params:
-    model: openai/gemini-3.8-flash-sse
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: llm-routing-agy-sse
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 1048576
-    is_public_model_group: true
-- litellm_params:
-    model: openai/gemini-3.8-flash-sse
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-sse
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 1048576
-    is_public_model_group: true
-- litellm_params:
-    model: openai/claude-opus-4.6-sse
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-opus-sse
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 200000
-    is_public_model_group: true
-- litellm_params:
-    model: openai/gpt-oss-120b-medium
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-gptoss
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 131072
-    is_public_model_group: true
-- litellm_params:
-    model: openai/gpt-oss-120b-medium-sse
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-gptoss-sse
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 131072
-    is_public_model_group: true
-- litellm_params:
-    model: openai/claude-sonnet-4.6
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-sonnet
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 200000
-    is_public_model_group: true
-- litellm_params:
-    model: openai/claude-sonnet-4.6-sse
-    api_base: http://127.0.0.1:5005/v1
-    api_key: "dummy"
-    request_timeout: 600
-  model_name: agy-sonnet-sse
-  model_info:
-    supports_vision: false
-    supports_reasoning: true
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 65536
-    max_input_tokens: 200000
-    is_public_model_group: true
-- litellm_params:
-    model: openrouter/openrouter/auto
-    request_timeout: 120
-  model_name: openrouter-auto
+  model_name: locallama-qwen
   model_info:
     supports_vision: true
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 2000000
-    max_input_tokens: 2000000
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
+
 - litellm_params:
-    model: openrouter/openai/gpt-5.6-luna
-    api_key: os.environ/OPENROUTER_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_name: openrouter-gpt-5.6-luna
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    request_timeout: 600
+  model_name: locallama-qwen-hass
   model_info:
     supports_vision: true
-    supports_reasoning: true
+    supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
+    max_tokens: 240896
+    max_input_tokens: 240896
     is_public_model_group: true
+
 - litellm_params:
-    model: openrouter/openai/gpt-5.6-luna
-    api_key: os.environ/OPENROUTER_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_name: openrouter-gpt-5.6-luna-max
+    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/local-qwen-routing
+    request_timeout: 60
+  model_name: locallama-qwen-routing
   model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
+    supports_vision: false
+    supports_reasoning: false
+    supports_function_calling: false
     mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-- litellm_params:
-    model: openrouter/openai/gpt-5.6-luna
-    api_key: os.environ/OPENROUTER_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_name: gpt-5.6-luna
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-- litellm_params:
-    model: openai/llm-routing-ollama
-    api_base: http://127.0.0.1:ROUTER_PORT_PLACEHOLDER/v1
-    api_key: os.environ/LITELLM_MASTER_KEY
-    request_timeout: 120
-  model_name: llm-routing-ollama
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
+    max_tokens: 8192
+    max_input_tokens: 8192
     is_public_model_group: true
 
 - litellm_params:
@@ -325,6 +195,7 @@ model_list:
     max_tokens: 240896
     max_input_tokens: 240896
     is_public_model_group: true
+
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
@@ -342,6 +213,7 @@ model_list:
     max_tokens: 240896
     max_input_tokens: 240896
     is_public_model_group: true
+
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
@@ -356,174 +228,36 @@ model_list:
     max_tokens: 8192
     max_input_tokens: 8192
     is_public_model_group: true
+
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
-    extra_body:
-      chat_template_kwargs:
-        enable_thinking: false
     request_timeout: 600
   model_name: gpt-4o-mini
   model_info:
     supports_vision: true
-    supports_reasoning: false
+    supports_reasoning: true
     supports_function_calling: true
     mode: chat
     max_tokens: 240896
     max_input_tokens: 240896
     is_public_model_group: true
+
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen
-    extra_body:
-      chat_template_kwargs:
-        enable_thinking: false
     request_timeout: 600
   model_name: gpt-4o
   model_info:
     supports_vision: true
-    supports_reasoning: false
+    supports_reasoning: true
     supports_function_calling: true
     mode: chat
     max_tokens: 240896
     max_input_tokens: 240896
     is_public_model_group: true
-- litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/nomic-embed-text-v1.5-Q4_K_M
-    request_timeout: 30
-  model_name: local-nomic-embed
-
-# ================================================================================
-# OLLAMA PAID TIER — ollama.com via LiteLLM's native ollama_chat provider.
-# LiteLLM calls https://api.ollama.com/api/chat with Bearer auth (OLLAMA_API_KEY).
-# No LiteLLM-level fallbacks: failures propagate back to the triage router
-# (router/main.py) which manages Ollama cooldowns internally. When Ollama fails,
-# the router activates a 5-minute cooldown and skips Ollama on subsequent
-# requests, returning 429 so LiteLLM falls through to openrouter-auto.
-# ================================================================================
-- model_name: ollama-deepseek-v4-pro
-  litellm_params:
-    model: ollama_chat/deepseek-v4-pro
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
-    input_cost_per_token: 0.00000174
-    output_cost_per_token: 0.00000348
-    is_public_model_group: true
-
-# ================================================================================
-# OLLAMA FLASH TIER — lighter/faster model for reasoning-tier requests.
-# Same cooldown architecture as the pro tier above.
-# ================================================================================
-- model_name: ollama-deepseek-v4-flash
-  litellm_params:
-    model: ollama_chat/deepseek-v4-flash
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 524288
-    max_input_tokens: 524288
-    input_cost_per_token: 0.00000014
-    output_cost_per_token: 0.00000028
-    is_public_model_group: true
-
-# ================================================================================
-# OLLAMA GPT-5.6 LUNA (MAX) — direct high-reasoning Ollama endpoint
-# ================================================================================
-- model_name: "ollama/GPT-5.6 Luna (max)"
-  litellm_params:
-    model: ollama_chat/gpt-5.6-luna
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-- model_name: ollama-gpt-5.6-luna-max
-  litellm_params:
-    model: ollama_chat/gpt-5.6-luna
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-- model_name: "ollama/gpt-5.6-luna"
-  litellm_params:
-    model: ollama_chat/gpt-5.6-luna
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-- model_name: ollama-gpt-5.6-luna
-  litellm_params:
-    model: ollama_chat/gpt-5.6-luna
-    api_base: https://api.ollama.com
-    api_key: os.environ/OLLAMA_API_KEY
-    reasoning_effort: max
-    request_timeout: 120
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 1050000
-    max_input_tokens: 1050000
-    input_cost_per_token: 0.0000002
-    output_cost_per_token: 0.0000012
-    is_public_model_group: true
-
-# ================================================================================
-# AGENT TIER STATIC SAFETY-NET — chain-routed, one deployment per tier.
-# Each tier has exactly ONE static deployment routing to the next tier up:
-#   simple → medium → complex → reasoning → advanced → local-qwen
-# This guarantees no tier is ever empty (prevents ModelNotFoundError on
-# cold start) while avoiding redundant fallback loops — only advanced-core
-# points directly to the local classifier. The dynamic roster sync
-# (router/main.py) adds OpenRouter deployments on top at startup.
-# ================================================================================
 
 - model_name: agent-advanced-core
   litellm_params:
@@ -539,6 +273,7 @@ model_list:
     supports_reasoning: true
     supports_vision: true
     is_public_model_group: true
+
 - model_name: agent-reasoning-core
   litellm_params:
     model: agent-advanced-core
@@ -551,6 +286,7 @@ model_list:
     supports_reasoning: true
     supports_vision: true
     is_public_model_group: true
+
 - model_name: agent-complex-core
   litellm_params:
     model: agent-reasoning-core
@@ -563,6 +299,7 @@ model_list:
     supports_reasoning: true
     supports_vision: true
     is_public_model_group: true
+
 - model_name: agent-medium-core
   litellm_params:
     model: agent-complex-core
@@ -575,6 +312,7 @@ model_list:
     supports_reasoning: true
     supports_vision: true
     is_public_model_group: true
+
 - model_name: agent-simple-core
   litellm_params:
     model: agent-medium-core
@@ -588,42 +326,6 @@ model_list:
     supports_vision: true
     is_public_model_group: true
 
-# ================================================================================
-# AUDIO STT / TTS COMPATIBILITY ALIASES
-# ================================================================================
-- model_name: whisper-1
-  litellm_params:
-    model: openai/whisper-1
-    api_base: http://127.0.0.1:8084/v1
-    api_key: local-token
-    request_timeout: 60
-  model_info:
-    mode: audio_transcription
-    is_public_model_group: true
-- model_name: gpt-4o-mini-transcribe
-  litellm_params:
-    model: openai/whisper-1
-    api_base: http://127.0.0.1:8084/v1
-    api_key: local-token
-    request_timeout: 60
-  model_info:
-    mode: audio_transcription
-    is_public_model_group: true
-- model_name: gpt-4o-mini-tts
-  litellm_params:
-    model: openrouter/openai/tts-1
-    request_timeout: 60
-  model_info:
-    mode: audio_speech
-    is_public_model_group: true
-- model_name: tts-1
-  litellm_params:
-    model: openrouter/openai/tts-1
-    request_timeout: 60
-  model_info:
-    mode: audio_speech
-    is_public_model_group: true
-
 redis_settings:
   redis_host: 127.0.0.1
   redis_port: VALKEY_CACHE_PORT_PLACEHOLDER
@@ -634,13 +336,6 @@ router_settings:
   num_retries: 1
   routing_strategy: latency-based-routing
   enable_health_check_routing: false
-  # NOTE: allowed_fails_policy is an enterprise-only feature in LiteLLM.
-  # allowed_fails is set to 0 to ensure that any model deployment failure
-  # immediately escalates through the fallback chain (to fallback models)
-  # instead of retrying the failed model. This does not interfere with the
-  # triage router's internal cooldowns, which return 429 when a specific
-  # backend (like Ollama) is cooling down, allowing LiteLLM to immediately
-  # trigger the fallback path.
 vector_store_settings:
   collection_name: litellm_semantic_cache
   connection_string: os.environ/DATABASE_URL

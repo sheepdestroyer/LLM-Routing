@@ -30,6 +30,10 @@ try:
     from router.circuit_breaker import get_breaker
 except ImportError:
     from circuit_breaker import get_breaker
+try:
+    from router.model_sync import ModelRegistrySync
+except ImportError:
+    from model_sync import ModelRegistrySync
 from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
 from typing import Any, Dict, Optional, Literal, List, Set
 
@@ -1665,6 +1669,32 @@ async def _register_langfuse_models_in_db(
     return False
 
 
+async def _periodic_model_sync():
+    """Background task running every 3600s to auto-discover upstream model upgrades."""
+    while True:
+        try:
+            await asyncio.sleep(3600)
+            litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
+            if litellm_master_key:
+                whisper_url = os.getenv("WHISPER_SERVER_URL", "http://127.0.0.1:8084")
+                classifier_url = os.getenv("LLAMA_CLASSIFIER_URL", "http://127.0.0.1:8086")
+                agy_url = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+                sync_engine = ModelRegistrySync(
+                    litellm_url=LITELLM_URL,
+                    master_key=litellm_master_key,
+                    agy_daemon_url=agy_url,
+                    llama_server_url=LLAMA_SERVER_URL,
+                    whisper_server_url=whisper_url,
+                    classifier_url=classifier_url,
+                    client=get_http_client(),
+                )
+                await sync_engine.sync_all_models()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Periodic model registry sync error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: wait for LiteLLM readiness, then sync free-model roster."""
@@ -1702,22 +1732,30 @@ async def lifespan(app: FastAPI):
                 "⚠️  LiteLLM not ready within timeout — proceeding without roster sync"
             )
 
-    # Sync free-model roster into LiteLLM only when ready (non-fatal if it fails)
+    # Sync model registry into LiteLLM only when ready (non-fatal if it fails)
     if is_ready and litellm_master_key:
+        try:
+            whisper_url = os.getenv("WHISPER_SERVER_URL", "http://127.0.0.1:8084")
+            classifier_url = os.getenv("LLAMA_CLASSIFIER_URL", "http://127.0.0.1:8086")
+            agy_url = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+            sync_engine = ModelRegistrySync(
+                litellm_url=LITELLM_URL,
+                master_key=litellm_master_key,
+                agy_daemon_url=agy_url,
+                llama_server_url=LLAMA_SERVER_URL,
+                whisper_server_url=whisper_url,
+                classifier_url=classifier_url,
+                client=get_http_client(),
+            )
+            sync_stats = await sync_engine.sync_all_models()
+            logger.info(f"📊 Model registry sync complete: {sync_stats}")
+        except Exception as e:
+            logger.error(f"Model registry sync failed: {e}")
+
         try:
             await sync_adaptive_router_roster(litellm_master_key)
         except Exception as e:
             logger.error(f"Roster sync failed: {e}")
-
-        try:
-            await _register_openrouter_models_in_db(litellm_master_key)
-        except Exception as e:
-            logger.warning(f"OpenRouter DB registration failed (non-fatal): {e}")
-
-        try:
-            await _register_ollama_models_in_db(litellm_master_key)
-        except Exception as e:
-            logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
 
     try:
         await _register_langfuse_models_in_db()
@@ -1727,6 +1765,7 @@ async def lifespan(app: FastAPI):
     # Start background task before yield so it runs during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
     cache_cleanup_task = asyncio.create_task(_periodic_triage_cache_cleanup())
+    model_sync_task = asyncio.create_task(_periodic_model_sync())
 
     try:
         yield
@@ -1734,12 +1773,17 @@ async def lifespan(app: FastAPI):
         # Cancel background tasks
         task.cancel()
         cache_cleanup_task.cancel()
+        model_sync_task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
         try:
             await cache_cleanup_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await model_sync_task
         except asyncio.CancelledError:
             pass
 
@@ -3377,7 +3421,7 @@ async def chat_completions(request: Request):
         should_try_agy = (
             client_model in (
                 "llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini",
-                "agy-opus", "agy-opus-sse", "agy-sonnet", "agy-sonnet-sse",
+                "agy-gemini-sse", "agy-opus", "agy-opus-sse", "agy-sonnet", "agy-sonnet-sse",
                 "agy-gptoss", "agy-gptoss-sse"
             )
             or (
@@ -3403,7 +3447,7 @@ async def chat_completions(request: Request):
             if client_model in ("llm-routing-agy-sse", "agy-sse"):
                 target_model = "llm-routing-agy-sse"
             elif client_model in (
-                "agy-gemini", "agy-opus", "agy-opus-sse",
+                "agy-gemini", "agy-gemini-sse", "agy-opus", "agy-opus-sse",
                 "agy-sonnet", "agy-sonnet-sse",
                 "agy-gptoss", "agy-gptoss-sse"
             ):
@@ -3504,6 +3548,11 @@ async def chat_completions(request: Request):
                     # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
                     # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
                     _tier_min_ctx = {
+                        "locallama-qwen": 240896,
+                        "locallama-qwen-hass": 240896,
+                        "locallama-qwen-routing": 8192,
+                        "locallama-whisper": 32768,
+                        "locallama-nomic-embed": 8192,
                         "local-qwen": 240896,
                         "local-qwen-hass": 240896,
                         "local-qwen-routing": 8192,
@@ -3513,18 +3562,18 @@ async def chat_completions(request: Request):
                         "agent-simple-core": 32768,
                         "ollama-deepseek-v4-pro": 524288,
                         "ollama-deepseek-v4-flash": 524288,
-                        "ollama/GPT-5.6 Luna (max)": 1050000,
                         "ollama-gpt-5.6-luna-max": 1050000,
-                        "ollama/gpt-5.6-luna": 1050000,
                         "ollama-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna-max": 1050000,
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
+                        "openrouter-tts": 32768,
                         "llm-routing-agy": 1048576,
                         "llm-routing-agy-sse": 1048576,
                         "agy-sse": 1048576,
                         "agy-gemini": 1048576,
+                        "agy-gemini-sse": 1048576,
                         "agy-opus": 200000,
                         "agy-opus-sse": 200000,
                         "agy-sonnet": 200000,
@@ -4572,6 +4621,35 @@ async def save_annotations(payload: AnnotationPayload):
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
         raise HTTPException(status_code=500, detail="Failed to save annotations")
+
+
+@app.post("/admin/sync-models")
+async def admin_sync_models(request: Request):
+    """Trigger on-demand synchronization and deduplication of LiteLLM DB models."""
+    token = await _authenticate_client_request(request)
+    admin_keys = {
+        k.strip() for k in [os.getenv("ROUTER_API_KEY"), os.getenv("LITELLM_MASTER_KEY")] if k
+    }
+    if admin_keys and token not in admin_keys:
+        raise HTTPException(status_code=403, detail="Admin privilege required")
+
+    litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
+    if not litellm_master_key:
+        raise HTTPException(status_code=500, detail="LiteLLM master key not configured")
+    whisper_url = os.getenv("WHISPER_SERVER_URL", "http://127.0.0.1:8084")
+    classifier_url = os.getenv("LLAMA_CLASSIFIER_URL", "http://127.0.0.1:8086")
+    agy_url = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+    sync_engine = ModelRegistrySync(
+        litellm_url=LITELLM_URL,
+        master_key=litellm_master_key,
+        agy_daemon_url=agy_url,
+        llama_server_url=LLAMA_SERVER_URL,
+        whisper_server_url=whisper_url,
+        classifier_url=classifier_url,
+        client=get_http_client(),
+    )
+    res = await sync_engine.sync_all_models()
+    return JSONResponse({"status": "ok", "results": res})
 
 
 if __name__ == "__main__":
