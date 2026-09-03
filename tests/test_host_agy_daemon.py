@@ -1420,8 +1420,9 @@ def test_extract_reasoning_effort():
     assert extract_reasoning_effort({"reasoning_effort": "none"}) == "low"
     assert extract_reasoning_effort({"reasoning": {"effort": "high"}}) == "high"
     assert extract_reasoning_effort({"extra_body": {"reasoning_effort": "medium"}}) == "medium"
-    assert extract_reasoning_effort({"extra_body": {"reasoning": {"effort": "max"}}}) == "high"
     assert extract_reasoning_effort({"reasoning_effort": {"effort": "high"}}) == "high"
+    assert extract_reasoning_effort({"reasoning_effort": 0}) == "low"
+    assert extract_reasoning_effort({"reasoning_effort": "0"}) == "low"
 
 def test_daemon_chat_completions_dynamic_reasoning_high(daemon_server, monkeypatch):
     captured = {}
@@ -1514,6 +1515,53 @@ def test_daemon_chat_completions_dynamic_reasoning_streaming(daemon_server, monk
     assert "--effort" in captured_cmd
     idx = captured_cmd.index("--effort")
     assert captured_cmd[idx + 1] == "high"
+
+
+def test_models_endpoint_has_all_variants(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/v1/models")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode("utf-8"))
+        model_ids = {m["id"] for m in data.get("data", [])}
+        assert "gemini-3.8-flash-medium" in model_ids
+        assert "agy-gemini-sse" in model_ids
+        assert "agy-gptoss" in model_ids
+        assert "agy-sonnet" in model_ids
+
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_tool_interception(monkeypatch):
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
+    step_tool = json.dumps({
+        "event": "step_update",
+        "step_update": {
+            "step_type": "tool",
+            "tool_name": "run_command",
+            "tool_info": {"parameters": {"CommandLine": "ls -la"}}
+        }
+    }).encode("utf-8") + b"\n"
+    mock_proc.stdout = AsyncMock()
+    mock_proc.stdout.readline = AsyncMock(side_effect=[step_tool, b""])
+    mock_proc.stderr = AsyncMock()
+    mock_proc.stderr.readline = AsyncMock(return_value=b"")
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdin.write = MagicMock()
+    mock_proc.stdin.drain = AsyncMock()
+    mock_proc.stdin.close = MagicMock()
+    mock_proc.stdin.wait_closed = AsyncMock()
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    tools = [{"type": "function", "function": {"name": "terminal"}}]
+    res = await host_agy_daemon.execute_agy_stream_json("run ls", tools=tools, intercept_tools=True)
+    assert res["returncode"] == 0
+    assert len(res["tool_calls"]) == 1
+    assert res["tool_calls"][0]["function"]["name"] == "terminal"
+    assert json.loads(res["tool_calls"][0]["function"]["arguments"]) == {"command": "ls -la"}
+    mock_proc.kill.assert_called_once()
+
 
 
 

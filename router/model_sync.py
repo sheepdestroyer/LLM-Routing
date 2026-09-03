@@ -9,6 +9,7 @@ Unifies model naming under <provider>-<model> convention:
 
 Idempotent: inspects existing DB models, prunes duplicate deployments,
 updates changed configurations, and registers new models.
+Fails closed: if /model/info cannot be fetched, never blindly creates duplicates.
 """
 
 from __future__ import annotations
@@ -27,6 +28,10 @@ DEPRECATED_MODEL_NAMES = [
     "ollama/gpt-5.6-luna",
     "gpt-5.6-luna",
 ]
+
+
+class ModelInfoFetchError(Exception):
+    """Raised when /model/info cannot be fetched reliably from LiteLLM."""
 
 
 class ModelRegistrySync:
@@ -53,7 +58,8 @@ class ModelRegistrySync:
         self.ollama_api_base = ollama_api_base.rstrip("/")
         self.openrouter_api_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY", "")
         self.ollama_api_key = os.getenv("OLLAMA_API_KEY", "")
-        self._client = client
+        self._external_client = client
+        self._owned_client: httpx.AsyncClient | None = None
 
     @property
     def headers(self) -> dict[str, str]:
@@ -62,13 +68,36 @@ class ModelRegistrySync:
             "Content-Type": "application/json",
         }
 
+    async def __aenter__(self) -> ModelRegistrySync:
+        if self._external_client is None and self._owned_client is None:
+            self._owned_client = httpx.AsyncClient(timeout=15.0)
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close owned HTTP client if one was created."""
+        if self._owned_client is not None:
+            try:
+                await self._owned_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing owned client: {e}")
+            finally:
+                self._owned_client = None
+
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is not None:
-            return self._client
-        return httpx.AsyncClient(timeout=15.0)
+        if self._external_client is not None:
+            return self._external_client
+        if self._owned_client is None:
+            self._owned_client = httpx.AsyncClient(timeout=15.0)
+        return self._owned_client
 
     async def get_existing_models(self) -> dict[str, list[dict[str, Any]]]:
-        """Fetch all models from LiteLLM and group them by model_name."""
+        """Fetch all models from LiteLLM and group them by model_name.
+
+        Fails closed by raising ModelInfoFetchError on network/HTTP errors.
+        """
         client = await self._get_client()
         try:
             resp = await client.get(
@@ -77,8 +106,8 @@ class ModelRegistrySync:
                 timeout=10.0,
             )
             if resp.status_code != 200:
-                logger.warning(f"Failed to fetch /model/info: HTTP {resp.status_code}")
-                return {}
+                logger.error(f"Failed to fetch /model/info: HTTP {resp.status_code}")
+                raise ModelInfoFetchError(f"HTTP {resp.status_code}: {resp.text[:200]}")
             data = resp.json().get("data", [])
             grouped: dict[str, list[dict[str, Any]]] = {}
             for item in data:
@@ -87,20 +116,35 @@ class ModelRegistrySync:
                     continue
                 grouped.setdefault(name, []).append(item)
             return grouped
+        except ModelInfoFetchError:
+            raise
         except Exception as e:
-            logger.warning(f"Error fetching existing models from LiteLLM: {e}")
-            return {}
+            logger.error(f"Error fetching existing models from LiteLLM: {e}")
+            raise ModelInfoFetchError(str(e)) from e
 
-    async def prune_duplicates(self, grouped_models: dict[str, list[dict[str, Any]]]) -> int:
-        """Prune duplicate deployments for any model_name in LiteLLM DB, keeping only the latest."""
+    async def prune_duplicates(
+        self,
+        grouped_models: dict[str, list[dict[str, Any]]],
+        managed_names: set[str] | None = None,
+    ) -> int:
+        """Prune duplicate deployments for managed models in LiteLLM DB, keeping the latest."""
         client = await self._get_client()
         pruned = 0
         for model_name, deployments in grouped_models.items():
+            if managed_names is not None and model_name not in managed_names:
+                continue
+
             if len(deployments) <= 1:
                 continue
 
+            # Sort deployments by updated_at or created_at if present
+            sorted_deps = sorted(
+                deployments,
+                key=lambda d: str((d.get("model_info") or {}).get("updated_at") or (d.get("model_info") or {}).get("created_at") or ""),
+            )
+
             # Keep the last deployment, delete preceding duplicates
-            to_delete = deployments[:-1]
+            to_delete = sorted_deps[:-1]
             for dep in to_delete:
                 model_info = dep.get("model_info") or {}
                 model_id = model_info.get("id")
@@ -166,13 +210,13 @@ class ModelRegistrySync:
                 return fallback_model
             data = resp.json()
             models = data.get("models", [])
-            flash_versions: list[tuple[float, str]] = []
+            flash_versions: list[tuple[tuple[int, ...], str]] = []
             for m in models:
                 mid = m.get("id", "")
-                match = re.search(r"gemini-(\d+\.\d+)-flash", mid)
+                match = re.search(r"gemini-(\d+(?:\.\d+)+)-flash", mid)
                 if match:
-                    ver = float(match.group(1))
-                    flash_versions.append((ver, f"gemini-{match.group(1)}-flash"))
+                    ver_tuple = tuple(int(x) for x in match.group(1).split("."))
+                    flash_versions.append((ver_tuple, f"gemini-{match.group(1)}-flash"))
             if flash_versions:
                 flash_versions.sort(key=lambda x: x[0], reverse=True)
                 latest = flash_versions[0][1]
@@ -805,21 +849,30 @@ class ModelRegistrySync:
 
         current_params = existing_dep.get("litellm_params") or {}
         new_params = payload.get("litellm_params") or {}
+        current_info = existing_dep.get("model_info") or {}
+        new_info = payload.get("model_info") or {}
 
-        # Check for key parameter drifts (model, api_base, timeout)
-        params_drift = (
-            current_params.get("model") != new_params.get("model")
-            or current_params.get("api_base") != new_params.get("api_base")
-            or current_params.get("request_timeout") != new_params.get("request_timeout")
+        # Compare all configured litellm_params
+        params_drift = any(current_params.get(k) != new_params.get(k) for k in new_params)
+
+        # Compare critical capabilities and limits in model_info
+        info_keys = (
+            "supports_vision",
+            "supports_reasoning",
+            "supports_function_calling",
+            "max_tokens",
+            "max_input_tokens",
+            "mode",
         )
+        info_drift = any(current_info.get(k) != new_info.get(k) for k in info_keys if k in new_info)
 
-        if not params_drift:
+        if not params_drift and not info_drift:
             return ("unchanged", False)
 
         update_payload = {
             "litellm_params": new_params,
             "model_info": {
-                **payload.get("model_info", {}),
+                **new_info,
                 "id": model_id,
             },
         }
@@ -843,7 +896,10 @@ class ModelRegistrySync:
             return ("error", False)
 
     async def sync_all_models(self) -> dict[str, int]:
-        """Run full synchronization pass: deduplicate, clean stale, discover, and upsert."""
+        """Run full synchronization pass: deduplicate, clean stale, discover, and upsert.
+
+        Fails closed: if existing models cannot be fetched, aborts immediately.
+        """
         results = {
             "pruned_duplicates": 0,
             "removed_stale": 0,
@@ -853,24 +909,15 @@ class ModelRegistrySync:
             "failed": 0,
         }
 
-        existing = await self.get_existing_models()
+        try:
+            existing = await self.get_existing_models()
+        except ModelInfoFetchError as e:
+            logger.error(f"Aborting model sync: unable to retrieve existing models ({e})")
+            results["failed"] += 1
+            return results
 
-        # Step 1: Prune duplicates
-        results["pruned_duplicates"] = await self.prune_duplicates(existing)
-
-        # Refresh existing list after pruning
-        existing = await self.get_existing_models()
-
-        # Step 2: Remove deprecated models
-        results["removed_stale"] = await self.remove_stale_models(existing)
-
-        # Refresh existing list after stale removal
-        existing = await self.get_existing_models()
-
-        # Step 3: Discover upstream agy model versions
+        # Step 1: Assemble target models to know our managed set
         latest_flash = await self.discover_agy_latest_flash()
-
-        # Step 4: Assemble unified models to sync
         all_targets: list[dict[str, Any]] = []
         all_targets.extend(self.build_locallama_models())
         all_targets.extend(self.build_agy_models(latest_flash=latest_flash))
@@ -878,7 +925,28 @@ class ModelRegistrySync:
         all_targets.extend(self.build_openrouter_models())
         all_targets.extend(self.build_legacy_aliases(latest_flash=latest_flash))
 
-        # Step 5: Upsert each target model
+        managed_names = {t["model_name"] for t in all_targets}
+
+        # Step 2: Prune duplicates only for managed models
+        results["pruned_duplicates"] = await self.prune_duplicates(existing, managed_names=managed_names)
+
+        # Refresh existing list after pruning
+        try:
+            existing = await self.get_existing_models()
+        except ModelInfoFetchError:
+            # Use previously retrieved map if refresh fails
+            pass
+
+        # Step 3: Remove deprecated models
+        results["removed_stale"] = await self.remove_stale_models(existing)
+
+        # Refresh existing list after stale removal
+        try:
+            existing = await self.get_existing_models()
+        except ModelInfoFetchError:
+            pass
+
+        # Step 4: Upsert each target model
         for target in all_targets:
             action, success = await self.upsert_model(target, existing)
             if action in results:

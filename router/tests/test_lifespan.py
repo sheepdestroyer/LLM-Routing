@@ -18,8 +18,7 @@ async def test_lifespan_happy_path():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync_cooldowns, \
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
-         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
-         patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
+         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models, \
          patch("router.main.push_aggregate_scores", new_callable=AsyncMock) as mock_push_scores, \
          patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock) as mock_cleanup, \
          patch("asyncio.sleep", new_callable=AsyncMock), \
@@ -31,8 +30,7 @@ async def test_lifespan_happy_path():
         mock_sync_cooldowns.assert_called_once()
         mock_client.get.assert_called_once()
         mock_sync_roster.assert_called_once_with("test-key")
-        mock_register_openrouter.assert_called_once_with("test-key")
-        mock_register_ollama.assert_called_once_with("test-key")
+        mock_sync_models.assert_called_once()
 
 @pytest.mark.anyio
 async def test_lifespan_timeout_path():
@@ -45,8 +43,7 @@ async def test_lifespan_timeout_path():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock), \
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
-         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
-         patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
+         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models, \
          patch("router.main.push_aggregate_scores", new_callable=AsyncMock), \
          patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock), \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
@@ -61,8 +58,7 @@ async def test_lifespan_timeout_path():
         assert mock_sleep.call_count == 179
         mock_warning.assert_any_call("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
         mock_sync_roster.assert_not_called()
-        mock_register_openrouter.assert_not_called()
-        mock_register_ollama.assert_not_called()
+        mock_sync_models.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -74,8 +70,7 @@ async def test_lifespan_disabled_timeout_path():
     with patch("router.main.get_http_client", return_value=mock_client), \
          patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock), \
          patch("router.main.sync_adaptive_router_roster", new_callable=AsyncMock) as mock_sync_roster, \
-         patch("router.main._register_openrouter_models_in_db", new_callable=AsyncMock) as mock_register_openrouter, \
-         patch("router.main._register_ollama_models_in_db", new_callable=AsyncMock) as mock_register_ollama, \
+         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models, \
          patch("router.main.push_aggregate_scores", new_callable=AsyncMock), \
          patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock), \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
@@ -88,6 +83,5 @@ async def test_lifespan_disabled_timeout_path():
         mock_client.get.assert_not_called()
         mock_sleep.assert_not_called()
         mock_sync_roster.assert_not_called()
-        mock_register_openrouter.assert_not_called()
-        mock_register_ollama.assert_not_called()
+        mock_sync_models.assert_not_called()
         mock_info.assert_any_call("ℹ️  LiteLLM readiness wait disabled (timeout <= 0) — skipping roster sync")

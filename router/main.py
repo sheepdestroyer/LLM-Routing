@@ -1686,6 +1686,7 @@ async def _periodic_model_sync():
                     llama_server_url=LLAMA_SERVER_URL,
                     whisper_server_url=whisper_url,
                     classifier_url=classifier_url,
+                    client=get_http_client(),
                 )
                 await sync_engine.sync_all_models()
         except asyncio.CancelledError:
@@ -1744,6 +1745,7 @@ async def lifespan(app: FastAPI):
                 llama_server_url=LLAMA_SERVER_URL,
                 whisper_server_url=whisper_url,
                 classifier_url=classifier_url,
+                client=get_http_client(),
             )
             sync_stats = await sync_engine.sync_all_models()
             logger.info(f"📊 Model registry sync complete: {sync_stats}")
@@ -1754,16 +1756,6 @@ async def lifespan(app: FastAPI):
             await sync_adaptive_router_roster(litellm_master_key)
         except Exception as e:
             logger.error(f"Roster sync failed: {e}")
-
-        try:
-            await _register_openrouter_models_in_db(litellm_master_key)
-        except Exception as e:
-            logger.warning(f"OpenRouter DB registration failed (non-fatal): {e}")
-
-        try:
-            await _register_ollama_models_in_db(litellm_master_key)
-        except Exception as e:
-            logger.warning(f"Ollama DB registration failed (non-fatal): {e}")
 
     try:
         await _register_langfuse_models_in_db()
@@ -4634,7 +4626,13 @@ async def save_annotations(payload: AnnotationPayload):
 @app.post("/admin/sync-models")
 async def admin_sync_models(request: Request):
     """Trigger on-demand synchronization and deduplication of LiteLLM DB models."""
-    await _authenticate_client_request(request)
+    token = await _authenticate_client_request(request)
+    admin_keys = {
+        k.strip() for k in [os.getenv("ROUTER_API_KEY"), os.getenv("LITELLM_MASTER_KEY")] if k
+    }
+    if admin_keys and token not in admin_keys:
+        raise HTTPException(status_code=403, detail="Admin privilege required")
+
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     if not litellm_master_key:
         raise HTTPException(status_code=500, detail="LiteLLM master key not configured")
@@ -4648,6 +4646,7 @@ async def admin_sync_models(request: Request):
         llama_server_url=LLAMA_SERVER_URL,
         whisper_server_url=whisper_url,
         classifier_url=classifier_url,
+        client=get_http_client(),
     )
     res = await sync_engine.sync_all_models()
     return JSONResponse({"status": "ok", "results": res})

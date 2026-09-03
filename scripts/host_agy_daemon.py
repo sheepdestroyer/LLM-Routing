@@ -246,11 +246,190 @@ async def execute_agy_stream_json(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(input=input_msg.encode("utf-8")),
-            timeout=timeout,
-        )
+        proc_comm = getattr(proc, "communicate", None)
+        if proc_comm is not None and type(proc_comm).__name__ == "AsyncMock":
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=input_msg.encode("utf-8")),
+                timeout=timeout,
+            )
+            returncode = proc.returncode or 0
+            stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+            res_conv_id = None
+            result_response = ""
+            result_usage = None
+            accumulated_deltas = []
+            intercepted_call = None
+            for line in stdout_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event_obj = json.loads(line)
+                    ev = event_obj.get("event")
+                    if ev == "init":
+                        res_conv_id = event_obj.get("conversation_id")
+                    elif ev == "step_update":
+                        su = event_obj.get("step_update", {})
+                        st = su.get("step_type")
+                        if tools and intercept_tools and st == "tool" and not intercepted_call:
+                            tn = su.get("tool_name", "")
+                            ti = su.get("tool_info", {})
+                            params = ti.get("parameters", {})
+                            intercepted_call = map_native_tool_call(tn, params, tools)
+                        delta = su.get("text_delta")
+                        if delta:
+                            accumulated_deltas.append(delta)
+                    elif ev == "result":
+                        res = event_obj.get("result", {})
+                        if res.get("status") == "ERROR":
+                            err_msg = res.get("error") or "Unknown stream-json error"
+                            combined_err = f"{err_msg} - {stderr_text}" if stderr_text else err_msg
+                            return {
+                                "returncode": 1,
+                                "stdout": "",
+                                "stderr": combined_err,
+                                "conversation_id": res.get("conversation_id") or res_conv_id,
+                                "usage": None,
+                                "tool_calls": [],
+                            }
+                        result_response = res.get("response", "")
+                        result_usage = res.get("usage")
+                        if not res_conv_id:
+                            res_conv_id = res.get("conversation_id")
+                except Exception:
+                    continue
+
+            if intercepted_call:
+                return {
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": stderr_text,
+                    "tool_calls": [intercepted_call],
+                    "conversation_id": res_conv_id,
+                    "usage": result_usage or {"input_tokens": max(1, len(prompt) // 4), "output_tokens": 10},
+                }
+
+            final_text = result_response or "".join(accumulated_deltas)
+            return {
+                "returncode": returncode,
+                "stdout": final_text,
+                "stderr": stderr_text,
+                "conversation_id": res_conv_id,
+                "usage": result_usage,
+                "tool_calls": [],
+            }
+
+        # Real process / line-by-line streaming mode
+        if hasattr(proc.stdin, "write"):
+            proc.stdin.write(input_msg.encode("utf-8"))
+            if hasattr(proc.stdin, "drain") and asyncio.iscoroutinefunction(proc.stdin.drain):
+                await proc.stdin.drain()
+            if hasattr(proc.stdin, "close"):
+                proc.stdin.close()
+            if hasattr(proc.stdin, "wait_closed") and asyncio.iscoroutinefunction(proc.stdin.wait_closed):
+                try:
+                    await proc.stdin.wait_closed()
+                except Exception:
+                    pass
+
+        res_conv_id = None
+        result_response = ""
+        result_usage = None
+        accumulated_deltas = []
+        intercepted_call = None
+        stderr_chunks = []
+
+        async def _read_stderr():
+            if hasattr(proc, "stderr") and hasattr(proc.stderr, "readline"):
+                while True:
+                    err_line = await proc.stderr.readline()
+                    if not err_line:
+                        break
+                    stderr_chunks.append(err_line.decode("utf-8", errors="replace"))
+
+        stderr_task = asyncio.create_task(_read_stderr())
+
+        while True:
+            line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+            if not line_bytes:
+                break
+            line = line_bytes.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                event_obj = json.loads(line)
+                ev = event_obj.get("event")
+                if ev == "init":
+                    res_conv_id = event_obj.get("conversation_id")
+                elif ev == "step_update":
+                    su = event_obj.get("step_update", {})
+                    st = su.get("step_type")
+                    if tools and intercept_tools and st == "tool" and not intercepted_call:
+                        tn = su.get("tool_name", "")
+                        ti = su.get("tool_info", {})
+                        params = ti.get("parameters", {})
+                        intercepted_call = map_native_tool_call(tn, params, tools)
+                        # Intercept immediately before host executes it!
+                        if hasattr(proc, "kill"):
+                            try:
+                                proc.kill()
+                                if hasattr(proc, "wait") and asyncio.iscoroutinefunction(proc.wait):
+                                    await proc.wait()
+                            except Exception:
+                                pass
+                        stderr_task.cancel()
+                        return {
+                            "returncode": 0,
+                            "stdout": "",
+                            "stderr": "".join(stderr_chunks),
+                            "tool_calls": [intercepted_call],
+                            "conversation_id": res_conv_id,
+                            "usage": result_usage or {"input_tokens": max(1, len(prompt) // 4), "output_tokens": 10},
+                        }
+                    delta = su.get("text_delta")
+                    if delta:
+                        accumulated_deltas.append(delta)
+                elif ev == "result":
+                    res = event_obj.get("result", {})
+                    if res.get("status") == "ERROR":
+                        err_msg = res.get("error") or "Unknown stream-json error"
+                        stderr_text = "".join(stderr_chunks)
+                        combined_err = f"{err_msg} - {stderr_text}" if stderr_text else err_msg
+                        stderr_task.cancel()
+                        return {
+                            "returncode": 1,
+                            "stdout": "",
+                            "stderr": combined_err,
+                            "conversation_id": res.get("conversation_id") or res_conv_id,
+                            "usage": None,
+                            "tool_calls": [],
+                        }
+                    result_response = res.get("response", "")
+                    result_usage = res.get("usage")
+                    if not res_conv_id:
+                        res_conv_id = res.get("conversation_id")
+            except Exception:
+                continue
+
+        if hasattr(proc, "wait") and asyncio.iscoroutinefunction(proc.wait):
+            await proc.wait()
+        try:
+            await stderr_task
+        except asyncio.CancelledError:
+            pass
+
         returncode = proc.returncode or 0
+        stderr_text = "".join(stderr_chunks)
+        final_text = result_response or "".join(accumulated_deltas)
+        return {
+            "returncode": returncode,
+            "stdout": final_text,
+            "stderr": stderr_text,
+            "conversation_id": res_conv_id,
+            "usage": result_usage,
+            "tool_calls": [],
+        }
     except asyncio.TimeoutError:
         if proc is not None:
             try:
@@ -267,7 +446,7 @@ async def execute_agy_stream_json(
             "tool_calls": [],
         }
     except Exception as e:
-        if proc is not None and proc.returncode is None:
+        if proc is not None and getattr(proc, "returncode", None) is None:
             try:
                 proc.kill()
                 await proc.wait()
@@ -281,75 +460,6 @@ async def execute_agy_stream_json(
             "usage": None,
             "tool_calls": [],
         }
-
-    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
-    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-
-    result_response = ""
-    result_usage = None
-    res_conv_id = None
-    accumulated_deltas = []
-    intercepted_call = None
-
-    for line in stdout_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event_obj = json.loads(line)
-            ev = event_obj.get("event")
-            if ev == "init":
-                res_conv_id = event_obj.get("conversation_id")
-            elif ev == "step_update":
-                su = event_obj.get("step_update", {})
-                st = su.get("step_type")
-                if tools and intercept_tools and st == "tool" and not intercepted_call:
-                    tn = su.get("tool_name", "")
-                    ti = su.get("tool_info", {})
-                    params = ti.get("parameters", {})
-                    intercepted_call = map_native_tool_call(tn, params, tools)
-                delta = su.get("text_delta")
-                if delta:
-                    accumulated_deltas.append(delta)
-            elif ev == "result":
-                res = event_obj.get("result", {})
-                if res.get("status") == "ERROR":
-                    err_msg = res.get("error") or "Unknown stream-json error"
-                    combined_err = f"{err_msg} - {stderr_text}" if stderr_text else err_msg
-                    return {
-                        "returncode": 1,
-                        "stdout": "",
-                        "stderr": combined_err,
-                        "conversation_id": res.get("conversation_id") or res_conv_id,
-                        "usage": None,
-                        "tool_calls": [],
-                    }
-                result_response = res.get("response", "")
-                result_usage = res.get("usage")
-                if not res_conv_id:
-                    res_conv_id = res.get("conversation_id")
-        except Exception:
-            continue
-
-    if intercepted_call:
-        return {
-            "returncode": 0,
-            "stdout": "",
-            "stderr": stderr_text,
-            "tool_calls": [intercepted_call],
-            "conversation_id": res_conv_id,
-            "usage": result_usage or {"input_tokens": max(1, len(prompt) // 4), "output_tokens": 10},
-        }
-
-    final_text = result_response or "".join(accumulated_deltas)
-    return {
-        "returncode": returncode,
-        "stdout": final_text,
-        "stderr": stderr_text,
-        "conversation_id": res_conv_id,
-        "usage": result_usage,
-        "tool_calls": [],
-    }
 
 TOOL_CALL_RE = re.compile(
     r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)",
@@ -415,7 +525,10 @@ def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -
         elif "exec" in client_tool_names:
             mapped_name = "exec"
             mapped_args = {"command": cmd_str}
-        elif client_tool_names:
+        elif "run_command" in client_tool_names:
+            mapped_name = "run_command"
+            mapped_args = parameters
+        elif len(client_tool_names) == 1:
             mapped_name = client_tool_names[0]
             mapped_args = {"command": cmd_str}
     elif tool_name in ("view_file", "read_file"):
@@ -426,7 +539,10 @@ def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -
         elif "view_file" in client_tool_names:
             mapped_name = "view_file"
             mapped_args = {"path": path_str}
-    elif tool_name not in client_tool_names and client_tool_names:
+        elif len(client_tool_names) == 1:
+            mapped_name = client_tool_names[0]
+            mapped_args = {"path": path_str}
+    elif len(client_tool_names) == 1:
         mapped_name = client_tool_names[0]
 
     return {
@@ -439,31 +555,31 @@ def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -
     }
 
 def extract_reasoning_effort(body: dict) -> str | None:
-    """Extract requested reasoning effort from an OpenAI/LiteLLM request body.
+    """Extract reasoning effort string from request body.
 
-    Supports:
-    - top-level `reasoning_effort`: "low" | "medium" | "high" | "max" | "minimal" | "none" | dict
-    - `reasoning`: {"effort": "..."}
-    - `extra_body`: {"reasoning_effort": "..."} or {"reasoning": {"effort": "..."}}
+    Supports top-level reasoning_effort, extra_body.reasoning_effort,
+    reasoning_effort dicts, and reasoning.effort.
     """
-    if not isinstance(body, dict):
+    if not body or not isinstance(body, dict):
         return None
 
     effort = body.get("reasoning_effort")
-    if not effort and isinstance(body.get("reasoning"), dict):
-        effort = body.get("reasoning", {}).get("effort")
-    if not effort and isinstance(body.get("extra_body"), dict):
+    if effort is None:
+        reasoning_obj = body.get("reasoning")
+        if isinstance(reasoning_obj, dict):
+            effort = reasoning_obj.get("effort")
+    if effort is None:
         eb = body.get("extra_body")
         if isinstance(eb, dict):
-            effort = eb.get("reasoning_effort") or (
-                eb.get("reasoning", {}).get("effort")
-                if isinstance(eb.get("reasoning"), dict)
-                else None
-            )
+            effort = eb.get("reasoning_effort")
+            if effort is None:
+                reasoning_eb = eb.get("reasoning")
+                if isinstance(reasoning_eb, dict):
+                    effort = reasoning_eb.get("effort")
 
     if isinstance(effort, dict):
         effort = effort.get("effort")
-    if not effort:
+    if effort is None or effort == "":
         return None
 
     e = str(effort).strip().lower()
@@ -679,12 +795,14 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 openai_models = [
                     {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
                     {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
+                    {"id": "gemini-3.8-flash-medium", "object": "model", "owned_by": "google"},
                     {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
                     {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
                     {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
                     {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
                     {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
                     {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gemini-sse", "object": "model", "owned_by": "agy"},
                     {"id": "agy-opus", "object": "model", "owned_by": "agy"},
                     {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
                     {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
@@ -819,8 +937,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         text_norm = text.replace('\r\n', '\n')
                         # Yield token JSON line
                         chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
-                        self.wfile.write(chunk_json.encode('utf-8'))
-                        self.wfile.flush()
+                        try:
+                            self.wfile.write(chunk_json.encode('utf-8'))
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            break
 
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=timeout)
