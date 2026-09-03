@@ -670,6 +670,52 @@ def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
     assert data["choices"][0]["message"]["content"] == "Opus reply"
     assert captured["model_override"] == "claude-opus-4-6-thinking"
 
+def test_daemon_chat_completions_gptoss_override(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["model_override"] = model_override
+        return {"returncode": 0, "stdout": "GPT-OSS reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "agy-gptoss",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["message"]["content"] == "GPT-OSS reply"
+    assert captured["model_override"] == "gpt-oss-120b-medium"
+
+def test_daemon_chat_completions_sonnet_override(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["model_override"] = model_override
+        return {"returncode": 0, "stdout": "Sonnet reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "agy-sonnet",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["message"]["content"] == "Sonnet reply"
+    assert captured["model_override"] == "claude-sonnet-4-6"
+
 def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {"returncode": 1, "stdout": "", "stderr": "Resource exhausted: quota limit reached (429)", "conversation_id": None}

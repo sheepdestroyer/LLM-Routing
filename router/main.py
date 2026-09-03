@@ -3375,7 +3375,11 @@ async def chat_completions(request: Request):
         # simple/medium/complex prompts that the fast OpenRouter free tier handles better.
 
         should_try_agy = (
-            client_model in ("llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini", "agy-opus")
+            client_model in (
+                "llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini",
+                "agy-opus", "agy-opus-sse", "agy-sonnet", "agy-sonnet-sse",
+                "agy-gptoss", "agy-gptoss-sse"
+            )
             or (
                 client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
                 and target_model in ("agent-advanced-core", "agent-reasoning-core")
@@ -3398,7 +3402,11 @@ async def chat_completions(request: Request):
         if should_try_agy:
             if client_model in ("llm-routing-agy-sse", "agy-sse"):
                 target_model = "llm-routing-agy-sse"
-            elif client_model in ("agy-gemini", "agy-opus"):
+            elif client_model in (
+                "agy-gemini", "agy-opus", "agy-opus-sse",
+                "agy-sonnet", "agy-sonnet-sse",
+                "agy-gptoss", "agy-gptoss-sse"
+            ):
                 target_model = client_model
             else:
                 target_model = "llm-routing-agy"
@@ -3519,6 +3527,10 @@ async def chat_completions(request: Request):
                         "agy-gemini": 1048576,
                         "agy-opus": 200000,
                         "agy-opus-sse": 200000,
+                        "agy-sonnet": 200000,
+                        "agy-sonnet-sse": 200000,
+                        "agy-gptoss": 131072,
+                        "agy-gptoss-sse": 131072,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)
