@@ -423,5 +423,63 @@ def test_chat_completions_case_insensitive_auth():
         )
         assert response.status_code == 200
 
+def test_chat_completions_agy_dual_mode_routing():
+    """Verify that llm-routing-agy and llm-routing-agy-sse route correctly to LiteLLM."""
+    client = TestClient(app)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        # Path A
+        resp_a = client.post(
+            "/v1/chat/completions",
+            json={"model": "llm-routing-agy", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer test-key"}
+        )
+        assert resp_a.status_code == 200
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == "llm-routing-agy"
+
+        # Path B
+        resp_b = client.post(
+            "/v1/chat/completions",
+            json={"model": "llm-routing-agy-sse", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer test-key"}
+        )
+        assert resp_b.status_code == 200
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == "llm-routing-agy-sse"
+
+        # Path B alias
+        resp_alias = client.post(
+            "/v1/chat/completions",
+            json={"model": "agy-sse", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer test-key"}
+        )
+        assert resp_alias.status_code == 200
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["json"]["model"] == "llm-routing-agy-sse"
+
+def test_models_endpoint_includes_agy_sse():
+    """Verify that /v1/models lists llm-routing-agy-sse."""
+    client = TestClient(app)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"data": []}
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        resp = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 200
+        model_ids = [m["id"] for m in resp.json()["data"]]
+        assert "llm-routing-agy" in model_ids
+        assert "llm-routing-agy-sse" in model_ids
+
 
 

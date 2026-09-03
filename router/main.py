@@ -2821,6 +2821,13 @@ async def proxy_models():
                             "context_length": 1048576,
                         },
                         {
+                            "id": "llm-routing-agy-sse",
+                            "object": "model",
+                            "created": 0,
+                            "owned_by": "llm-routing",
+                            "context_length": 1048576,
+                        },
+                        {
                             "id": "llm-routing-ollama",
                             "object": "model",
                             "created": 0,
@@ -3368,7 +3375,7 @@ async def chat_completions(request: Request):
         # simple/medium/complex prompts that the fast OpenRouter free tier handles better.
 
         should_try_agy = (
-            client_model == "llm-routing-agy"  # direct — always try
+            client_model in ("llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini", "agy-opus")
             or (
                 client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
                 and target_model in ("agent-advanced-core", "agent-reasoning-core")
@@ -3387,9 +3394,14 @@ async def chat_completions(request: Request):
         # --- AGY PROXY (via LiteLLM) ---
         # LiteLLM routes llm-routing-agy to host_agy_daemon (:5005) with native fallbacks
         # (gemini-3.8-flash -> claude-opus-4.6 -> agent-advanced-core -> openrouter-auto).
-        # We proxy to LiteLLM with model="llm-routing-agy".
+        # We proxy to LiteLLM with appropriate model name.
         if should_try_agy:
-            target_model = "llm-routing-agy"
+            if client_model in ("llm-routing-agy-sse", "agy-sse"):
+                target_model = "llm-routing-agy-sse"
+            elif client_model in ("agy-gemini", "agy-opus"):
+                target_model = client_model
+            else:
+                target_model = "llm-routing-agy"
             logger.info(f"agy route: proxying to LiteLLM as model={target_model}")
 
         original_target_model = target_model
@@ -3502,8 +3514,11 @@ async def chat_completions(request: Request):
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
                         "llm-routing-agy": 1048576,
+                        "llm-routing-agy-sse": 1048576,
+                        "agy-sse": 1048576,
                         "agy-gemini": 1048576,
                         "agy-opus": 200000,
+                        "agy-opus-sse": 200000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

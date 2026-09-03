@@ -761,11 +761,14 @@ def test_format_tools_instruction():
             }
         }
     ]
-    instr = host_agy_daemon.format_tools_instruction(tools)
-    assert "# Available Client Tools" in instr
+    instr = host_agy_daemon.format_tools_instruction(tools, is_sse_mode=False)
+    assert "# Available Tools" in instr
     assert "<tools>" in instr
     assert "terminal" in instr
-    assert "<tool_call>" in instr
+
+    instr_sse = host_agy_daemon.format_tools_instruction(tools, is_sse_mode=True)
+    assert "# Available Client Tools" in instr_sse
+    assert "<tools>" in instr_sse
 
 def test_parse_tool_calls_from_text():
     # Empty
@@ -810,10 +813,13 @@ def test_parse_tool_calls_from_text():
 def test_extract_prompt_with_tools():
     msgs = [{"role": "user", "content": "What is the date?"}]
     tools = [{"type": "function", "function": {"name": "get_date", "parameters": {}}}]
-    prompt = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools)
-    assert "System: # Available Client Tools" in prompt
+    prompt = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools, is_sse_mode=False)
+    assert "System: # Available Tools" in prompt
     assert "get_date" in prompt
     assert "User: What is the date?" in prompt
+
+    prompt_sse = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools, is_sse_mode=True)
+    assert "System: # Available Client Tools" in prompt_sse
 
 def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
@@ -1197,6 +1203,164 @@ def test_daemon_chat_completions_streaming_error_classified_via_stderr(daemon_se
     assert err_obj["error"]["type"] == "rate_limit_error"
     assert "RESOURCE_EXHAUSTED" in err_obj["error"]["message"]
     assert "data: [DONE]" not in raw_body
+
+def test_map_native_tool_call():
+    client_tools = [
+        {"type": "function", "function": {"name": "terminal", "parameters": {}}},
+        {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+    ]
+    # run_command -> terminal
+    tc1 = host_agy_daemon.map_native_tool_call("run_command", {"CommandLine": "uptime"}, client_tools)
+    assert tc1["function"]["name"] == "terminal"
+    assert json.loads(tc1["function"]["arguments"]) == {"command": "uptime"}
+
+    # view_file -> read_file
+    tc2 = host_agy_daemon.map_native_tool_call("view_file", {"AbsolutePath": "/etc/hosts"}, client_tools)
+    assert tc2["function"]["name"] == "read_file"
+    assert json.loads(tc2["function"]["arguments"]) == {"path": "/etc/hosts"}
+
+    # custom tool
+    client_tools_custom = [{"type": "function", "function": {"name": "custom_search"}}]
+    tc3 = host_agy_daemon.map_native_tool_call("grep_search", {"Query": "test"}, client_tools_custom)
+    assert tc3["function"]["name"] == "custom_search"
+
+def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = None
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        step_tool_line = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "tool",
+                "tool_name": "run_command",
+                "tool_info": {
+                    "name": "run_command",
+                    "parameters": {"CommandLine": "uptime; free -h"}
+                }
+            }
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[step_tool_line, b""])
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "llm-routing-agy",
+        "messages": [{"role": "user", "content": "Check uptime"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "description": "Run bash command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            }
+        ],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    lines = raw_body.split("\n\n")
+    data_lines = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(data_lines) >= 2
+    tool_chunk = json.loads(data_lines[0].replace("data: ", ""))
+    assert "tool_calls" in tool_chunk["choices"][0]["delta"]
+    tc = tool_chunk["choices"][0]["delta"]["tool_calls"][0]
+    assert tc["function"]["name"] == "terminal"
+    assert json.loads(tc["function"]["arguments"]) == {"command": "uptime; free -h"}
+    finish_chunk = json.loads(data_lines[1].replace("data: ", ""))
+    assert finish_chunk["choices"][0]["finish_reason"] == "tool_calls"
+    assert "data: [DONE]" in raw_body
+
+def test_daemon_chat_completions_sse_autonomous_mode(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        step1 = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "tool",
+                "tool_name": "run_command",
+                "tool_info": {
+                    "name": "run_command",
+                    "parameters": {"CommandLine": "uptime"}
+                }
+            }
+        }).encode("utf-8") + b"\n"
+        step2 = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "tool",
+                "tool_name": "run_command",
+                "tool_info": {
+                    "name": "run_command",
+                    "parameters": {"CommandLine": "uptime"},
+                    "output": "up 3 days\n"
+                }
+            }
+        }).encode("utf-8") + b"\n"
+        step3 = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "step_type": "agent_response",
+                "text_delta": "System is healthy."
+            }
+        }).encode("utf-8") + b"\n"
+        res = json.dumps({
+            "event": "result",
+            "result": {"status": "SUCCESS", "response": "System is healthy."}
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[step1, step2, step3, res, b""])
+        mock_proc.stderr = AsyncMock()
+        mock_proc.stderr.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "llm-routing-agy-sse",
+        "messages": [{"role": "user", "content": "Check uptime"}],
+        "tools": [{"type": "function", "function": {"name": "terminal"}}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    assert "Running `run_command`: `uptime`" in raw_body
+    assert "up 3 days" in raw_body
+    assert "System is healthy." in raw_body
+    assert "data: [DONE]" in raw_body
 
 
 

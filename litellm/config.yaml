@@ -136,6 +136,48 @@ model_list:
     max_input_tokens: 200000
     is_public_model_group: true
 - litellm_params:
+    model: openai/gemini-3.8-flash-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: llm-routing-agy-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gemini-3.8-flash-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/claude-opus-4.6-sse
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 600
+  model_name: agy-opus-sse
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: false
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 200000
+    is_public_model_group: true
+- litellm_params:
     model: openrouter/openrouter/auto
     request_timeout: 120
   model_name: openrouter-auto
