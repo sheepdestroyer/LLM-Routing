@@ -639,12 +639,18 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
                     {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
                     {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
+                    {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
+                    {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
                     {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
                     {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
                     {"id": "agy-opus", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
                     {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
                     {"id": "agy-sse", "object": "model", "owned_by": "agy"},
                     {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
                 ]
                 res = {"object": "list", "data": openai_models}
 
@@ -853,10 +859,16 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
         # Swap Gemini 3.5 to 3.8 and resolve model overrides:
-        # Default Gemini tier -> gemini-3.8-flash-low
         # Claude Opus tier -> claude-opus-4-6-thinking
+        # Claude Sonnet tier -> claude-sonnet-4-6
+        # GPT-OSS tier (cheapest 3rd-party vendor model) -> gpt-oss-120b-medium
+        # Default Gemini tier -> gemini-3.8-flash-low
         if "opus" in model_lower:
             model_override = "claude-opus-4-6-thinking"
+        elif "sonnet" in model_lower:
+            model_override = "claude-sonnet-4-6"
+        elif "gpt-oss" in model_lower or "gptoss" in model_lower or "gpt_oss" in model_lower:
+            model_override = "gpt-oss-120b-medium"
         elif "gemini-3.8-flash-high" in model_lower:
             model_override = "gemini-3.8-flash-high"
         elif "gemini-3.8-flash-medium" in model_lower:
