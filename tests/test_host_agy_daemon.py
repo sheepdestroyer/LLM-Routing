@@ -5,7 +5,7 @@ import socket
 import threading
 import urllib.error
 import urllib.request
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -619,9 +619,10 @@ def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
             "returncode": 0,
             "stdout": "Hello from Gemini 3.8 Flash",
             "stderr": "",
-            "conversation_id": "conv_999"
+            "conversation_id": "conv_999",
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
         }
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -649,7 +650,7 @@ def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         captured["model_override"] = model_override
         return {"returncode": 0, "stdout": "Opus reply", "stderr": "", "conversation_id": None}
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "claude-opus-4.6",
@@ -670,7 +671,7 @@ def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
 def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {"returncode": 1, "stdout": "", "stderr": "Resource exhausted: quota limit reached (429)", "conversation_id": None}
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -690,7 +691,7 @@ def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
 def test_daemon_chat_completions_generic_error(daemon_server, monkeypatch):
     async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
         return {"returncode": 2, "stdout": "", "stderr": "Crash or socket error", "conversation_id": None}
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -710,18 +711,20 @@ def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[
+            b'{"event":"step_update","step_update":{"text_delta":"Hello world"}}\n',
+            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello world"}}\n',
+            b'',
+        ])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-
-    read_count = 0
-    def mock_read(fd, n):
-        nonlocal read_count
-        read_count += 1
-        if read_count == 1:
-            return b"Hello world"
-        return b""
-    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -818,7 +821,7 @@ def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeyp
             "stderr": "",
             "conversation_id": "conv_tool_1",
         }
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -855,18 +858,22 @@ def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
+        tc_line = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "text_delta": '<tool_call>\n{"name": "terminal", "arguments": {"command": "uname -a"}}\n</tool_call>'
+            }
+        }).encode("utf-8") + b"\n"
+        res_line = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": ""}}).encode("utf-8") + b"\n"
+        mock_proc.stdout.readline = AsyncMock(side_effect=[tc_line, res_line, b""])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-
-    read_count = 0
-    def mock_read(fd, n):
-        nonlocal read_count
-        read_count += 1
-        if read_count == 1:
-            return b"<tool_call>{\"name\": \"terminal\", \"arguments\": {\"command\": \"uname -a\"}}</tool_call>"
-        return b""
-    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -911,18 +918,20 @@ def test_daemon_chat_completions_with_tools_streaming_conversational(daemon_serv
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
         mock_proc.wait = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[
+            b'{"event":"step_update","step_update":{"text_delta":"Hello, I am a conversational assistant!"}}\n',
+            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello, I am a conversational assistant!"}}\n',
+            b'',
+        ])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-
-    read_count = 0
-    def mock_read(fd, n):
-        nonlocal read_count
-        read_count += 1
-        if read_count == 1:
-            return b"Hello, I am a conversational assistant!"
-        return b""
-    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -955,7 +964,7 @@ def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
             "stderr": "",
             "conversation_id": "new_conv_1",
         }
-    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
 
     payload = {
         "model": "gemini-3.8-flash",
@@ -972,6 +981,48 @@ def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
 
     # Ensure sess- session was ignored and not passed as agy --conversation
     assert captured_conv_id is None
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_success(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    ndjson_out = (
+        b'{"event":"init","conversation_id":"c123"}\n'
+        b'{"event":"step_update","step_update":{"text_delta":"streamed content"}}\n'
+        b'{"event":"result","result":{"status":"SUCCESS","response":"streamed content","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}\n'
+    )
+    mock_proc.communicate = AsyncMock(return_value=(ndjson_out, b""))
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt", model_override="gemini-3.8-flash-low")
+    assert res["returncode"] == 0
+    assert res["stdout"] == "streamed content"
+    assert res["conversation_id"] == "c123"
+    assert res["usage"]["total_tokens"] == 120
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_error(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 1
+    ndjson_out = b'{"event":"result","result":{"status":"ERROR","error":"bad stream input"}}\n'
+    mock_proc.communicate = AsyncMock(return_value=(ndjson_out, b"error details"))
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt")
+    assert res["returncode"] == 1
+    assert res["stderr"] == "bad stream input"
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_timeout(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt", timeout=0.01)
+    assert res["returncode"] == -1
+    assert "timed out" in res["stderr"]
 
 
 

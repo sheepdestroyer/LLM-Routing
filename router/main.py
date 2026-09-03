@@ -3476,9 +3476,9 @@ async def chat_completions(request: Request):
                         "openrouter-gpt-5.6-luna-max": 1050000,
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
-                        "llm-routing-agy": 30000,
-                        "agy-gemini": 30000,
-                        "agy-opus": 30000,
+                        "llm-routing-agy": 1048576,
+                        "agy-gemini": 1048576,
+                        "agy-opus": 200000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

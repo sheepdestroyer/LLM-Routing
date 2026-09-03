@@ -212,6 +212,111 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
         "conversation_id": result_conv_id
     }
 
+async def execute_agy_stream_json(
+    prompt: str,
+    model_override: str = "",
+    conversation_id: str = None,
+    timeout: float = 120.0,
+) -> dict:
+    """Asynchronously execute agy via stream-json over stdin and capture structured result."""
+    env = os.environ.copy()
+    if model_override:
+        env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
+    else:
+        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+
+    cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
+    if conversation_id:
+        cmd.extend(["--conversation", conversation_id])
+    cmd.extend(["--print-timeout", f"{int(timeout)}s"])
+
+    input_msg = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(input=input_msg.encode("utf-8")),
+            timeout=timeout,
+        )
+        returncode = proc.returncode or 0
+    except asyncio.TimeoutError:
+        if proc is not None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+        return {
+            "returncode": -1,
+            "stdout": "",
+            "stderr": f"Execution timed out after {timeout} seconds",
+            "conversation_id": None,
+            "usage": None,
+        }
+    except Exception as e:
+        return {
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(e),
+            "conversation_id": None,
+            "usage": None,
+        }
+
+    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+
+    result_response = ""
+    result_usage = None
+    res_conv_id = None
+    accumulated_deltas = []
+
+    for line in stdout_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event_obj = json.loads(line)
+            ev = event_obj.get("event")
+            if ev == "init":
+                res_conv_id = event_obj.get("conversation_id")
+            elif ev == "step_update":
+                delta = event_obj.get("step_update", {}).get("text_delta")
+                if delta:
+                    accumulated_deltas.append(delta)
+            elif ev == "result":
+                res = event_obj.get("result", {})
+                if res.get("status") == "ERROR":
+                    err_msg = res.get("error") or "Unknown stream-json error"
+                    return {
+                        "returncode": 1,
+                        "stdout": "",
+                        "stderr": err_msg,
+                        "conversation_id": res.get("conversation_id") or res_conv_id,
+                        "usage": None,
+                    }
+                result_response = res.get("response", "")
+                result_usage = res.get("usage")
+                if not res_conv_id:
+                    res_conv_id = res.get("conversation_id")
+        except Exception:
+            continue
+
+    final_text = result_response or "".join(accumulated_deltas)
+    return {
+        "returncode": returncode,
+        "stdout": final_text,
+        "stderr": stderr_text,
+        "conversation_id": res_conv_id,
+        "usage": result_usage,
+    }
+
 TOOL_CALL_RE = re.compile(
     r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)",
     re.IGNORECASE
@@ -663,165 +768,160 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             asyncio.set_event_loop(loop)
 
             async def run_openai_stream():
-                import pty
                 env = os.environ.copy()
                 if model_override:
                     env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
                 else:
                     env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
 
-                cmd = [AGY_BINARY]
+                cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
                 cmd.extend(["--print-timeout", f"{int(timeout)}s"])
-                cmd.extend(["--print", prompt])
 
-                master_fd, slave_fd = pty.openpty()
-                proc = None
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                 created_time = int(time.time())
+                input_msg = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+
+                proc = None
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd, env=env,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                except Exception as e:
+                    err_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {"content": f"Error: {e}"}, "finish_reason": "error"}],
+                    }
+                    self.wfile.write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                    return
 
                 try:
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd, env=env,
-                            stdout=slave_fd,
-                            stderr=slave_fd,
-                        )
-                        os.close(slave_fd)
-                    except Exception as e:
-                        os.close(slave_fd)
-                        err_chunk = {
+                    proc.stdin.write(input_msg.encode('utf-8'))
+                    await proc.stdin.drain()
+                    proc.stdin.close()
+                    await proc.stdin.wait_closed()
+                except Exception:
+                    pass
+
+                accumulated_chunks = []
+                try:
+                    while True:
+                        line = await proc.stdout.readline()
+                        if not line:
+                            break
+                        line_str = line.decode('utf-8', errors='replace').strip()
+                        if not line_str:
+                            continue
+                        try:
+                            event_obj = json.loads(line_str)
+                        except Exception:
+                            continue
+
+                        ev = event_obj.get("event")
+                        if ev == "step_update":
+                            delta = event_obj.get("step_update", {}).get("text_delta")
+                            if delta:
+                                if tools:
+                                    accumulated_chunks.append(delta)
+                                else:
+                                    chunk_data = {
+                                        "id": chunk_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_time,
+                                        "model": model,
+                                        "choices": [
+                                            {
+                                                "index": 0,
+                                                "delta": {"content": delta},
+                                                "finish_reason": None,
+                                            }
+                                        ],
+                                    }
+                                    self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
+                                    self.wfile.flush()
+                        elif ev == "result":
+                            res = event_obj.get("result", {})
+                            if res.get("response") and not accumulated_chunks:
+                                accumulated_chunks.append(res.get("response"))
+
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                except Exception:
+                    if proc is not None:
+                        try:
+                            proc.kill()
+                            await proc.wait()
+                        except Exception:
+                            pass
+
+                if tools:
+                    full_text = "".join(accumulated_chunks)
+                    cleaned_text, tool_calls = parse_tool_calls_from_text(full_text)
+                    if tool_calls:
+                        tool_chunk = {
                             "id": chunk_id,
                             "object": "chat.completion.chunk",
                             "created": created_time,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {"content": f"Error: {e}"}, "finish_reason": "error"}],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "role": "assistant",
+                                        "content": cleaned_text or None,
+                                        "tool_calls": [
+                                            {
+                                                "index": idx,
+                                                "id": tc["id"],
+                                                "type": "function",
+                                                "function": tc["function"],
+                                            }
+                                            for idx, tc in enumerate(tool_calls)
+                                        ],
+                                    },
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
-                        self.wfile.write(b"data: [DONE]\n\n")
-                        self.wfile.flush()
-                        return
-
-                    loop_ref = asyncio.get_running_loop()
-
-                    def read_bytes():
-                        try:
-                            return os.read(master_fd, 1024)
-                        except OSError:
-                            return b""
-
-                    accumulated_chunks = []
-                    while True:
-                        data = await loop_ref.run_in_executor(None, read_bytes)
-                        if not data:
-                            break
-                        text = data.decode('utf-8', errors='replace')
-                        text_norm = text.replace('\r\n', '\n')
-                        if tools:
-                            accumulated_chunks.append(text_norm)
-                        else:
-                            chunk_data = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": text_norm},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                            self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
-                            self.wfile.flush()
-
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=timeout)
-                    except Exception:
-                        if proc is not None:
-                            try:
-                                proc.kill()
-                                await proc.wait()
-                            except Exception:
-                                pass
-
-                    if tools:
-                        full_text = "".join(accumulated_chunks)
-                        cleaned_text, tool_calls = parse_tool_calls_from_text(full_text)
-                        if tool_calls:
-                            tool_chunk = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {
-                                            "role": "assistant",
-                                            "content": cleaned_text or None,
-                                            "tool_calls": [
-                                                {
-                                                    "index": idx,
-                                                    "id": tc["id"],
-                                                    "type": "function",
-                                                    "function": tc["function"],
-                                                }
-                                                for idx, tc in enumerate(tool_calls)
-                                            ],
-                                        },
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                            self.wfile.write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n")
-                            finish_chunk = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": "tool_calls",
-                                    }
-                                ],
-                            }
-                            self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
-                        else:
-                            text_chunk = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": full_text},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                            self.wfile.write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n")
-                            finish_chunk = {
-                                "id": chunk_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": "stop",
-                                    }
-                                ],
-                            }
-                            self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                        self.wfile.write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n")
+                        finish_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "tool_calls",
+                                }
+                            ],
+                        }
+                        self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
                     else:
-                        finish_data = {
+                        text_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": full_text},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        self.wfile.write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n")
+                        finish_chunk = {
                             "id": chunk_id,
                             "object": "chat.completion.chunk",
                             "created": created_time,
@@ -834,20 +934,30 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
-                finally:
+                        self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                else:
+                    finish_data = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                    self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                if proc is not None and proc.returncode is None:
                     try:
-                        os.close(master_fd)
-                    except OSError:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
                         pass
-                    if proc is not None and proc.returncode is None:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
 
             try:
                 loop.run_until_complete(run_openai_stream())
@@ -860,7 +970,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         asyncio.set_event_loop(loop)
         try:
             exec_res = loop.run_until_complete(
-                execute_agy_print(
+                execute_agy_stream_json(
                     prompt=prompt,
                     model_override=model_override,
                     conversation_id=conversation_id,
@@ -897,8 +1007,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         finish_reason = "tool_calls" if tool_calls else "stop"
         created_time = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-        prompt_tokens = max(1, len(prompt) // 4)
-        completion_tokens = max(1, len(text) // 4)
+        usage_info = exec_res.get("usage") or {}
+        prompt_tokens = usage_info.get("input_tokens") or max(1, len(prompt) // 4)
+        completion_tokens = usage_info.get("output_tokens") or max(1, len(text) // 4)
 
         message_obj = {
             "role": "assistant",
