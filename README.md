@@ -261,7 +261,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | Model | Classifier | Premium backend | Fallback | Context Length |
 |:---|---:|:---|:---|:---|
 | `llm-routing-auto-free` | ✅ | — | LiteLLM with classified tier | 262K |
-| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.5-flash, advanced → gemini-3.5-flash → claude-opus-4.6) | LiteLLM with classified tier | 262K |
+| `llm-routing-auto-agy` | ✅ | agy (gated: reasoning → gemini-3.8-flash, advanced → gemini-3.8-flash → claude-opus-4.6) | LiteLLM with classified tier | 262K |
 | `llm-routing-auto-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex → ollama-deepseek-v4-flash, below → bypass) | LiteLLM with classified tier | 512K |
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |

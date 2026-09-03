@@ -580,5 +580,168 @@ def test_daemon_get_status(daemon_server):
     assert data["status"] == "ok"
     assert "auth" in data
 
+def test_extract_prompt_from_messages():
+    assert host_agy_daemon.extract_prompt_from_messages([]) == ""
+    assert host_agy_daemon.extract_prompt_from_messages(None) == ""
+
+    msgs = [
+        {"role": "system", "content": "You are a helpful bot"},
+        {"role": "user", "content": [{"type": "text", "text": "Hello world"}]},
+        {"role": "assistant", "content": "Hi there!", "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}]},
+        {"role": "tool", "content": "Sunny 25C"},
+        {"role": "user", "content": "Great!"},
+    ]
+    prompt = host_agy_daemon.extract_prompt_from_messages(msgs)
+    assert "System: You are a helpful bot" in prompt
+    assert "User: Hello world" in prompt
+    assert "Assistant: Hi there!" in prompt
+    assert "[Tool Call: get_weather" in prompt
+    assert "Tool Output: Sunny 25C" in prompt
+    assert "User: Great!" in prompt
+
+def test_daemon_get_v1_models(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/v1/models")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["object"] == "list"
+    model_ids = [m["id"] for m in data["data"]]
+    assert "gemini-3.8-flash" in model_ids
+    assert "claude-opus-4.6" in model_ids
+
+def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["prompt"] = prompt
+        captured["model_override"] = model_override
+        captured["conversation_id"] = conversation_id
+        return {
+            "returncode": 0,
+            "stdout": "Hello from Gemini 3.8 Flash",
+            "stderr": "",
+            "conversation_id": "conv_999"
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "stream": False,
+        "conversation_id": "test_conv"
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Session-ID": "sess_123"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["object"] == "chat.completion"
+    assert data["choices"][0]["message"]["content"] == "Hello from Gemini 3.8 Flash"
+    assert captured["model_override"] == "gemini-3.8-flash-low"
+    assert captured["conversation_id"] == "test_conv"
+    assert "User: Hi" in captured["prompt"]
+
+def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["model_override"] = model_override
+        return {"returncode": 0, "stdout": "Opus reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "claude-opus-4.6",
+        "messages": [{"role": "user", "content": "Think deeply"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["message"]["content"] == "Opus reply"
+    assert captured["model_override"] == "claude-opus-4-6-thinking"
+
+def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {"returncode": 1, "stdout": "", "stderr": "Resource exhausted: quota limit reached (429)", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 429
+    err_data = json.loads(exc.value.read().decode())
+    assert err_data["error"]["type"] == "rate_limit_error"
+
+def test_daemon_chat_completions_generic_error(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {"returncode": 2, "stdout": "", "stderr": "Crash or socket error", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 502
+
+def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    read_count = 0
+    def mock_read(fd, n):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 1:
+            return b"Hello world"
+        return b""
+    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Stream me"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 1
+    parsed_chunk = json.loads(sse_data[0].replace("data: ", ""))
+    assert parsed_chunk["object"] == "chat.completion.chunk"
+    assert parsed_chunk["choices"][0]["delta"]["content"] == "Hello world"
+
 
 

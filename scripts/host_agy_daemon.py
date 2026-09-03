@@ -8,6 +8,7 @@ import tempfile
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import uuid
 
 PORT = 5005
 AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
@@ -211,6 +212,46 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
         "conversation_id": result_conv_id
     }
 
+def extract_prompt_from_messages(messages: list) -> str:
+    """Convert an OpenAI messages array into a clean unified prompt string for agy."""
+    if not messages or not isinstance(messages, list):
+        return ""
+    parts = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = (msg.get("role") or "user").strip()
+        raw_content = msg.get("content") or ""
+        if isinstance(raw_content, list):
+            text_blocks = []
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_blocks.append(block.get("text") or "")
+                elif isinstance(block, str):
+                    text_blocks.append(block)
+            content = "\n".join(text_blocks).strip()
+        else:
+            content = str(raw_content).strip()
+
+        if msg.get("tool_calls") and isinstance(msg.get("tool_calls"), list):
+            for tc in msg.get("tool_calls"):
+                if isinstance(tc, dict):
+                    fn = tc.get("function") or {}
+                    content += f"\n[Tool Call: {fn.get('name')}({fn.get('arguments')})]"
+
+        if not content:
+            continue
+
+        if role == "system":
+            parts.append(f"System: {content}")
+        elif role == "assistant":
+            parts.append(f"Assistant: {content}")
+        elif role == "tool":
+            parts.append(f"Tool Output: {content}")
+        else:
+            parts.append(f"User: {content}")
+    return "\n\n".join(parts)
+
 class AgyDaemonHandler(BaseHTTPRequestHandler):
     """HTTP request handler for agy execution requests."""
     def log_message(self, format, *args):
@@ -266,7 +307,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path == "/models":
+        if self.path in ["/models", "/v1/models"]:
             import subprocess
             try:
                 result = subprocess.run([AGY_BINARY, "models"], capture_output=True, text=True, timeout=15)
@@ -274,6 +315,18 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 res = {"status": "ok", "models": models}
             except Exception as e:
                 res = {"status": "error", "error": str(e), "models": []}
+
+            if self.path == "/v1/models":
+                openai_models = [
+                    {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
+                    {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
+                    {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
+                    {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
+                    {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
+                    {"id": "agy-opus", "object": "model", "owned_by": "agy"},
+                ]
+                res = {"object": "list", "data": openai_models}
 
             body = json.dumps(res).encode('utf-8')
             self.send_response(200)
@@ -288,7 +341,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """Handle POST requests to execute agy commands."""
-        if self.path not in ["/run", "/usage"]:
+        if self.path not in ["/run", "/usage", "/v1/chat/completions", "/chat/completions"]:
             self.send_response(404)
             self.end_headers()
             return
@@ -302,6 +355,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"error": f"Invalid JSON payload: {e}"}).encode('utf-8'))
+            return
+
+        if self.path in ["/v1/chat/completions", "/chat/completions"]:
+            self.handle_chat_completions(body)
             return
 
         if self.path == "/usage":
@@ -461,6 +518,225 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(response_bytes)))
         self.end_headers()
         self.wfile.write(response_bytes)
+
+    def handle_chat_completions(self, body: dict):
+        """Handle standard OpenAI /v1/chat/completions requests from LiteLLM or direct clients."""
+        messages = body.get("messages", [])
+        prompt = extract_prompt_from_messages(messages) if messages else body.get("prompt", "")
+        model = body.get("model", "gemini-3.8-flash")
+        stream = body.get("stream", False)
+        timeout = float(body.get("timeout", 120.0))
+        conversation_id = body.get("conversation_id") or self.headers.get("x-session-id")
+
+        # Swap Gemini 3.5 to 3.8 and resolve model overrides:
+        # Default Gemini tier -> gemini-3.8-flash-low
+        # Claude Opus tier -> claude-opus-4-6-thinking
+        model_lower = str(model).lower()
+        if "opus" in model_lower:
+            model_override = "claude-opus-4-6-thinking"
+        elif "gemini-3.8-flash-high" in model_lower:
+            model_override = "gemini-3.8-flash-high"
+        elif "gemini-3.8-flash-medium" in model_lower:
+            model_override = "gemini-3.8-flash-medium"
+        else:
+            model_override = "gemini-3.8-flash-low"
+
+        if stream:
+            self.protocol_version = 'HTTP/1.1'
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def run_openai_stream():
+                import pty
+                env = os.environ.copy()
+                if model_override:
+                    env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
+                else:
+                    env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+
+                cmd = [AGY_BINARY]
+                if conversation_id:
+                    cmd.extend(["--conversation", conversation_id])
+                cmd.extend(["--print", prompt])
+
+                master_fd, slave_fd = pty.openpty()
+                proc = None
+                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+                created_time = int(time.time())
+
+                try:
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd, env=env,
+                            stdout=slave_fd,
+                            stderr=slave_fd,
+                        )
+                        os.close(slave_fd)
+                    except Exception as e:
+                        os.close(slave_fd)
+                        err_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"content": f"Error: {e}"}, "finish_reason": "error"}],
+                        }
+                        self.wfile.write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
+                        self.wfile.write(b"data: [DONE]\n\n")
+                        self.wfile.flush()
+                        return
+
+                    loop_ref = asyncio.get_running_loop()
+
+                    def read_bytes():
+                        try:
+                            return os.read(master_fd, 1024)
+                        except OSError:
+                            return b""
+
+                    while True:
+                        data = await loop_ref.run_in_executor(None, read_bytes)
+                        if not data:
+                            break
+                        text = data.decode('utf-8', errors='replace')
+                        text_norm = text.replace('\r\n', '\n')
+                        chunk_data = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": text_norm},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
+                        self.wfile.flush()
+
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=timeout)
+                    except Exception:
+                        if proc is not None:
+                            try:
+                                proc.kill()
+                                await proc.wait()
+                            except Exception:
+                                pass
+
+                    finish_data = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                    self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                finally:
+                    try:
+                        os.close(master_fd)
+                    except OSError:
+                        pass
+                    if proc is not None and proc.returncode is None:
+                        try:
+                            proc.kill()
+                            await proc.wait()
+                        except Exception:
+                            pass
+
+            try:
+                loop.run_until_complete(run_openai_stream())
+            finally:
+                loop.close()
+            return
+
+        # Non-streaming response
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            exec_res = loop.run_until_complete(
+                execute_agy_print(
+                    prompt=prompt,
+                    model_override=model_override,
+                    conversation_id=conversation_id,
+                    timeout=timeout,
+                )
+            )
+        finally:
+            loop.close()
+
+        retcode = exec_res.get("returncode", 0)
+        if retcode != 0:
+            err_text = exec_res.get("stderr") or exec_res.get("stdout") or "Unknown error"
+            err_lower = err_text.lower()
+            is_quota = any(x in err_lower for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+            status_code = 429 if is_quota else 502
+            err_type = "rate_limit_error" if is_quota else "api_error"
+            err_resp = {
+                "error": {
+                    "message": f"agy execution error: {err_text}",
+                    "type": err_type,
+                    "code": status_code,
+                }
+            }
+            body_bytes = json.dumps(err_resp).encode('utf-8')
+            self.send_response(status_code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body_bytes)))
+            self.end_headers()
+            self.wfile.write(body_bytes)
+            return
+
+        text = exec_res.get("stdout", "")
+        created_time = int(time.time())
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        prompt_tokens = max(1, len(prompt) // 4)
+        completion_tokens = max(1, len(text) // 4)
+
+        resp = {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created_time,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": text,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+        body_bytes = json.dumps(resp).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+        return
 
 def run_server():
     """Start the ThreadingHTTPServer on the configured port."""

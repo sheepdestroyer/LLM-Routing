@@ -61,7 +61,7 @@ if not os.path.exists(AGY_BINARY):
 
 # Ordered fallback tiers
 AGY_FALLBACK_TIERS = [
-    {"model_name": "gemini-3.5-flash",  "env_override": ""},                             # Tier 1: default
+    {"model_name": "gemini-3.8-flash",  "env_override": ""},                             # Tier 1: default
     {"model_name": "claude-opus-4.6",   "env_override": "claude-opus-4-6@default"},      # Tier 2
 ]
 
@@ -138,7 +138,7 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
         "timeout": timeout
     }
     
-    model_tag = model_override if model_override else "default (gemini-3.5-flash)"
+    model_tag = model_override if model_override else "default (gemini-3.8-flash)"
     conv_tag = f" (continuing {conversation_id[:8]}...)" if conversation_id else " (new)"
     logger.info(f"agy proxy forwarding to host: [{model_tag}]{conv_tag} {prompt[:60]}...")
     
@@ -262,14 +262,14 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
     client = request.client
     cooldown_persistence = request.cooldown_persistence
     # Select model chain based on target tier
-    # Reasoning: single tier, gemini-3.5-flash with low thinking
-    # Advanced: full 2-tier chain (gemini-3.5-flash → claude-opus-4.6)
+    # Reasoning: single tier, gemini-3.8-flash with low thinking
+    # Advanced: full 2-tier chain (gemini-3.8-flash → claude-opus-4.6)
     if target_tier == "agent-reasoning-core":
         agy_tiers = [
-            {"model_name": "gemini-3.5-flash", "env_override": ""},  # low thinking default
+            {"model_name": "gemini-3.8-flash", "env_override": ""},  # low thinking default
         ]
     else:
-        agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.5-flash → claude-opus-4.6
+        agy_tiers = AGY_FALLBACK_TIERS  # full chain: gemini-3.8-flash → claude-opus-4.6
 
     should_close_client = False
     if client is None:
@@ -337,7 +337,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 break
 
             # Determine which breaker to use for this tier
-            # Tier 0 (idx 0): gemini-3.5-flash → google_breaker
+            # Tier 0 (idx 0): gemini-3.8-flash → google_breaker
             # Tier 1 (idx 1): claude-opus-4.6  → vendor_breaker
             is_google_tier = "gemini" in tier.get("model_name", "").lower()
             tier_breaker = google_breaker if is_google_tier else vendor_breaker
@@ -361,7 +361,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     "stream": True
                 }
                 
-                model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.5-flash)"
+                model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.8-flash)"
                 logger.info(f"agy proxy connecting stream to daemon: [{model_tag}]...")
                 
                 req = client.build_request("POST", url, json=payload, timeout=tier_timeout + 5.0)
