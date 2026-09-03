@@ -212,45 +212,153 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
         "conversation_id": result_conv_id
     }
 
-def extract_prompt_from_messages(messages: list) -> str:
+TOOL_CALL_RE = re.compile(
+    r"(?:<tool_call>|```(?:tool_call|json:tool_call)\s*)([\s\S]*?)(?:</tool_call>|```)",
+    re.IGNORECASE
+)
+
+def format_tools_instruction(tools: list) -> str:
+    """Format tools list into prompt instructions for agy."""
+    if not tools or not isinstance(tools, list):
+        return ""
+    try:
+        tools_json = json.dumps(tools, indent=2)
+    except Exception:
+        tools_json = str(tools)
+
+    return (
+        "# Available Tools\n"
+        "You have access to the following functions to call:\n"
+        f"<tools>\n{tools_json}\n</tools>\n\n"
+        "# Tool Calling Protocol\n"
+        "If you need to invoke one or more tools to fulfill the user's request, you MUST NOT execute any commands, "
+        "scripts, or actions on the host system yourself.\n"
+        "Instead, you MUST respond ONLY with one or more tool call blocks in this exact format:\n"
+        "<tool_call>\n"
+        '{"name": "<function_name>", "arguments": <json_object_of_arguments>}\n'
+        "</tool_call>\n\n"
+        "If you do not need to call any tool, answer normally with conversational text."
+    )
+
+def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
+    """Parse <tool_call> blocks from text and convert them into OpenAI tool_calls dicts."""
+    if not text:
+        return "", []
+
+    tool_calls = []
+
+    def repl(m):
+        raw = m.group(1).strip()
+        try:
+            parsed = json.loads(raw)
+            items = parsed if isinstance(parsed, list) else [parsed]
+            for item in items:
+                if isinstance(item, dict) and "name" in item:
+                    args = item.get("arguments", {})
+                    args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": str(item["name"]),
+                            "arguments": args_str,
+                        },
+                    })
+            return ""
+        except Exception:
+            return m.group(0)
+
+    cleaned = TOOL_CALL_RE.sub(repl, text).strip()
+
+    # Fallback: if entire response is a JSON object with name & arguments or tool_calls
+    if not tool_calls and text.strip().startswith("{") and text.strip().endswith("}"):
+        try:
+            data = json.loads(text.strip())
+            if isinstance(data, dict):
+                if "name" in data and ("arguments" in data or "parameters" in data):
+                    args = data.get("arguments", data.get("parameters", {}))
+                    args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": str(data["name"]),
+                            "arguments": args_str,
+                        },
+                    })
+                    cleaned = ""
+                elif "tool_calls" in data and isinstance(data["tool_calls"], list):
+                    for tc in data["tool_calls"]:
+                        if isinstance(tc, dict) and "name" in tc:
+                            args = tc.get("arguments", {})
+                            args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
+                            tool_calls.append({
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "function",
+                                "function": {
+                                    "name": str(tc["name"]),
+                                    "arguments": args_str,
+                                },
+                            })
+                    cleaned = ""
+        except Exception:
+            pass
+
+    return cleaned, tool_calls
+
+def extract_prompt_from_messages(messages: list, tools: list = None) -> str:
     """Convert an OpenAI messages array into a clean unified prompt string for agy."""
     if not messages or not isinstance(messages, list):
-        return ""
-    parts = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        role = (msg.get("role") or "user").strip()
-        raw_content = msg.get("content") or ""
-        if isinstance(raw_content, list):
-            text_blocks = []
-            for block in raw_content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_blocks.append(block.get("text") or "")
-                elif isinstance(block, str):
-                    text_blocks.append(block)
-            content = "\n".join(text_blocks).strip()
-        else:
-            content = str(raw_content).strip()
+        prompt = ""
+    else:
+        parts = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = (msg.get("role") or "user").strip()
+            raw_content = msg.get("content") or ""
+            if isinstance(raw_content, list):
+                text_blocks = []
+                for block in raw_content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_blocks.append(block.get("text") or "")
+                    elif isinstance(block, str):
+                        text_blocks.append(block)
+                content = "\n".join(text_blocks).strip()
+            else:
+                content = str(raw_content).strip()
 
-        if msg.get("tool_calls") and isinstance(msg.get("tool_calls"), list):
-            for tc in msg.get("tool_calls"):
-                if isinstance(tc, dict):
-                    fn = tc.get("function") or {}
-                    content += f"\n[Tool Call: {fn.get('name')}({fn.get('arguments')})]"
+            if msg.get("tool_calls") and isinstance(msg.get("tool_calls"), list):
+                for tc in msg.get("tool_calls"):
+                    if isinstance(tc, dict):
+                        fn = tc.get("function") or {}
+                        content += f"\n[Tool Call: {fn.get('name')}({fn.get('arguments')})]"
 
-        if not content:
-            continue
+            if not content:
+                continue
 
-        if role == "system":
-            parts.append(f"System: {content}")
-        elif role == "assistant":
-            parts.append(f"Assistant: {content}")
-        elif role == "tool":
-            parts.append(f"Tool Output: {content}")
-        else:
-            parts.append(f"User: {content}")
-    return "\n\n".join(parts)
+            if role == "system":
+                parts.append(f"System: {content}")
+            elif role == "assistant":
+                parts.append(f"Assistant: {content}")
+            elif role == "tool":
+                prompt_lines = [f"Tool Output: {content}"]
+                if msg.get("tool_call_id"):
+                    prompt_lines.insert(0, f"[Tool Call ID: {msg.get('tool_call_id')}]")
+                parts.append("\n".join(prompt_lines))
+            else:
+                parts.append(f"User: {content}")
+        prompt = "\n\n".join(parts)
+
+    if tools:
+        tool_instr = format_tools_instruction(tools)
+        if tool_instr:
+            if prompt.startswith("System:"):
+                prompt = f"System: {tool_instr}\n\n" + prompt
+            else:
+                prompt = f"System: {tool_instr}\n\n{prompt}" if prompt else tool_instr
+
+    return prompt
 
 class AgyDaemonHandler(BaseHTTPRequestHandler):
     """HTTP request handler for agy execution requests."""
@@ -522,7 +630,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
     def handle_chat_completions(self, body: dict):
         """Handle standard OpenAI /v1/chat/completions requests from LiteLLM or direct clients."""
         messages = body.get("messages", [])
-        prompt = extract_prompt_from_messages(messages) if messages else body.get("prompt", "")
+        tools = body.get("tools")
+        prompt = extract_prompt_from_messages(messages, tools=tools) if messages else body.get("prompt", "")
         model = body.get("model", "gemini-3.8-flash")
         stream = body.get("stream", False)
         timeout = float(body.get("timeout", 120.0))
@@ -600,27 +709,31 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         except OSError:
                             return b""
 
+                    accumulated_chunks = []
                     while True:
                         data = await loop_ref.run_in_executor(None, read_bytes)
                         if not data:
                             break
                         text = data.decode('utf-8', errors='replace')
                         text_norm = text.replace('\r\n', '\n')
-                        chunk_data = {
-                            "id": chunk_id,
-                            "object": "chat.completion.chunk",
-                            "created": created_time,
-                            "model": model,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"content": text_norm},
-                                    "finish_reason": None,
-                                }
-                            ],
-                        }
-                        self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
-                        self.wfile.flush()
+                        if tools:
+                            accumulated_chunks.append(text_norm)
+                        else:
+                            chunk_data = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": text_norm},
+                                        "finish_reason": None,
+                                    }
+                                ],
+                            }
+                            self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
+                            self.wfile.flush()
 
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=timeout)
@@ -632,20 +745,94 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             except Exception:
                                 pass
 
-                    finish_data = {
-                        "id": chunk_id,
-                        "object": "chat.completion.chunk",
-                        "created": created_time,
-                        "model": model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {},
-                                "finish_reason": "stop",
+                    if tools:
+                        full_text = "".join(accumulated_chunks)
+                        cleaned_text, tool_calls = parse_tool_calls_from_text(full_text)
+                        if tool_calls:
+                            tool_chunk = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {
+                                            "role": "assistant",
+                                            "content": cleaned_text or None,
+                                            "tool_calls": [
+                                                {
+                                                    "index": idx,
+                                                    "id": tc["id"],
+                                                    "type": "function",
+                                                    "function": tc["function"],
+                                                }
+                                                for idx, tc in enumerate(tool_calls)
+                                            ],
+                                        },
+                                        "finish_reason": None,
+                                    }
+                                ],
                             }
-                        ],
-                    }
-                    self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
+                            self.wfile.write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n")
+                            finish_chunk = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "tool_calls",
+                                    }
+                                ],
+                            }
+                            self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                        else:
+                            text_chunk = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": full_text},
+                                        "finish_reason": None,
+                                    }
+                                ],
+                            }
+                            self.wfile.write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n")
+                            finish_chunk = {
+                                "id": chunk_id,
+                                "object": "chat.completion.chunk",
+                                "created": created_time,
+                                "model": model,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop",
+                                    }
+                                ],
+                            }
+                            self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                    else:
+                        finish_data = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                        }
+                        self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
                     self.wfile.write(b"data: [DONE]\n\n")
                     self.wfile.flush()
                 finally:
@@ -704,10 +891,19 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             return
 
         text = exec_res.get("stdout", "")
+        cleaned_content, tool_calls = parse_tool_calls_from_text(text)
+        finish_reason = "tool_calls" if tool_calls else "stop"
         created_time = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         prompt_tokens = max(1, len(prompt) // 4)
         completion_tokens = max(1, len(text) // 4)
+
+        message_obj = {
+            "role": "assistant",
+            "content": cleaned_content if cleaned_content else (None if tool_calls else ""),
+        }
+        if tool_calls:
+            message_obj["tool_calls"] = tool_calls
 
         resp = {
             "id": completion_id,
@@ -717,11 +913,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": text,
-                    },
-                    "finish_reason": "stop",
+                    "message": message_obj,
+                    "finish_reason": finish_reason,
                 }
             ],
             "usage": {

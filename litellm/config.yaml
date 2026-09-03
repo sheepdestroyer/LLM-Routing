@@ -102,7 +102,7 @@ model_list:
   model_info:
     supports_vision: false
     supports_reasoning: true
-    supports_function_calling: false
+    supports_function_calling: true
     mode: chat
     max_tokens: 65536
     max_input_tokens: 1048576
@@ -116,7 +116,7 @@ model_list:
   model_info:
     supports_vision: false
     supports_reasoning: true
-    supports_function_calling: false
+    supports_function_calling: true
     mode: chat
     max_tokens: 65536
     max_input_tokens: 1048576
@@ -130,7 +130,7 @@ model_list:
   model_info:
     supports_vision: false
     supports_reasoning: true
-    supports_function_calling: false
+    supports_function_calling: true
     mode: chat
     max_tokens: 65536
     max_input_tokens: 200000

@@ -743,5 +743,152 @@ def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
     assert parsed_chunk["object"] == "chat.completion.chunk"
     assert parsed_chunk["choices"][0]["delta"]["content"] == "Hello world"
 
+def test_format_tools_instruction():
+    assert host_agy_daemon.format_tools_instruction([]) == ""
+    assert host_agy_daemon.format_tools_instruction(None) == ""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "terminal",
+                "description": "Run a command",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+            }
+        }
+    ]
+    instr = host_agy_daemon.format_tools_instruction(tools)
+    assert "# Available Tools" in instr
+    assert "<tools>" in instr
+    assert "terminal" in instr
+    assert "<tool_call>" in instr
+
+def test_parse_tool_calls_from_text():
+    # Empty
+    assert host_agy_daemon.parse_tool_calls_from_text("") == ("", [])
+    assert host_agy_daemon.parse_tool_calls_from_text(None) == ("", [])
+
+    # Standard XML tool call tag
+    text1 = "I will check uptime:\n<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>"
+    cleaned1, calls1 = host_agy_daemon.parse_tool_calls_from_text(text1)
+    assert cleaned1 == "I will check uptime:"
+    assert len(calls1) == 1
+    assert calls1[0]["function"]["name"] == "terminal"
+    assert json.loads(calls1[0]["function"]["arguments"]) == {"command": "uptime"}
+    assert calls1[0]["id"].startswith("call_")
+
+    # Markdown fence tool call
+    text2 = "```tool_call\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"test.txt\"}}\n```"
+    cleaned2, calls2 = host_agy_daemon.parse_tool_calls_from_text(text2)
+    assert cleaned2 == ""
+    assert len(calls2) == 1
+    assert calls2[0]["function"]["name"] == "read_file"
+
+    # Multiple tool calls
+    text3 = "<tool_call>{\"name\": \"tool_a\", \"arguments\": {}}</tool_call>\n<tool_call>{\"name\": \"tool_b\", \"arguments\": {\"x\": 1}}</tool_call>"
+    cleaned3, calls3 = host_agy_daemon.parse_tool_calls_from_text(text3)
+    assert len(calls3) == 2
+    assert calls3[0]["function"]["name"] == "tool_a"
+    assert calls3[1]["function"]["name"] == "tool_b"
+
+    # Fallback raw JSON
+    text4 = '{"name": "terminal", "arguments": {"command": "df -h"}}'
+    cleaned4, calls4 = host_agy_daemon.parse_tool_calls_from_text(text4)
+    assert len(calls4) == 1
+    assert calls4[0]["function"]["name"] == "terminal"
+
+    # Conversational text only
+    text5 = "Hello, I am an AI assistant."
+    cleaned5, calls5 = host_agy_daemon.parse_tool_calls_from_text(text5)
+    assert cleaned5 == "Hello, I am an AI assistant."
+    assert calls5 == []
+
+def test_extract_prompt_with_tools():
+    msgs = [{"role": "user", "content": "What is the date?"}]
+    tools = [{"type": "function", "function": {"name": "get_date", "parameters": {}}}]
+    prompt = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools)
+    assert "System: # Available Tools" in prompt
+    assert "get_date" in prompt
+    assert "User: What is the date?" in prompt
+
+def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {
+            "returncode": 0,
+            "stdout": "<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>",
+            "stderr": "",
+            "conversation_id": "conv_tool_1",
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Check uptime"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "description": "Run shell command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            }
+        ],
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["finish_reason"] == "tool_calls"
+    tool_calls = data["choices"][0]["message"]["tool_calls"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["name"] == "terminal"
+    assert json.loads(tool_calls[0]["function"]["arguments"]) == {"command": "uptime"}
+
+def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    read_count = 0
+    def mock_read(fd, n):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 1:
+            return b"<tool_call>{\"name\": \"terminal\", \"arguments\": {\"command\": \"uname -a\"}}</tool_call>"
+        return b""
+    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "uname"}],
+        "tools": [{"type": "function", "function": {"name": "terminal"}}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 2
+    # First chunk has tool_calls delta
+    assert sse_data[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "terminal"
+    # Second chunk has finish_reason = tool_calls
+    assert sse_data[1]["choices"][0]["finish_reason"] == "tool_calls"
+
 
 
