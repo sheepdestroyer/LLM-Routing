@@ -4,10 +4,12 @@
 import datetime
 import json
 import os
+import re
 import shlex
 import socket
 import sys
 import time
+import traceback
 from datetime import datetime as original_datetime
 
 # Load .env into os.environ
@@ -153,9 +155,85 @@ if serializer is not None:
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
 sys.stdout.flush()
 
+
+def patch_langfuse_media_manager() -> bool:
+    """Patch Langfuse MediaManager to suppress multimodal blob uploads when disabled."""
+    if os.environ.get("LANGFUSE_MEDIA_UPLOAD_ENABLED", "false").lower() in ("false", "0", "no"):
+        try:
+            from langfuse._task_manager.media_manager import MediaManager
+
+            MediaManager.process_media_in_event = lambda self, event: None
+            print("🩹 Disabled Langfuse MediaManager event processing (multimodal blob upload suppressed)")
+            sys.stdout.flush()
+            return True
+        except Exception:
+            return False
+    return False
+
+
+patch_langfuse_media_manager()
+
 # Configure logging: ensure INFO/DEBUG/WARNING route to stdout (priority 6 in journald)
 # and ERROR/CRITICAL route to stderr (priority 3 in journald).
 import logging
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class SingleLineFormatter(logging.Formatter):
+    """Formats log records strictly on a single line with explicit severity tagging.
+
+    Strips ANSI color escape sequences and collapses tracebacks and multiline
+    messages into a single line delimited by ' | '.
+    """
+
+    def __init__(self, fmt: str | None = None, datefmt: str | None = None):
+        if fmt is None:
+            fmt = "%(asctime)s [%(levelname)s] [%(name)s] %(filename)s:%(lineno)s - %(message)s"
+        if datefmt is None:
+            datefmt = "%Y-%m-%d %H:%M:%S"
+        super().__init__(fmt=fmt, datefmt=datefmt)
+
+    def formatException(self, exc_info) -> str:
+        """Format an exception traceback into a single line."""
+        if not exc_info:
+            return ""
+        lines = traceback.format_exception(*exc_info)
+        cleaned = [part.strip() for chunk in lines for part in chunk.splitlines() if part.strip()]
+        return " [Traceback: " + " | ".join(cleaned) + "]"
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Strip ANSI escape sequences from record message if string
+        if isinstance(record.msg, str):
+            record.msg = _ANSI_RE.sub("", record.msg)
+
+        formatted = super().format(record)
+        cleaned = _ANSI_RE.sub("", formatted)
+
+        # Append correlation context if present from LiteLLM CorrelationContextFilter
+        trace_id = getattr(record, "trace_id", None)
+        session_id = getattr(record, "session_id", None)
+        if trace_id or session_id:
+            parts = [f"trace_id={trace_id}" if trace_id else "", f"session_id={session_id}" if session_id else ""]
+            cleaned = f"{cleaned} [{' '.join(p for p in parts if p)}]"
+
+        # Collapse any internal newlines so journald/conmon preserves it as a single line
+        if "\n" in cleaned:
+            cleaned = " | ".join(part.strip() for part in cleaned.splitlines() if part.strip())
+
+        return cleaned
+
+
+def single_line_excepthook(exc_type, exc_value, exc_tb):
+    """Ensure uncaught exceptions are formatted as a single line with [CRITICAL] severity."""
+    lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    cleaned = " | ".join(part.strip() for chunk in lines for part in chunk.splitlines() if part.strip())
+    now = original_datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"{now} [CRITICAL] [UncaughtException] {cleaned}\n")
+    sys.stderr.flush()
+
+
+sys.excepthook = single_line_excepthook
 
 
 class MaxLevelFilter(logging.Filter):
@@ -187,25 +265,24 @@ try:
 
     _ll_level_str = os.environ.get("LITELLM_LOG", "INFO").upper()
     _ll_level = getattr(logging, _ll_level_str, logging.INFO)
-    _ll_fmt = getattr(ll_log.handler, "formatter", None)
+    _single_line_fmt = SingleLineFormatter()
 
     _stdout_h = logging.StreamHandler(sys.stdout)
     _stdout_h.setLevel(_ll_level)
     _stdout_h.addFilter(MaxLevelFilter(logging.WARNING))
     for _f in getattr(ll_log.handler, "filters", []):
         _stdout_h.addFilter(_f)
-    if _ll_fmt:
-        _stdout_h.setFormatter(_ll_fmt)
+    _stdout_h.setFormatter(_single_line_fmt)
 
     _stderr_h = logging.StreamHandler(sys.stderr)
     _stderr_h.setLevel(logging.ERROR)
     for _f in getattr(ll_log.handler, "filters", []):
         _stderr_h.addFilter(_f)
-    if _ll_fmt:
-        _stderr_h.setFormatter(_ll_fmt)
+    _stderr_h.setFormatter(_single_line_fmt)
 
-    # Set underlying stream of default handler to stdout
+    # Set underlying stream of default handler to stdout and apply single line formatter
     ll_log.handler.setStream(sys.stdout)
+    ll_log.handler.setFormatter(_single_line_fmt)
 
     for _lg in [
         getattr(ll_log, "verbose_logger", None),
@@ -214,6 +291,7 @@ try:
         logging.getLogger(),
         logging.getLogger("uvicorn"),
         logging.getLogger("uvicorn.error"),
+        logging.getLogger("uvicorn.access"),
         logging.getLogger("litellm_proxy_extras"),
         logging.getLogger("prisma"),
         logging.getLogger("apscheduler"),

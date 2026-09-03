@@ -98,3 +98,140 @@ def test_max_level_filter():
     assert filter_obj.filter(rec_warn) is True
     assert filter_obj.filter(rec_err) is False
     assert filter_obj.filter(rec_crit) is False
+
+
+def test_patch_langfuse_media_manager_disabled():
+    class FakeMediaManager:
+        called = False
+
+        def process_media_in_event(self, event):
+            FakeMediaManager.called = True
+
+    fake_module = MagicMock()
+    fake_module.MediaManager = FakeMediaManager
+
+    with patch.dict(os.environ, {"LANGFUSE_MEDIA_UPLOAD_ENABLED": "false"}):
+        with patch.dict(sys.modules, {"langfuse._task_manager.media_manager": fake_module}):
+            res = entrypoint.patch_langfuse_media_manager()
+            assert res is True
+            instance = FakeMediaManager()
+            instance.process_media_in_event({"test": 1})
+            assert FakeMediaManager.called is False
+
+
+def test_patch_langfuse_media_manager_enabled():
+    class FakeMediaManager:
+        called = False
+
+        def process_media_in_event(self, event):
+            FakeMediaManager.called = True
+
+    fake_module = MagicMock()
+    fake_module.MediaManager = FakeMediaManager
+
+    with patch.dict(os.environ, {"LANGFUSE_MEDIA_UPLOAD_ENABLED": "true"}):
+        with patch.dict(sys.modules, {"langfuse._task_manager.media_manager": fake_module}):
+            res = entrypoint.patch_langfuse_media_manager()
+            assert res is False
+            instance = FakeMediaManager()
+            instance.process_media_in_event({"test": 1})
+            assert FakeMediaManager.called is True
+
+
+def test_patch_langfuse_media_manager_import_error():
+    with patch.dict(os.environ, {"LANGFUSE_MEDIA_UPLOAD_ENABLED": "false"}):
+        with patch.dict(sys.modules, {"langfuse._task_manager.media_manager": None}):
+            res = entrypoint.patch_langfuse_media_manager()
+            assert res is False
+
+
+def test_single_line_formatter_strips_ansi():
+    formatter = entrypoint.SingleLineFormatter()
+    rec = logging.LogRecord(
+        "LiteLLM Router",
+        logging.ERROR,
+        "router.py",
+        7799,
+        "\x1b[92m23:15:05 - LiteLLM Router:ERROR\x1b[0m: Error creating deployment",
+        (),
+        None,
+    )
+    result = formatter.format(rec)
+    assert "\x1b[" not in result
+    assert "[ERROR]" in result
+    assert "Error creating deployment" in result
+    assert "\n" not in result
+
+
+def test_single_line_formatter_collapses_newlines():
+    formatter = entrypoint.SingleLineFormatter()
+    rec = logging.LogRecord(
+        "test_logger",
+        logging.WARNING,
+        "test.py",
+        10,
+        "Line 1\nLine 2\nLine 3",
+        (),
+        None,
+    )
+    result = formatter.format(rec)
+    assert "\n" not in result
+    assert "Line 1 | Line 2 | Line 3" in result
+    assert "[WARNING]" in result
+
+
+def test_single_line_formatter_exception():
+    formatter = entrypoint.SingleLineFormatter()
+    try:
+        raise ValueError("Something went wrong")
+    except ValueError:
+        exc = sys.exc_info()
+        rec = logging.LogRecord(
+            "LiteLLM Router",
+            logging.ERROR,
+            "router.py",
+            7799,
+            "Deployment failure: %s",
+            ("bad model",),
+            exc,
+        )
+        result = formatter.format(rec)
+        assert "\n" not in result
+        assert "[ERROR]" in result
+        assert "[Traceback:" in result
+        assert "ValueError: Something went wrong" in result
+
+
+def test_single_line_formatter_correlation_context():
+    formatter = entrypoint.SingleLineFormatter()
+    rec = logging.LogRecord(
+        "LiteLLM",
+        logging.INFO,
+        "server.py",
+        20,
+        "Request processed",
+        (),
+        None,
+    )
+    rec.trace_id = "trace-123"
+    rec.session_id = "sess-456"
+    result = formatter.format(rec)
+    assert "[trace_id=trace-123 session_id=sess-456]" in result
+    assert "\n" not in result
+
+
+def test_single_line_excepthook(capsys):
+    try:
+        raise RuntimeError("Fatal crash")
+    except RuntimeError:
+        exc_type, exc_val, exc_tb = sys.exc_info()
+        entrypoint.single_line_excepthook(exc_type, exc_val, exc_tb)
+
+    captured = capsys.readouterr()
+    lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert "[CRITICAL]" in lines[0]
+    assert "[UncaughtException]" in lines[0]
+    assert "RuntimeError: Fatal crash" in lines[0]
+
+
