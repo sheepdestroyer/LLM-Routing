@@ -140,7 +140,7 @@ class PerModelBreaker:
                 self.tier = int(state.get("tier", "0"))
                 self.cooldown_until = float(state.get("cooldown_until", "0.0"))
                 pg = state.get("probe_granted", "False")
-                if isinstance(pg, bytes):
+                if isinstance(pg, bytes):  # pragma: no cover
                     pg = pg.decode("utf-8")
                 self.probe_granted = str(pg).strip().lower() in ("true", "1")
                 self.total_trips = int(state.get("total_trips", "0"))

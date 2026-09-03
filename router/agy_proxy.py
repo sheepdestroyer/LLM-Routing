@@ -37,16 +37,16 @@ class CooldownPersistence(Protocol):
 
     async def sync(self) -> None:
         """Pull latest cooldown state from Valkey."""
-        ...
+        ...  # pragma: no cover
 
     async def save(self) -> None:
         """Push updated cooldown state to Valkey."""
-        ...
+        ...  # pragma: no cover
 
 
 try:
     from router.circuit_breaker import get_google_breaker, get_vendor_breaker
-except ModuleNotFoundError as e:
+except ModuleNotFoundError as e:  # pragma: no cover
     if e.name == "router":
         from circuit_breaker import get_google_breaker, get_vendor_breaker  # type: ignore[no-redef]
     else:
@@ -57,9 +57,9 @@ logger = logging.getLogger("agy-proxy")
 
 # In container: mounted from host ~/.local/bin/agy
 AGY_BINARY = os.environ.get("AGY_BINARY_PATH", "/usr/local/bin/agy")
-if not os.path.exists(AGY_BINARY):
+if not os.path.exists(AGY_BINARY):  # pragma: no cover
     AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
-if not os.path.exists(AGY_BINARY):
+if not os.path.exists(AGY_BINARY):  # pragma: no cover
     AGY_BINARY = "agy"
 
 # Ordered fallback tiers

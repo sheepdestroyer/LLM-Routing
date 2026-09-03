@@ -462,7 +462,7 @@ async def main_loop():
             log(f"Unexpected error: {e}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import asyncio
 
     asyncio.run(main_loop())
