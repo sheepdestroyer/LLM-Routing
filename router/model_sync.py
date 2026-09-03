@@ -241,6 +241,11 @@ class ModelRegistrySync:
 
     def build_locallama_models(self) -> list[dict[str, Any]]:
         """Build model definitions for local host backends (llama-server & whisper-server)."""
+        llama_base = (
+            self.llama_server_url
+            if self.llama_server_url.endswith("/v1")
+            else f"{self.llama_server_url}/v1"
+        )
         whisper_base = (
             self.whisper_server_url
             if self.whisper_server_url.endswith("/v1")
@@ -251,7 +256,7 @@ class ModelRegistrySync:
                 "model_name": "locallama-qwen",
                 "litellm_params": {
                     "model": "openai/locallama-qwen",
-                    "api_base": self.llama_server_url,
+                    "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {
@@ -272,7 +277,7 @@ class ModelRegistrySync:
                 "model_name": "locallama-qwen-hass",
                 "litellm_params": {
                     "model": "openai/locallama-qwen-hass",
-                    "api_base": self.llama_server_url,
+                    "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {
@@ -324,7 +329,7 @@ class ModelRegistrySync:
                 "model_name": "locallama-nomic-embed",
                 "litellm_params": {
                     "model": "openai/locallama-nomic-embed",
-                    "api_base": self.llama_server_url,
+                    "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 30,
                 },
