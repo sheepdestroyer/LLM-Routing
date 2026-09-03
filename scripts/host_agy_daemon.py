@@ -228,7 +228,7 @@ async def execute_agy_stream_json(
     cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
     if conversation_id:
         cmd.extend(["--conversation", conversation_id])
-    cmd.extend(["--print-timeout", f"{int(timeout)}s"])
+    cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
 
     input_msg = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
     proc = None
@@ -261,6 +261,12 @@ async def execute_agy_stream_json(
             "usage": None,
         }
     except Exception as e:
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
         return {
             "returncode": -1,
             "stdout": "",
@@ -777,11 +783,19 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
-                cmd.extend(["--print-timeout", f"{int(timeout)}s"])
+                cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
 
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                 created_time = int(time.time())
                 input_msg = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
+
+                def safe_write(payload: bytes) -> bool:
+                    try:
+                        self.wfile.write(payload)
+                        self.wfile.flush()
+                        return True
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return False
 
                 proc = None
                 try:
@@ -793,29 +807,32 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     )
                 except Exception as e:
                     err_chunk = {
-                        "id": chunk_id,
-                        "object": "chat.completion.chunk",
-                        "created": created_time,
-                        "model": model,
-                        "choices": [{"index": 0, "delta": {"content": f"Error: {e}"}, "finish_reason": "error"}],
+                        "error": {
+                            "message": f"Failed to spawn agy process: {e}",
+                            "type": "api_error",
+                            "code": 502,
+                        }
                     }
-                    self.wfile.write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
-                    self.wfile.write(b"data: [DONE]\n\n")
-                    self.wfile.flush()
+                    safe_write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
                     return
 
                 try:
                     proc.stdin.write(input_msg.encode('utf-8'))
-                    await proc.stdin.drain()
+                    await asyncio.wait_for(proc.stdin.drain(), timeout=min(5.0, timeout))
                     proc.stdin.close()
                     await proc.stdin.wait_closed()
                 except Exception:
                     pass
 
                 accumulated_chunks = []
+                has_streamed_deltas = False
+                stream_error = None
+                deadline = time.time() + timeout
+
                 try:
                     while True:
-                        line = await proc.stdout.readline()
+                        remaining = max(0.1, deadline - time.time())
+                        line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
                         if not line:
                             break
                         line_str = line.decode('utf-8', errors='replace').strip()
@@ -833,6 +850,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 if tools:
                                     accumulated_chunks.append(delta)
                                 else:
+                                    has_streamed_deltas = True
                                     chunk_data = {
                                         "id": chunk_id,
                                         "object": "chat.completion.chunk",
@@ -846,21 +864,47 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                             }
                                         ],
                                     }
-                                    self.wfile.write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n")
-                                    self.wfile.flush()
+                                    if not safe_write(b"data: " + json.dumps(chunk_data).encode('utf-8') + b"\n\n"):
+                                        return
                         elif ev == "result":
                             res = event_obj.get("result", {})
+                            if res.get("status") == "ERROR":
+                                stream_error = res.get("error") or "Unknown agy error"
+                                break
                             if res.get("response") and not accumulated_chunks:
                                 accumulated_chunks.append(res.get("response"))
 
-                    await asyncio.wait_for(proc.wait(), timeout=timeout)
-                except Exception:
-                    if proc is not None:
+                    remaining = max(0.1, deadline - time.time())
+                    await asyncio.wait_for(proc.wait(), timeout=remaining)
+                    if proc.returncode != 0 and not stream_error:
+                        stream_error = f"agy exited with returncode {proc.returncode}"
+                except asyncio.TimeoutError:
+                    stream_error = f"Execution timed out after {timeout} seconds"
+                except Exception as e:
+                    stream_error = str(e)
+                finally:
+                    if proc is not None and proc.returncode is None:
                         try:
                             proc.kill()
                             await proc.wait()
                         except Exception:
                             pass
+
+                # If an error occurred, emit an error payload and exit WITHOUT [DONE]
+                # so LiteLLM and clients detect stream failure and trigger fallback.
+                if stream_error:
+                    is_quota = any(x in stream_error.lower() for x in ["quota", "rate", "429", "exhaust", "resource_exhausted"])
+                    err_status = 429 if is_quota else 502
+                    err_type = "rate_limit_error" if is_quota else "api_error"
+                    err_chunk = {
+                        "error": {
+                            "message": f"agy stream error: {stream_error}",
+                            "type": err_type,
+                            "code": err_status,
+                        }
+                    }
+                    safe_write(b"data: " + json.dumps(err_chunk).encode('utf-8') + b"\n\n")
+                    return
 
                 if tools:
                     full_text = "".join(accumulated_chunks)
@@ -891,7 +935,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n")
+                        if not safe_write(b"data: " + json.dumps(tool_chunk).encode('utf-8') + b"\n\n"):
+                            return
                         finish_chunk = {
                             "id": chunk_id,
                             "object": "chat.completion.chunk",
@@ -905,7 +950,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                            return
                     else:
                         text_chunk = {
                             "id": chunk_id,
@@ -920,7 +966,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n")
+                        if not safe_write(b"data: " + json.dumps(text_chunk).encode('utf-8') + b"\n\n"):
+                            return
                         finish_chunk = {
                             "id": chunk_id,
                             "object": "chat.completion.chunk",
@@ -934,8 +981,26 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                        self.wfile.write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n")
+                        if not safe_write(b"data: " + json.dumps(finish_chunk).encode('utf-8') + b"\n\n"):
+                            return
                 else:
+                    if not has_streamed_deltas and accumulated_chunks:
+                        fallback_text = "".join(accumulated_chunks)
+                        fallback_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": fallback_text},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        if not safe_write(b"data: " + json.dumps(fallback_chunk).encode('utf-8') + b"\n\n"):
+                            return
                     finish_data = {
                         "id": chunk_id,
                         "object": "chat.completion.chunk",
@@ -949,15 +1014,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             }
                         ],
                     }
-                    self.wfile.write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n")
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-                if proc is not None and proc.returncode is None:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except Exception:
-                        pass
+                    if not safe_write(b"data: " + json.dumps(finish_data).encode('utf-8') + b"\n\n"):
+                        return
+                safe_write(b"data: [DONE]\n\n")
 
             try:
                 loop.run_until_complete(run_openai_stream())

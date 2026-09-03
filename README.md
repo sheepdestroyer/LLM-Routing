@@ -761,11 +761,11 @@ python3 tests/test_agy_tiers.py
 
 To support production agentic environments (such as `goose-cli` or similar tools) that require low-latency streaming and high concurrent throughput, the following components were introduced:
 
-#### 1. Real-Time PTY-Based Streaming Bridge for `agy` Response
-To support low-latency streaming for agent clients (such as `goose-cli`), the host-side `host_agy_daemon.py` runs `agy --print` inside a pseudo-terminal (PTY) using `pty.openpty()`.
-* Running `agy` inside a PTY disables internal buffering, forcing it to write generated characters/lines progressively.
-* The host daemon streams these chunks in real-time as `application/x-ndjson` lines to the Triage Router.
-* The Triage Router immediately transforms these incoming chunks into standard OpenAI Server-Sent Event (SSE) packets and yields them to the client. This results in a true, low-latency stream with minimal Time-To-First-Token (TTFT) and eliminates synthetic buffering.
+#### 1. Real-Time NDJSON Streaming Bridge for `agy` Response
+To support low-latency streaming for agent clients (such as `goose-cli`, `hermes`, etc.) while completely bypassing Linux kernel CLI argument length limits (`MAX_ARG_STRLEN` = 128 KB), `host_agy_daemon.py` executes `agy --input-format stream-json --output-format stream-json`.
+* Prompts are streamed directly via standard input (`stdin`) as NDJSON user turn messages (`{"event": "user", "message": {"content": prompt}}`), supporting full million-token context windows.
+* Output events are emitted progressively over `stdout` line by line as NDJSON `step_update` chunks (`text_delta`).
+* The host daemon directly transforms these chunks into OpenAI Server-Sent Events (SSE) `chat.completion.chunk` events and delivers exact token counts (`input_tokens`, `output_tokens`) from the `result` event. Tool calling is emulated cleanly with schema injection and negative execution constraints.
 
 #### 2. Parallel Classification Slots (Lock-Free)
 To maximize throughput under concurrent queries, `llama-server` is configured with parallel processing slots (`--parallel` in `models.ini`, optimal value: To Determine).
