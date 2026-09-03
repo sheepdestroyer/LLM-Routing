@@ -83,3 +83,24 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 disallow_untyped_defs = false
 check_untyped_defs = false
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "*/tests/*",
+    "router/tests/*",
+    "litellm/tests/*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

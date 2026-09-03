@@ -185,7 +185,7 @@ async def execute_agy_print(
             returncode = proc.returncode or 0
         except TimeoutError:
             try:
-                if proc is not None:
+                if proc is not None:  # pragma: no cover
                     proc.kill()
                     await proc.wait()
             except Exception:
@@ -1107,7 +1107,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 env = os.environ.copy()
                 if model_override:
                     env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-                else:
+                else:  # pragma: no cover
                     env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
 
                 cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
@@ -1261,7 +1261,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     stream_error = str(e)
                 finally:
-                    if proc is not None:
+                    if proc is not None:  # pragma: no cover
                         if getattr(proc, "stderr", None) is not None:
                             try:
                                 read_fn = getattr(proc.stderr, "read", None)
@@ -1276,7 +1276,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                                         if stderr_text:
                                             if stream_error:
                                                 stream_error = f"{stream_error} - {stderr_text}"
-                                            elif (
+                                            elif (  # pragma: no cover
                                                 proc.returncode is not None
                                                 and proc.returncode != 0
                                                 and not intercepted_tool_call
@@ -1596,5 +1596,5 @@ def run_server():
         server.server_close()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     run_server()

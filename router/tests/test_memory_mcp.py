@@ -5,9 +5,13 @@ import io
 
 import httpx
 import urllib.parse
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from memory_mcp import (
+import router.memory_mcp as _router_memory_mcp
+
+sys.modules["memory_mcp"] = _router_memory_mcp
+from router.memory_mcp import (
     PREFIX,
     SCOPE_GLOBAL,
     SCOPE_LOCAL,

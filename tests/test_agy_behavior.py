@@ -3,8 +3,14 @@
 
 import asyncio
 import os
+import pytest
 
 AGY = os.path.expanduser("~/.local/bin/agy")
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") == "true" or not os.path.exists(AGY),
+    reason="Skipping in CI or when agy binary is not installed",
+)
 
 
 async def test():
