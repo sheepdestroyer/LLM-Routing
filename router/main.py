@@ -1,51 +1,58 @@
 """Main FastAPI application for the LLM Triage & Fallback Gateway."""
-import os
-import uuid
+
+import asyncio
+import copy
 import hashlib
+import json
+import logging
+import os
 import posixpath
-import aiofiles
 import re
 import sys
-import json
-import orjson
-import time
-import asyncio
-import logging
-import copy
 import tempfile
-import yaml
-import httpx
-import markupsafe
-import redis.asyncio as aioredis
+import time
+import uuid
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
-
-from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from urllib.parse import urlparse
+
+import aiofiles
+import httpx
+import markupsafe
+import orjson
+import redis.asyncio as aioredis
+import yaml
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
 try:
     from router.circuit_breaker import get_breaker
 except ImportError:
-    from circuit_breaker import get_breaker
+    from circuit_breaker import get_breaker  # type: ignore[no-redef]
 try:
     from router.model_sync import ModelRegistrySync
 except ImportError:
-    from model_sync import ModelRegistrySync
-from pydantic import BaseModel, ConfigDict, Field, model_validator, RootModel
-from typing import Any, Dict, Optional, Literal, List, Set
+    from model_sync import ModelRegistrySync  # type: ignore[no-redef]
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 try:
-    from langfuse import propagate_attributes  # noqa: F401
+    from langfuse import propagate_attributes
 except ImportError:
-    propagate_attributes = None
+    propagate_attributes: Any = None  # type: ignore[no-redef]
 
 LITELLM_URL = (os.getenv("LITELLM_ADMIN_URL") or f"http://127.0.0.1:{os.getenv('LITELLM_PORT') or '4000'}").rstrip("/")
-LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip("/")
+LANGFUSE_HOST = (os.getenv("LANGFUSE_HOST") or f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}").rstrip(
+    "/"
+)
 
-GEMINI_OAUTH_TOKEN_PATH = os.getenv("GEMINI_OAUTH_TOKEN_PATH", "/config/gemini_auth/antigravity-cli/antigravity-oauth-token")
+GEMINI_OAUTH_TOKEN_PATH = os.getenv(
+    "GEMINI_OAUTH_TOKEN_PATH", "/config/gemini_auth/antigravity-cli/antigravity-oauth-token"
+)
 
 
 _redis_client = None
@@ -55,12 +62,13 @@ _REDIS_RETRY_INTERVAL_SECONDS = 5.0
 
 def _valkey_port() -> int:
     """Resolve the Valkey cache port from env, preferring VALKEY_CACHE_PORT."""
-    port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT", "6379")
+    port_str = os.getenv("VALKEY_CACHE_PORT") or os.getenv("VALKEY_PORT") or "6379"
     try:
         return int(port_str)
     except ValueError:
         logger.warning(f"Invalid Valkey port '{port_str}', defaulting to 6379")
         return 6379
+
 
 def get_redis():
     """Lazily initialize and return the async Redis/Valkey client.
@@ -89,9 +97,7 @@ def get_redis():
 
 # Connection pool limits configuration for the shared HTTP client
 HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS") or "1000")
-HTTP_MAX_KEEPALIVE_CONNECTIONS = int(
-    os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500"
-)
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS") or "500")
 HTTP_KEEPALIVE_EXPIRY = float(os.getenv("HTTP_KEEPALIVE_EXPIRY") or "5.0")
 
 _http_client = None
@@ -174,9 +180,9 @@ def get_llama_client():
 
 
 # Compiled regular expressions for token estimation heuristics
-WORD_RE = re.compile(r'[a-zA-Z0-9]+')
-NON_ASCII_RE = re.compile(r'[^\s\x00-\x7F]')
-PUNC_RE = re.compile(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]')
+WORD_RE = re.compile(r"[a-zA-Z0-9]+")
+NON_ASCII_RE = re.compile(r"[^\s\x00-\x7F]")
+PUNC_RE = re.compile(r"[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]")
 
 
 def _count_tokens_heuristic(text: Any) -> float:
@@ -221,8 +227,7 @@ METADATA_OVERHEAD = 50
 
 
 def estimate_prompt_tokens(body: dict) -> int:
-    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content.
-    """
+    """Estimate prompt tokens using a regex-based weighted heuristic for mixed content."""
     total = 0.0
     for msg in body.get("messages", []):
         if not isinstance(msg, dict):
@@ -336,12 +341,8 @@ async def sync_stats_from_valkey() -> None:
 
                 # Compute average latencies if total_requests > 0
                 if stats["total_requests"] > 0:
-                    stats["avg_triage_latency_ms"] = (
-                        stats["total_triage_time_ms"] / stats["total_requests"]
-                    )
-                    stats["avg_proxy_latency_ms"] = (
-                        stats["total_proxy_time_ms"] / stats["total_requests"]
-                    )
+                    stats["avg_triage_latency_ms"] = stats["total_triage_time_ms"] / stats["total_requests"]
+                    stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
 
                 # Update last decision if val provides one other than "None"
                 if val.get("last_triage_decision") and val["last_triage_decision"] != "None":
@@ -476,9 +477,7 @@ def get_langfuse():
             )
             logger.info("Langfuse client initialized")
         except (ImportError, ValueError, TypeError) as e:
-            logger.warning(
-                f"Langfuse client initialization failed: {e} — traces disabled"
-            )
+            logger.warning(f"Langfuse client initialization failed: {e} — traces disabled")
             _langfuse_client = False  # sentinel to avoid retry
     return _langfuse_client if _langfuse_client is not False else None
 
@@ -549,7 +548,7 @@ def _make_prop_ctx(session_id, user_id):
     DRY-consolidates the 4 duplicate condition+builder blocks across streaming
     generators and the non-streaming init path.
     """
-    if not propagate_attributes or not (session_id or user_id):
+    if propagate_attributes is None or not (session_id or user_id):
         return None
     return propagate_attributes(
         session_id=session_id or None,
@@ -564,11 +563,7 @@ def extract_or_synthesize_session_id(body: dict, request: Request) -> str:
     Ensures every trace and LiteLLM completion groups into a session in Langfuse
     even when clients omit custom session headers.
     """
-    explicit = (
-        body.get("session_id")
-        or body.get("session")
-        or request.headers.get("x-session-id")
-    )
+    explicit = body.get("session_id") or body.get("session") or request.headers.get("x-session-id")
     if explicit:
         return str(explicit).strip()
 
@@ -586,9 +581,7 @@ def extract_or_synthesize_session_id(body: dict, request: Request) -> str:
                 content = msg.get("content") or ""
                 if isinstance(content, list):
                     content = "".join(
-                        b.get("text", "")
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
+                        b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
                     )
                 root_parts.append(f"{role}:{str(content)[:160]}")
                 if role == "user":
@@ -657,9 +650,7 @@ async def push_aggregate_scores():
                 },
                 {
                     "name": "google_oauth_direct_ratio_pct",
-                    "value": stats["routing_paths"]["google_oauth_direct"]
-                    / total
-                    * 100,
+                    "value": stats["routing_paths"]["google_oauth_direct"] / total * 100,
                 },
             ]
             trace_id = lf.create_trace_id(seed=f"aggregate_scores_{int(time.time())}")
@@ -671,9 +662,7 @@ async def push_aggregate_scores():
             for s in scores:
                 lf.create_score(name=s["name"], value=s["value"], trace_id=trace_id)
             lf.flush()
-            logger.info(
-                f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})"
-            )
+            logger.info(f"Pushed {len(scores)} aggregate scores to Langfuse (trace_id={trace_id})")
         except Exception as e:
             logger.warning(f"Langfuse score push failed (non-fatal): {e}")
 
@@ -681,7 +670,7 @@ async def push_aggregate_scores():
 # Load configuration
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/config/config.yaml")
 try:
-    with open(CONFIG_PATH, "r") as f:
+    with open(CONFIG_PATH) as f:
         config = yaml.safe_load(f)
 except Exception as e:
     logger.error(f"Failed to load config from {CONFIG_PATH}: {e}")
@@ -786,15 +775,15 @@ backends = {b["name"]: b for b in config.get("backends", [])}
 
 # Default colors for tool visualization badges and charts
 TOOL_COLORS = {
-    "tree": "#34d399",   # Green
+    "tree": "#34d399",  # Green
     "shell": "#fbbf24",  # Amber/Orange
     "write": "#a78bfa",  # Violet
-    "view": "#60a5fa",   # Blue
+    "view": "#60a5fa",  # Blue
     "other": "#f472b6",  # Pink
 }
 
 # Triage and Performance Metric Trackers
-stats = {
+stats: dict[str, Any] = {
     "total_requests": 0,
     "simple_requests": 0,
     "medium_requests": 0,
@@ -824,9 +813,7 @@ stats = {
 # ---------------------------------------------------------------------------
 _ollama_cooldown_until: float = 0.0  # monotonic timestamp when cooldown expires
 try:
-    OLLAMA_COOLDOWN_SECONDS: int = int(
-        os.getenv("OLLAMA_COOLDOWN_SECONDS", "300")
-    )  # 5 min default
+    OLLAMA_COOLDOWN_SECONDS: int = int(os.getenv("OLLAMA_COOLDOWN_SECONDS", "300"))  # 5 min default
     if OLLAMA_COOLDOWN_SECONDS <= 0:
         raise ValueError("OLLAMA_COOLDOWN_SECONDS must be positive")
 except (TypeError, ValueError) as e:
@@ -845,7 +832,7 @@ def load_persisted_stats():
     global stats
     if os.path.exists(STATS_JSON_PATH):
         try:
-            with open(STATS_JSON_PATH, "r") as f:
+            with open(STATS_JSON_PATH) as f:
                 loaded = orjson.loads(f.read())
                 # Merge loaded stats with default stats dictionary
                 for k, v in loaded.items():
@@ -855,12 +842,10 @@ def load_persisted_stats():
                         stats[k] = v
             logger.info("✓ Successfully loaded persisted gateway statistics from disk.")
             # Load timeline from disk (may be stale after pod restart, but better than empty)
-            timeline_path = os.path.join(
-                os.path.dirname(CONFIG_PATH), "router_timeline.json"
-            )
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
             if os.path.exists(timeline_path):
                 try:
-                    with open(timeline_path, "r") as f:
+                    with open(timeline_path) as f:
                         stats["timeline"] = orjson.loads(f.read())
                 except Exception:
                     pass  # stale/broken timeline file → start fresh
@@ -903,13 +888,17 @@ async def _atomic_write_json_async(path: str, data) -> None:
     """
     loop = asyncio.get_running_loop()
     if isinstance(data, dict):
-        snapshot = {k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v for k, v in data.items()}
+        snapshot: Any = {
+            k: list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v for k, v in data.items()
+        }
     elif isinstance(data, list):
         snapshot = list(data)
     else:
         snapshot = data
 
     await loop.run_in_executor(None, _atomic_write_json_sync, path, snapshot)
+
+
 _last_stats_save = 0.0
 
 
@@ -942,7 +931,7 @@ async def save_persisted_stats(force=False):
 load_persisted_stats()
 
 # Triage Decision Cache (In-Memory dictionary mapping normalized prompt -> (classification, timestamp))
-triage_cache = {}
+triage_cache: dict[str, Any] = {}
 CACHE_TTL_SECONDS = 86400  # Decisions cached for 24 hours
 MAX_TRIAGE_CACHE_SIZE = 10000
 classification_lock = asyncio.Lock()
@@ -1012,9 +1001,7 @@ async def _purge_stale_deployments(db_url: str, pattern: str):
 
     conn = await asyncpg.connect(db_url)
     try:
-        await conn.execute(
-            'DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', pattern
-        )
+        await conn.execute('DELETE FROM "LiteLLM_ProxyModelTable" WHERE model_name LIKE $1', pattern)
     finally:
         await conn.close()
 
@@ -1047,7 +1034,7 @@ async def sync_adaptive_router_roster(master_key: str):
     model_contexts = {m["id"]: m["context_length"] for m in tool_capable_models}
     model_supported_params = {m["id"]: m["supported_parameters"] for m in tool_capable_models}
 
-    tier_assignments = {
+    tier_assignments: dict[str, Any] = {
         "agent-simple-core": [],
         "agent-medium-core": [],
         "agent-complex-core": [],
@@ -1064,7 +1051,7 @@ async def sync_adaptive_router_roster(master_key: str):
         """Helper to scale raw model index score against max score in roster to 0-100 range."""
         return (s / max_score) * 100.0
 
-    for (score, mid) in free_models:
+    for score, mid in free_models:
         n = norm(score)
         if n >= 80:
             tier_assignments["agent-advanced-core"].append(mid)
@@ -1148,18 +1135,14 @@ async def sync_adaptive_router_roster(master_key: str):
 async def _register_openrouter_models_in_db(master_key: str):
     """Register static OpenRouter models from config via /model/new so they become DB models."""
     if not master_key:
-        logger.warning(
-            "No LiteLLM master key provided — skipping OpenRouter DB registration"
-        )
+        logger.warning("No LiteLLM master key provided — skipping OpenRouter DB registration")
         return
 
     admin_url = LITELLM_URL
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     openrouter_models = []
-    litellm_config_path = os.getenv(
-        "LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml"
-    )
+    litellm_config_path = os.getenv("LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml")
 
     config_paths_to_try = [
         litellm_config_path,
@@ -1170,7 +1153,7 @@ async def _register_openrouter_models_in_db(master_key: str):
     def _load_yaml(p):
         if not os.path.exists(p):
             return None
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     loaded_from_config = False
@@ -1183,17 +1166,9 @@ async def _register_openrouter_models_in_db(master_key: str):
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
                             litellm_params = item.get("litellm_params", {})
-                            model_target = (
-                                litellm_params.get("model", "")
-                                if isinstance(litellm_params, dict)
-                                else ""
-                            )
-                            if (
-                                isinstance(model_name, str)
-                                and model_name.startswith("openrouter-")
-                            ) or (
-                                isinstance(model_target, str)
-                                and model_target.startswith("openrouter/")
+                            model_target = litellm_params.get("model", "") if isinstance(litellm_params, dict) else ""
+                            if (isinstance(model_name, str) and model_name.startswith("openrouter-")) or (
+                                isinstance(model_target, str) and model_target.startswith("openrouter/")
                             ):
                                 openrouter_models.append(copy.deepcopy(item))
                     if openrouter_models:
@@ -1203,14 +1178,10 @@ async def _register_openrouter_models_in_db(master_key: str):
                         loaded_from_config = True
                         break
             except Exception as e:
-                logger.warning(
-                    f"Failed to load/parse LiteLLM config for OpenRouter at {path}: {e}"
-                )
+                logger.warning(f"Failed to load/parse LiteLLM config for OpenRouter at {path}: {e}")
 
     if not loaded_from_config:
-        logger.warning(
-            "Could not load OpenRouter models from config.yaml, falling back to static definitions"
-        )
+        logger.warning("Could not load OpenRouter models from config.yaml, falling back to static definitions")
         openrouter_models = [
             {
                 "model_name": "openrouter-auto",
@@ -1295,22 +1266,16 @@ async def _register_openrouter_models_in_db(master_key: str):
     failed = 0
     for payload in openrouter_models:
         try:
-            r = await client.post(
-                f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
-            )
+            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
             if r.status_code in (200, 201):
                 registered += 1
             else:
                 failed += 1
-                logger.warning(
-                    f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}"
-                )
+                logger.warning(f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}")
         except Exception as e:
             failed += 1
             logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
-    logger.info(
-        f"📊 OpenRouter DB registration: {registered} registered, {failed} failed"
-    )
+    logger.info(f"📊 OpenRouter DB registration: {registered} registered, {failed} failed")
 
 
 async def _register_ollama_models_in_db(master_key: str):
@@ -1322,18 +1287,14 @@ async def _register_ollama_models_in_db(master_key: str):
     as null/false.  Registering them as DB models ensures our model_info wins.
     """
     if not master_key:
-        logger.warning(
-            "No LiteLLM master key provided — skipping Ollama DB registration"
-        )
+        logger.warning("No LiteLLM master key provided — skipping Ollama DB registration")
         return
 
     admin_url = LITELLM_URL
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
 
     ollama_models = []
-    litellm_config_path = os.getenv(
-        "LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml"
-    )
+    litellm_config_path = os.getenv("LITELLM_CONFIG_PATH", "/config/litellm_dir/config.yaml")
 
     config_paths_to_try = [
         litellm_config_path,
@@ -1345,7 +1306,7 @@ async def _register_ollama_models_in_db(master_key: str):
         """Helper to load a YAML file safely."""
         if not os.path.exists(p):
             return None
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     loaded_from_config = False
@@ -1358,42 +1319,25 @@ async def _register_ollama_models_in_db(master_key: str):
                         if isinstance(item, dict):
                             model_name = item.get("model_name", "")
                             litellm_params = item.get("litellm_params", {})
-                            model_target = (
-                                litellm_params.get("model", "")
-                                if isinstance(litellm_params, dict)
-                                else ""
-                            )
+                            model_target = litellm_params.get("model", "") if isinstance(litellm_params, dict) else ""
                             if (
-                                (
-                                    isinstance(model_name, str)
-                                    and (
-                                        model_name.startswith("ollama-")
-                                        or model_name.startswith("ollama/")
-                                    )
-                                )
-                                or (
-                                    isinstance(model_target, str)
-                                    and (
-                                        model_target.startswith("ollama_chat/")
-                                        or model_target.startswith("ollama/")
-                                    )
-                                )
+                                isinstance(model_name, str)
+                                and (model_name.startswith("ollama-") or model_name.startswith("ollama/"))
+                            ) or (
+                                isinstance(model_target, str)
+                                and (model_target.startswith("ollama_chat/") or model_target.startswith("ollama/"))
                             ):
                                 # Create a clean deep copy to avoid mutating configuration structures
                                 ollama_models.append(copy.deepcopy(item))
                     if ollama_models:
-                        logger.info(
-                            f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}"
-                        )
+                        logger.info(f"Loaded {len(ollama_models)} Ollama model configurations dynamically from {path}")
                         loaded_from_config = True
                         break
             except Exception as e:
                 logger.warning(f"Failed to load/parse LiteLLM config at {path}: {e}")
 
     if not loaded_from_config:
-        logger.warning(
-            "Could not load Ollama models from config.yaml, falling back to static definitions"
-        )
+        logger.warning("Could not load Ollama models from config.yaml, falling back to static definitions")
         ollama_models = [
             {
                 "model_name": "ollama-deepseek-v4-pro",
@@ -1526,16 +1470,12 @@ async def _register_ollama_models_in_db(master_key: str):
     failed = 0
     for payload in ollama_models:
         try:
-            r = await client.post(
-                f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0
-            )
+            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
             if r.status_code in (200, 201):
                 registered += 1
             else:
                 failed += 1
-                logger.warning(
-                    f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}"
-                )
+                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
         except Exception as e:
             failed += 1
             logger.warning(f"Failed to register {payload['model_name']}: {e}")
@@ -1609,9 +1549,7 @@ LANGFUSE_MANAGED_MODELS = [
 ]
 
 
-async def _register_langfuse_models_in_db(
-    max_retries: int = 5, retry_delay: float = 2.0
-) -> bool:
+async def _register_langfuse_models_in_db(max_retries: int = 5, retry_delay: float = 2.0) -> bool:
     """Ensure standard local and routing models are registered in Langfuse's Postgres database.
 
     This provides model metadata, token unit definitions, and pricing match patterns so
@@ -1650,9 +1588,7 @@ async def _register_langfuse_models_in_db(
             try:
                 for m in LANGFUSE_MANAGED_MODELS:
                     await conn.execute(query, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
-                logger.info(
-                    f"📊 Langfuse DB models verified: {len(LANGFUSE_MANAGED_MODELS)} models registered/updated"
-                )
+                logger.info(f"📊 Langfuse DB models verified: {len(LANGFUSE_MANAGED_MODELS)} models registered/updated")
                 return True
             finally:
                 await conn.close()
@@ -1663,9 +1599,7 @@ async def _register_langfuse_models_in_db(
                 )
                 await asyncio.sleep(retry_delay)
             else:
-                logger.warning(
-                    f"Langfuse model registration skipped after {max_retries} attempts (non-fatal): {e}"
-                )
+                logger.warning(f"Langfuse model registration skipped after {max_retries} attempts (non-fatal): {e}")
     return False
 
 
@@ -1728,9 +1662,7 @@ async def lifespan(app: FastAPI):
             if i < max_wait - 1:
                 await asyncio.sleep(1)
         else:
-            logger.warning(
-                "⚠️  LiteLLM not ready within timeout — proceeding without roster sync"
-            )
+            logger.warning("⚠️  LiteLLM not ready within timeout — proceeding without roster sync")
 
     # Sync model registry into LiteLLM only when ready (non-fatal if it fails)
     if is_ready and litellm_master_key:
@@ -1826,9 +1758,7 @@ async def lifespan(app: FastAPI):
         # Flush any buffered stats/timeline on clean shutdown (always runs)
         await save_persisted_stats(force=True)
         try:
-            timeline_path = os.path.join(
-                os.path.dirname(CONFIG_PATH), "router_timeline.json"
-            )
+            timeline_path = os.path.join(os.path.dirname(CONFIG_PATH), "router_timeline.json")
             await _atomic_write_json_async(timeline_path, stats["timeline"])
         except Exception as e:
             logger.warning(f"Failed to persist timeline on shutdown: {e}")
@@ -1930,9 +1860,7 @@ async def classify_request(
             }
             headers = {"Authorization": f"Bearer {router_api_key}"}
 
-            logger.info(
-                f"Classifying intent via {router_api_base} using model {router_model_name}..."
-            )
+            logger.info(f"Classifying intent via {router_api_base} using model {router_model_name}...")
 
             # --- Langfuse child span: classifier call ---
             class_span_obj = None
@@ -1960,16 +1888,15 @@ async def classify_request(
             latency = (time.time() - start_time) * 1000.0
 
             if response.status_code != 200:
-                _end_child_span(class_span_obj, 
+                _end_child_span(
+                    class_span_obj,
                     output={
                         "status": response.status_code,
                         "error": "classification_failed",
                     },
                     metadata={"latency_ms": latency},
                 )
-                logger.error(
-                    f"Classification failed with status {response.status_code}: {response.text}"
-                )
+                logger.error(f"Classification failed with status {response.status_code}: {response.text}")
                 return "agent-advanced-core", latency, False, "advanced (fallback)"
 
             result = response.json()
@@ -1993,7 +1920,8 @@ async def classify_request(
                 decision = "agent-advanced-core"
 
             # Finalize classifier child span
-            _end_child_span(class_span_obj, 
+            _end_child_span(
+                class_span_obj,
                 output={"tier": decision, "raw": raw_result},
                 metadata={"latency_ms": latency},
             )
@@ -2019,8 +1947,7 @@ async def _read_json_file_async(file_path: str) -> dict:
         return orjson.loads(content)
 
 
-
-def _parse_oauth_token_info(data: dict) -> tuple[Optional[str], int]:
+def _parse_oauth_token_info(data: dict) -> tuple[str | None, int]:
     """Helper to extract access token and expiry epoch ms from varied token schemas."""
     if not isinstance(data, dict):
         return None, 0
@@ -2043,6 +1970,7 @@ def _parse_oauth_token_info(data: dict) -> tuple[Optional[str], int]:
             normalized = normalized[:-1] + "+00:00"
         try:
             from datetime import datetime as dt_cls
+
             expiry_dt = dt_cls.fromisoformat(normalized)
             expiry_ms = int(expiry_dt.timestamp() * 1000)
         except Exception:
@@ -2118,31 +2046,13 @@ def map_tool_to_category(tool_name: str) -> str:
 
     if "tree" in name or "list_dir" in name or "list-dir" in name:
         return "tree"
-    elif (
-        "shell" in name
-        or "command" in name
-        or "cmd" in name
-        or "execute" in name
-        or "run" in name
-    ):
+    elif "shell" in name or "command" in name or "cmd" in name or "execute" in name or "run" in name:
         return "shell"
     elif (
-        "write" in name
-        or "edit" in name
-        or "create" in name
-        or "patch" in name
-        or "replace" in name
-        or "save" in name
+        "write" in name or "edit" in name or "create" in name or "patch" in name or "replace" in name or "save" in name
     ):
         return "write"
-    elif (
-        "view" in name
-        or "read" in name
-        or "cat" in name
-        or "grep" in name
-        or "search" in name
-        or "find" in name
-    ):
+    elif "view" in name or "read" in name or "cat" in name or "grep" in name or "search" in name or "find" in name:
         return "view"
     return "other"
 
@@ -2169,14 +2079,8 @@ def detect_active_tool(body: dict) -> str:
                             tcalls = prev_msg.get("tool_calls") or []
                             if isinstance(tcalls, list):
                                 for tc in tcalls:
-
-
-                                    if (
-                                        isinstance(tc, dict)
-                                        and tc.get("id") == tool_call_id
-                                    ):
+                                    if isinstance(tc, dict) and tc.get("id") == tool_call_id:
                                         fn = tc.get("function")
-
 
                                         if isinstance(fn, dict):
                                             name = fn.get("name")
@@ -2192,9 +2096,7 @@ def detect_active_tool(body: dict) -> str:
                 for tc in tool_calls:
                     if isinstance(tc, dict):
                         fn = tc.get("function")
-                        name = (
-                            fn.get("name") if isinstance(fn, dict) else None
-                        ) or "other"
+                        name = (fn.get("name") if isinstance(fn, dict) else None) or "other"
                         return map_tool_to_category(name)
 
     # Fallback to keyphrase scanning in the user message
@@ -2217,6 +2119,7 @@ def detect_active_tool(body: dict) -> str:
 @dataclass
 class ToolUsageRecord:
     """Data class representing a single tool usage record for metrics tracking."""
+
     tool_name: str
     prompt_tokens: int
     completion_tokens: int
@@ -2289,7 +2192,7 @@ def record_tool_usage(usage: ToolUsageRecord):
                 timeline_path,
                 copy.deepcopy(list(stats["timeline"])),
             )
-            record_tool_usage._last_save = now
+            record_tool_usage._last_save = now  # type: ignore[attr-defined]
 
             def done_callback(f):
                 """Log any uncaught exceptions returned from the background timeline executor thread."""
@@ -2303,14 +2206,15 @@ def record_tool_usage(usage: ToolUsageRecord):
             # No running event loop — fall back to sync write
             try:
                 _atomic_write_json_sync(timeline_path, stats["timeline"])
-                record_tool_usage._last_save = now
+                record_tool_usage._last_save = now  # type: ignore[attr-defined]
             except Exception as e:
                 logger.warning(f"Failed to persist timeline: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist timeline: {e}")
 
 
-_goose_sessions_cache = {"mtime": 0.0, "data": []}
+_goose_sessions_cache: dict[str, Any] = {"mtime": 0.0, "data": []}
+
 
 def get_goose_sessions() -> list:
     """Queries the live mounted SQLite goose database to fetch the latest agentic sessions."""
@@ -2361,7 +2265,7 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
     ):
         return llamacpp_metrics_cache["data"]
 
-    result = {"models": [], "slots": [], "build": "unknown"}
+    result: dict[str, Any] = {"models": [], "slots": [], "build": "unknown"}
     try:
         client = get_llama_client()
         # Fetch model list
@@ -2388,15 +2292,9 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
             result["build"] = props.get("build_info", "unknown")
         # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
         loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
-        slot_model = (
-            loaded[0]
-            if loaded
-            else (result["models"][0]["id"] if result["models"] else None)
-        )
+        slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
         if slot_model:
-            r3 = await client.get(
-                f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0
-            )
+            r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0)
             if r3.status_code == 200:
                 slots_data = r3.json()
                 for s in slots_data:
@@ -2408,15 +2306,17 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
                         first_tok = next_tok[0]
                         if isinstance(first_tok, dict):
                             decoded = first_tok.get("n_decoded", 0)
-                    result["slots"].append({
-                        "id": s.get("id", 0),
-                        "is_processing": s.get("is_processing", False),
-                        "n_ctx": s.get("n_ctx", 0),
-                        "n_prompt_tokens": s.get("n_prompt_tokens", 0),
-                        "n_prompt_processed": s.get("n_prompt_tokens_processed", 0),
-                        "n_decoded": decoded,
-                        "speculative": s.get("speculative", False),
-                    })
+                    result["slots"].append(
+                        {
+                            "id": s.get("id", 0),
+                            "is_processing": s.get("is_processing", False),
+                            "n_ctx": s.get("n_ctx", 0),
+                            "n_prompt_tokens": s.get("n_prompt_tokens", 0),
+                            "n_prompt_processed": s.get("n_prompt_tokens_processed", 0),
+                            "n_decoded": decoded,
+                            "speculative": s.get("speculative", False),
+                        }
+                    )
         llamacpp_metrics_cache["data"] = result
         llamacpp_metrics_cache["last_fetched"] = now
     except Exception as e:
@@ -2427,10 +2327,10 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
 
 
 # In-Memory Cache for OpenRouter Free Model list to prevent slow page renders
-free_model_cache = {"data": None, "last_fetched": 0.0}
+free_model_cache: dict[str, Any] = {"data": None, "last_fetched": 0.0}
 FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
 
-_registered_free_models: Dict[str, Set[str]] = {}
+_registered_free_models: dict[str, set[str]] = {}
 _last_roster_sync: float = 0.0
 
 # --- Artificial Analysis Agentic Index scores cache ---
@@ -2444,15 +2344,12 @@ def _load_aa_scores():
     if _AA_SCORES_LOADED:
         return
     try:
-
         scores_path = os.path.join(os.path.dirname(__file__), "aa_scores.json")
         with open(scores_path) as f:
             data = orjson.loads(f.read())
             _AA_SCORES_CACHE = data.get("scores", {})
             _AA_SCORES_LOADED = True
-            logger.info(
-                f"📊 Loaded {len(_AA_SCORES_CACHE)} AA agentic index scores from {scores_path}"
-            )
+            logger.info(f"📊 Loaded {len(_AA_SCORES_CACHE)} AA agentic index scores from {scores_path}")
     except Exception as e:
         logger.warning(f"Could not load AA scores cache: {e}")
         _AA_SCORES_LOADED = True  # don't retry
@@ -2464,7 +2361,7 @@ def compute_free_model_score(m: dict) -> float:
     return _AA_SCORES_CACHE.get(mid, 25.0)
 
 
-async def _fetch_openrouter_free_models() -> List[dict]:
+async def _fetch_openrouter_free_models() -> list[dict]:
     """Internal helper to fetch and score free models from OpenRouter."""
     if not _AA_SCORES_LOADED:
         await asyncio.to_thread(_load_aa_scores)
@@ -2501,14 +2398,16 @@ async def _fetch_openrouter_free_models() -> List[dict]:
                 except Exception as score_err:
                     logger.warning(f"Failed to compute score for model {mid}: {score_err}")
                     score = 25.0
-                free_models.append({
-                    "id": mid,
-                    "name": m.get("name", mid),
-                    "score": score,
-                    "context_length": m.get("context_length") or 0,
-                    "has_tools": has_tools,
-                    "supported_parameters": supported_params
-                })
+                free_models.append(
+                    {
+                        "id": mid,
+                        "name": m.get("name", mid),
+                        "score": score,
+                        "context_length": m.get("context_length") or 0,
+                        "has_tools": has_tools,
+                        "supported_parameters": supported_params,
+                    }
+                )
         free_models.sort(key=lambda x: x["score"], reverse=True)
         if not free_models:
             logger.warning("No free models found — skipping roster sync")
@@ -2535,10 +2434,11 @@ def _atomic_save_json(path: str, data: dict) -> None:
 def _save_free_models_roster(free_models: list[dict]) -> None:
     """Persist the full sorted free model list so Ralph can try alternatives."""
     import datetime as _dt
+
     payload = {
         "models": free_models,
-        "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "count": len(free_models)
+        "updated_at": _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z"),
+        "count": len(free_models),
     }
     try:
         path = os.path.join(_get_router_output_dir(), "free_models_roster.json")
@@ -2550,7 +2450,8 @@ def _save_free_models_roster(free_models: list[dict]) -> None:
 def _save_best_model_to_disk(best_model: dict) -> None:
     """Persist the best free model to a JSON file Ralph can read."""
     import datetime as _dt
-    payload = {**best_model, "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")}
+
+    payload = {**best_model, "updated_at": _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")}
     try:
         path = os.path.join(_get_router_output_dir(), "best_free_model.json")
         _atomic_save_json(path, payload)
@@ -2585,7 +2486,7 @@ async def get_best_free_model() -> dict:
                     "name": m["name"],
                     "score": m["score"],
                     "context_length": m["context_length"],
-                    "has_tools": m["has_tools"]
+                    "has_tools": m["has_tools"],
                 }
                 for m in free_models_data
             ]
@@ -2597,7 +2498,7 @@ async def get_best_free_model() -> dict:
                 "name": top["name"],
                 "score": top["score"],
                 "context_length": top["context_length"],
-                "is_fallback": False
+                "is_fallback": False,
             }
             free_model_cache["data"] = best_model
             free_model_cache["last_fetched"] = now
@@ -2606,7 +2507,7 @@ async def get_best_free_model() -> dict:
             return best_model
     except Exception as e:
         logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
-    
+
     await asyncio.to_thread(_save_best_model_to_disk, fallback_best)
     return fallback_best
 
@@ -2619,7 +2520,7 @@ def get_pie_chart_gradient() -> str:
 
     current_angle = 0.0
     gradient_parts = []
-    
+
     for tool, tokens in stats["tool_tokens"].items():
         if tokens > 0:
             pct = (tokens / total_tokens) * 100.0
@@ -2667,9 +2568,7 @@ async def proxy_memory(request: Request, path: str = ""):
 
     parsed_url = urlparse(url)
     if parsed_url.netloc != expected_netloc:
-        logger.warning(
-            f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}"
-        )
+        logger.warning(f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}")
         raise HTTPException(status_code=400, detail="Invalid path")
 
     # Prepare query parameters
@@ -2685,9 +2584,7 @@ async def proxy_memory(request: Request, path: str = ""):
         "Content-Type": request.headers.get("content-type", "application/json"),
     }
 
-    logger.info(
-        f"Proxying memory request: {request.method} {url} with params {query_params}"
-    )
+    logger.info(f"Proxying memory request: {request.method} {url} with params {query_params}")
 
     try:
         client = get_http_client()
@@ -2711,12 +2608,10 @@ async def proxy_memory(request: Request, path: str = ""):
         ]:
             response_headers.pop(h, None)
 
-        return Response(
-            content=r.content, status_code=r.status_code, headers=response_headers
-        )
+        return Response(content=r.content, status_code=r.status_code, headers=response_headers)
     except Exception as e:
         logger.error(f"Failed to proxy memory request: {e}")
-        raise HTTPException(status_code=502, detail="Memory proxy failed")
+        raise HTTPException(status_code=502, detail="Memory proxy failed") from e
 
 
 @app.api_route("/v1/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
@@ -2750,9 +2645,7 @@ async def proxy_audio(request: Request, path: str = ""):
 
     parsed_url = urlparse(url)
     if parsed_url.netloc != expected_netloc:
-        logger.warning(
-            f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}"
-        )
+        logger.warning(f"Destination netloc {parsed_url.netloc} does not match expected {expected_netloc}")
         raise HTTPException(status_code=400, detail="Invalid path")
 
     query_params = dict(request.query_params)
@@ -2790,12 +2683,10 @@ async def proxy_audio(request: Request, path: str = ""):
         ]:
             response_headers.pop(h, None)
 
-        return Response(
-            content=r.content, status_code=r.status_code, headers=response_headers
-        )
+        return Response(content=r.content, status_code=r.status_code, headers=response_headers)
     except Exception as e:
         logger.error(f"Failed to proxy audio request: {e}")
-        raise HTTPException(status_code=502, detail="Audio proxy failed")
+        raise HTTPException(status_code=502, detail="Audio proxy failed") from e
 
 
 @app.get("/health")
@@ -2857,7 +2748,6 @@ async def proxy_models():
                             "owned_by": "llm-routing",
                             "context_length": 524288,
                         },
-
                         {
                             "id": "llm-routing-ollama",
                             "object": "model",
@@ -2870,9 +2760,7 @@ async def proxy_models():
                         data["data"].insert(0, entry)
                     return JSONResponse(content=data, status_code=200)
             except Exception as parse_err:
-                logger.warning(
-                    f"Failed to parse /v1/models JSON despite status 200: {parse_err}"
-                )
+                logger.warning(f"Failed to parse /v1/models JSON despite status 200: {parse_err}")
 
         # If not 200, or parsing failed, return the raw response with appropriate headers
         response_headers = dict(r.headers)
@@ -2883,12 +2771,10 @@ async def proxy_models():
             "connection",
         ]:
             response_headers.pop(h, None)
-        return Response(
-            content=r.content, status_code=r.status_code, headers=response_headers
-        )
+        return Response(content=r.content, status_code=r.status_code, headers=response_headers)
     except Exception as e:
         logger.error(f"Failed to proxy /v1/models: {e}")
-        raise HTTPException(status_code=502, detail="Model proxy failed")
+        raise HTTPException(status_code=502, detail="Model proxy failed") from e
 
 
 _VIRTUAL_KEY_CACHE: dict[str, tuple[float, dict]] = {}
@@ -3006,8 +2892,8 @@ async def responses_api(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as err:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from err
 
     await sync_cooldowns_from_valkey()
 
@@ -3086,9 +2972,7 @@ async def responses_api(request: Request):
     logger.info(f"Proxying Responses API request for model={target_model} to {url}")
 
     if is_streaming:
-        req = client.build_request(
-            "POST", url, json=body_to_send, headers=headers, timeout=600.0
-        )
+        req = client.build_request("POST", url, json=body_to_send, headers=headers, timeout=600.0)
         resp = await client.send(req, stream=True)
         if resp.status_code != 200:
             error_body = await resp.aread()
@@ -3183,10 +3067,12 @@ async def responses_api(request: Request):
             )
         except Exception as e:
             logger.error(f"Failed to proxy Responses API request: {e}")
-            raise HTTPException(status_code=502, detail="Responses proxy failed")
+            raise HTTPException(status_code=502, detail="Responses proxy failed") from e
+
 
 _last_roster_sync = 0.0
 _roster_sync_lock = asyncio.Lock()
+
 
 async def maybe_trigger_roster_sync(force: bool = False):
     """Opportunistically refresh the OpenRouter roster if ratelimited or after TTL."""
@@ -3224,15 +3110,13 @@ async def chat_completions(request: Request):
         A StreamingResponse or JSONResponse containing the model completion.
     """
     global stats
-    start_time = time.time()
-
     # Enforce client authentication
     await _authenticate_client_request(request)
 
     try:
         body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as err:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from err
 
     await sync_cooldowns_from_valkey()
 
@@ -3271,9 +3155,7 @@ async def chat_completions(request: Request):
     # Extract or synthesize session_id and user_id for Langfuse tracing
     _trace_session_id = extract_or_synthesize_session_id(body, request)
     _trace_user_id = (
-        body.get("user")
-        or request.headers.get("x-user-id")
-        or getattr(request.state, "auth_user_id", None)
+        body.get("user") or request.headers.get("x-user-id") or getattr(request.state, "auth_user_id", None)
     )
     if _trace_user_id:
         _trace_user_id = str(_trace_user_id)
@@ -3286,9 +3168,7 @@ async def chat_completions(request: Request):
     lf = get_langfuse()
     if lf:
         try:
-            langfuse_trace_id = lf.create_trace_id(
-                seed=str(uuid.uuid4())
-            )
+            langfuse_trace_id = lf.create_trace_id(seed=str(uuid.uuid4()))
             # Propagate session_id/user_id via Langfuse's native session mechanism.
             # For non-streaming: enter here (same asyncio task, contextvars work).
             # For streaming: each generator creates its own context in its own task
@@ -3344,17 +3224,13 @@ async def chat_completions(request: Request):
             triage_latency = 0.0
             was_cache_hit = False
             raw_classification = f"direct ({client_model})"
-            logger.info(
-                f"Direct routing: Client requested '{client_model}', skipping classifier"
-            )
+            logger.info(f"Direct routing: Client requested '{client_model}', skipping classifier")
 
         # Update in-memory statistics
         stats["total_requests"] += 1
         stats["last_triage_decision"] = target_model
         stats["total_triage_time_ms"] += triage_latency
-        stats["avg_triage_latency_ms"] = (
-            stats["total_triage_time_ms"] / stats["total_requests"]
-        )
+        stats["avg_triage_latency_ms"] = stats["total_triage_time_ms"] / stats["total_requests"]
 
         if target_model == "agent-simple-core":
             stats["simple_requests"] = stats.get("simple_requests", 0) + 1
@@ -3405,24 +3281,27 @@ async def chat_completions(request: Request):
         # unless classified as advanced or reasoning, avoiding 4-minute agy timeouts on
         # simple/medium/complex prompts that the fast OpenRouter free tier handles better.
 
-        should_try_agy = (
-            client_model in (
-                "llm-routing-agy", "llm-routing-agy-sse", "agy-sse", "agy-gemini",
-                "agy-gemini-sse", "agy-opus", "agy-opus-sse", "agy-sonnet", "agy-sonnet-sse",
-                "agy-gptoss", "agy-gptoss-sse"
-            )
-            or (
-                client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
-                and target_model in ("agent-advanced-core", "agent-reasoning-core")
-            )
+        should_try_agy = client_model in (
+            "llm-routing-agy",
+            "llm-routing-agy-sse",
+            "agy-sse",
+            "agy-gemini",
+            "agy-gemini-sse",
+            "agy-opus",
+            "agy-opus-sse",
+            "agy-sonnet",
+            "agy-sonnet-sse",
+            "agy-gptoss",
+            "agy-gptoss-sse",
+        ) or (
+            client_model in ("llm-routing-auto-agy", "llm-routing-auto-agy-ollama")
+            and target_model in ("agent-advanced-core", "agent-reasoning-core")
         )
         should_try_ollama = (
-            client_model
-            == "llm-routing-ollama"  # always try (will map to flash for complex/below)
+            client_model == "llm-routing-ollama"  # always try (will map to flash for complex/below)
             or (
                 client_model in ("llm-routing-auto-ollama", "llm-routing-auto-agy-ollama")
-                and target_model
-                in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core")
+                and target_model in ("agent-advanced-core", "agent-reasoning-core", "agent-complex-core")
             )
         )
 
@@ -3434,9 +3313,13 @@ async def chat_completions(request: Request):
             if client_model in ("agy-gemini-sse", "llm-routing-agy-sse", "agy-sse"):
                 target_model = "agy-gemini-sse"
             elif client_model in (
-                "agy-gemini", "agy-opus", "agy-opus-sse",
-                "agy-sonnet", "agy-sonnet-sse",
-                "agy-gptoss", "agy-gptoss-sse"
+                "agy-gemini",
+                "agy-opus",
+                "agy-opus-sse",
+                "agy-sonnet",
+                "agy-sonnet-sse",
+                "agy-gptoss",
+                "agy-gptoss-sse",
             ):
                 target_model = client_model
             else:
@@ -3573,7 +3456,8 @@ async def chat_completions(request: Request):
                         )
                         body_to_send["max_tokens"] = _safe_max
                 except HTTPException:
-                    _end_child_span(litellm_span_obj,
+                    _end_child_span(
+                        litellm_span_obj,
                         output={"error": "Context window exceeded"},
                         metadata={"status": "failed"},
                     )
@@ -3582,9 +3466,7 @@ async def chat_completions(request: Request):
                     logger.warning(f"Pre-screening failed (non-fatal): {e}")
                     body_to_send = body.copy()
                     body_to_send["model"] = model_name
-                if "metadata" not in body_to_send or not isinstance(
-                    body_to_send["metadata"], dict
-                ):
+                if "metadata" not in body_to_send or not isinstance(body_to_send["metadata"], dict):
                     body_to_send["metadata"] = {}
                 else:
                     # Deep-copy to avoid mutating original body's metadata
@@ -3621,10 +3503,7 @@ async def chat_completions(request: Request):
                             sse_buffer = ""
                             decoder = codecs.getincrementaldecoder("utf-8")()
                             finalized = False
-                            _litellm_gen_prop = (
-                                _make_prop_ctx(_trace_session_id, _trace_user_id)
-                                or nullcontext()
-                            )
+                            _litellm_gen_prop = _make_prop_ctx(_trace_session_id, _trace_user_id) or nullcontext()
                             _litellm_gen_prop.__enter__()
                             try:
                                 async for chunk in r.aiter_bytes():
@@ -3641,14 +3520,10 @@ async def chat_completions(request: Request):
                                                 try:
                                                     data_json = orjson.loads(data_str)
                                                     choices = data_json.get("choices", [])
-                                                    if choices and isinstance(
-                                                        choices[0], dict
-                                                    ):
+                                                    if choices and isinstance(choices[0], dict):
                                                         delta = choices[0].get("delta")
                                                         if isinstance(delta, dict):
-                                                            content = (
-                                                                delta.get("content") or ""
-                                                            )
+                                                            content = delta.get("content") or ""
                                                             completion_chars += len(content)
                                                 except Exception:
                                                     pass
@@ -3656,19 +3531,20 @@ async def chat_completions(request: Request):
                                         pass
                                 proxy_latency = (time.time() - proxy_start) * 1000.0
                                 stats["total_proxy_time_ms"] += proxy_latency
-                                stats["avg_proxy_latency_ms"] = (
-                                    stats["total_proxy_time_ms"] / stats["total_requests"]
+                                stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
+                                record_tool_usage(
+                                    ToolUsageRecord(
+                                        active_tool,
+                                        request_tokens,
+                                        completion_chars // 4,
+                                        model_name,
+                                        proxy_latency,
+                                        route="litellm_fallback",
+                                    )
                                 )
-                                record_tool_usage(ToolUsageRecord(
-                                    active_tool,
-                                    request_tokens,
-                                    completion_chars // 4,
-                                    model_name,
-                                    proxy_latency,
-                                    route="litellm_fallback",
-                                ))
                                 # Finalize LiteLLM span (streaming path)
-                                _end_child_span(litellm_span_obj, 
+                                _end_child_span(
+                                    litellm_span_obj,
                                     output={"model": model_name, "stream": True},
                                     metadata={
                                         "latency_ms": proxy_latency,
@@ -3676,53 +3552,58 @@ async def chat_completions(request: Request):
                                     },
                                 )
                                 # Finalize parent trace (streaming path)
-                                _end_parent_obs(parent_obs,
-                                    output={"model": model_name, "stream": True,
-                                            "tier": target_model, "route": "litellm_fallback"},
-                                    metadata={"latency_ms": proxy_latency,
-                                              "completion_tokens": completion_chars // 4})
+                                _end_parent_obs(
+                                    parent_obs,
+                                    output={
+                                        "model": model_name,
+                                        "stream": True,
+                                        "tier": target_model,
+                                        "route": "litellm_fallback",
+                                    },
+                                    metadata={"latency_ms": proxy_latency, "completion_tokens": completion_chars // 4},
+                                )
                                 _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                             except Exception as ex:
-                                if hasattr(ex, "status_code") and getattr(ex, "status_code") == 429:
+                                if hasattr(ex, "status_code") and ex.status_code == 429:
                                     if model_name.startswith("agent-"):
                                         await maybe_trigger_roster_sync(force=True)
 
                                 logger.error(f"Stream error: {ex}")
                                 # End child span before parent on stream error (CodeRabbit: missing finalization)
-                                _end_child_span(litellm_span_obj,
+                                _end_child_span(
+                                    litellm_span_obj,
                                     output={"error": type(ex).__name__},
                                     metadata={"status": "failed"},
                                 )
                                 # End parent trace on stream error (before any cooldown logic)
-                                _end_parent_obs(parent_obs,
-                                    output={"error": type(ex).__name__, "route": "litellm_fallback",
-                                            "stream": True})
+                                _end_parent_obs(
+                                    parent_obs,
+                                    output={"error": type(ex).__name__, "route": "litellm_fallback", "stream": True},
+                                )
                                 _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                                 if model_name.startswith("ollama-"):
                                     global _ollama_cooldown_until
-                                    _ollama_cooldown_until = (
-                                        time.monotonic() + OLLAMA_COOLDOWN_SECONDS
-                                    )
+                                    _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
                                     try:
                                         await save_cooldowns_to_valkey()
                                         logger.error(
                                             f"🧊 Ollama failed midway through stream, activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
                                         )
                                     except Exception as save_err:
-                                        logger.warning(
-                                            f"Failed to save cooldowns to Valkey: {save_err}"
-                                        )
+                                        logger.warning(f"Failed to save cooldowns to Valkey: {save_err}")
                             finally:
                                 if not finalized:
-                                    _end_child_span(litellm_span_obj,
+                                    _end_child_span(
+                                        litellm_span_obj,
                                         output={"error": "cancelled"},
                                         metadata={"status": "cancelled"},
                                     )
-                                    _end_parent_obs(parent_obs,
-                                        output={"error": "cancelled", "route": "litellm_fallback",
-                                                "stream": True})
+                                    _end_parent_obs(
+                                        parent_obs,
+                                        output={"error": "cancelled", "route": "litellm_fallback", "stream": True},
+                                    )
                                     _close_prop_ctx(_litellm_gen_prop)
                                 await r.aclose()
 
@@ -3734,13 +3615,13 @@ async def chat_completions(request: Request):
                         )
                     else:
                         error_body = await r.aread() if r else b""
-                        logger.warning(
-                            f"LiteLLM stream failed ({r.status_code}): {error_body[:300]}"
-                        )
+                        err_str = error_body[:300].decode("utf-8", errors="replace")
+                        logger.warning(f"LiteLLM stream failed ({r.status_code}): {err_str}")
                         await r.aclose()
                         # Finalize child span before raising on stream connection failure
-                    # parent_obs finalized by outer handler (HTTPException → except block)
-                        _end_child_span(litellm_span_obj,
+                        # parent_obs finalized by outer handler (HTTPException → except block)
+                        _end_child_span(
+                            litellm_span_obj,
                             output={"status": r.status_code, "error": "litellm_stream_failed"},
                             metadata={"status": "failed"},
                         )
@@ -3760,33 +3641,30 @@ async def chat_completions(request: Request):
                     if response.status_code == 200:
                         proxy_latency = (time.time() - proxy_start) * 1000.0
                         stats["total_proxy_time_ms"] += proxy_latency
-                        stats["avg_proxy_latency_ms"] = (
-                            stats["total_proxy_time_ms"] / stats["total_requests"]
-                        )
+                        stats["avg_proxy_latency_ms"] = stats["total_proxy_time_ms"] / stats["total_requests"]
                         resp_json = response.json()
                         usage = resp_json.get("usage") or {}
-                        prompt_tokens = usage.get(
-                            "prompt_tokens"
-                        ) or estimate_prompt_tokens(body_to_send)
+                        prompt_tokens = usage.get("prompt_tokens") or estimate_prompt_tokens(body_to_send)
                         choices = resp_json.get("choices") or []
                         fallback_completion = 0
                         if choices and isinstance(choices[0], dict):
                             msg = choices[0].get("message")
                             if isinstance(msg, dict):
                                 fallback_completion = len(msg.get("content") or "") // 4
-                        completion_tokens = (
-                            usage.get("completion_tokens") or fallback_completion
+                        completion_tokens = usage.get("completion_tokens") or fallback_completion
+                        record_tool_usage(
+                            ToolUsageRecord(
+                                active_tool,
+                                prompt_tokens,
+                                completion_tokens,
+                                model_name,
+                                proxy_latency,
+                                route="litellm_fallback",
+                            )
                         )
-                        record_tool_usage(ToolUsageRecord(
-                            active_tool,
-                            prompt_tokens,
-                            completion_tokens,
-                            model_name,
-                            proxy_latency,
-                            route="litellm_fallback",
-                        ))
                         # Finalize LiteLLM span (non-streaming path)
-                        _end_child_span(litellm_span_obj, 
+                        _end_child_span(
+                            litellm_span_obj,
                             output={
                                 "model": model_name,
                                 "tokens": completion_tokens,
@@ -3794,24 +3672,26 @@ async def chat_completions(request: Request):
                             metadata={"latency_ms": proxy_latency},
                         )
                         # Finalize parent trace (non-streaming path)
-                        _end_parent_obs(parent_obs,
-                            output={"model": model_name, "tier": target_model,
-                                    "route": "litellm_fallback"},
-                            metadata={"latency_ms": proxy_latency,
-                                      "prompt_tokens": prompt_tokens,
-                                      "completion_tokens": completion_tokens})
+                        _end_parent_obs(
+                            parent_obs,
+                            output={"model": model_name, "tier": target_model, "route": "litellm_fallback"},
+                            metadata={
+                                "latency_ms": proxy_latency,
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                            },
+                        )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         return JSONResponse(
                             content=resp_json,
-                            headers={"X-Session-ID": _trace_session_id} if _trace_session_id else None
+                            headers={"X-Session-ID": _trace_session_id} if _trace_session_id else None,
                         )
                     else:
-                        logger.warning(
-                            f"LiteLLM failed ({response.status_code}): {response.text[:300]}"
-                        )
+                        logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
                         # Finalize child span before raising on non-200 response
-                        _end_child_span(litellm_span_obj,
+                        _end_child_span(
+                            litellm_span_obj,
                             output={"status": response.status_code, "error": "litellm_upstream_failed"},
                             metadata={"status": "failed"},
                         )
@@ -3826,13 +3706,12 @@ async def chat_completions(request: Request):
             except Exception as exc:
                 logger.error(f"httpx call failed: {exc}")
                 # Finalize child span before raising on proxy exception
-                _end_child_span(litellm_span_obj,
+                _end_child_span(
+                    litellm_span_obj,
                     output={"error": type(exc).__name__},
                     metadata={"status": "failed"},
                 )
-                raise HTTPException(
-                    status_code=502, detail="Proxy call failed"
-                ) from exc
+                raise HTTPException(status_code=502, detail="Proxy call failed") from exc
 
         if should_try_ollama:
             # Sync state from Valkey first
@@ -3843,31 +3722,26 @@ async def chat_completions(request: Request):
             now_mono = time.monotonic()
             if now_mono < _ollama_cooldown_until:
                 remaining = int(_ollama_cooldown_until - now_mono)
-                logger.warning(
-                    f"⏳ Ollama cooldown active ({remaining}s remaining), "
-                    f"skipping {target_model}"
-                )
+                logger.warning(f"⏳ Ollama cooldown active ({remaining}s remaining), skipping {target_model}")
                 if client_model in (
                     "llm-routing-auto-ollama",
                     "llm-routing-auto-agy-ollama",
                 ):
                     # Auto mode: silently fall through to the free tier
-                    logger.info(
-                        f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)"
-                    )
+                    logger.info(f"Auto-mode fallback: {target_model} → {original_target_model} (Ollama cooled down)")
                     try:
                         return await execute_proxy(original_target_model)
                     except HTTPException:
-                        _end_parent_obs(parent_obs,
-                            output={"error": "all_backends_failed", "route": "ollama_cooldown_fallback"})
+                        _end_parent_obs(
+                            parent_obs, output={"error": "all_backends_failed", "route": "ollama_cooldown_fallback"}
+                        )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         raise
                 else:
                     # Direct/fallback llm-routing-ollama: return 429 so LiteLLM
                     # skips this model group and moves to openrouter-auto
-                    _end_parent_obs(parent_obs,
-                        output={"error": "ollama_cooldown", "route": "ollama"})
+                    _end_parent_obs(parent_obs, output={"error": "ollama_cooldown", "route": "ollama"})
                     _close_prop_ctx(_prop_ctx)
                     _non_streaming_finalized = True
                     raise HTTPException(
@@ -3884,9 +3758,7 @@ async def chat_completions(request: Request):
                     # Ollama failure — activate router-side cooldown
                     _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
                     await save_cooldowns_to_valkey()
-                    logger.error(
-                        f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
-                    )
+                    logger.error(f"🧊 Ollama failed ({e.status_code}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown")
                 if client_model in (
                     "llm-routing-auto-ollama",
                     "llm-routing-auto-agy-ollama",
@@ -3898,25 +3770,24 @@ async def chat_completions(request: Request):
                         try:
                             return await execute_proxy(original_target_model)
                         except HTTPException:
-                            _end_parent_obs(parent_obs,
-                                output={"error": "all_backends_failed", "route": "ollama_fallback"})
+                            _end_parent_obs(
+                                parent_obs, output={"error": "all_backends_failed", "route": "ollama_fallback"}
+                            )
                             _close_prop_ctx(_prop_ctx)
                             _non_streaming_finalized = True
                             raise
                     else:
-                        _end_parent_obs(parent_obs,
-                            output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                        _end_parent_obs(
+                            parent_obs, output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"}
+                        )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         raise e
                 else:
                     # Direct/fallback llm-routing-ollama request
                     if is_transient:
-                        logger.error(
-                            f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429"
-                        )
-                        _end_parent_obs(parent_obs,
-                            output={"error": "ollama_rate_limited", "route": "ollama"})
+                        logger.error(f"Ollama proxy failed ({e.detail}) for direct/fallback request, returning 429")
+                        _end_parent_obs(parent_obs, output={"error": "ollama_rate_limited", "route": "ollama"})
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         raise HTTPException(
@@ -3924,8 +3795,9 @@ async def chat_completions(request: Request):
                             detail="Ollama backend rate limited/unavailable",
                         ) from e
                     else:
-                        _end_parent_obs(parent_obs,
-                            output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"})
+                        _end_parent_obs(
+                            parent_obs, output={"error": f"ollama_non_transient_{e.status_code}", "route": "ollama"}
+                        )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         raise e
@@ -3933,47 +3805,38 @@ async def chat_completions(request: Request):
                 # Unexpected error (timeouts, connection issues) — also cooldown to prevent hammering
                 _ollama_cooldown_until = time.monotonic() + OLLAMA_COOLDOWN_SECONDS
                 await save_cooldowns_to_valkey()
-                logger.error(
-                    f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown"
-                )
+                logger.error(f"🧊 Ollama unexpected error ({e}), activating {OLLAMA_COOLDOWN_SECONDS}s cooldown")
                 if client_model in (
                     "llm-routing-auto-ollama",
                     "llm-routing-auto-agy-ollama",
                 ):
-                    logger.warning(
-                        f"Ollama proxy error ({e}), falling back to free tier {original_target_model}"
-                    )
+                    logger.warning(f"Ollama proxy error ({e}), falling back to free tier {original_target_model}")
                     try:
                         return await execute_proxy(original_target_model)
                     except HTTPException:
-                        _end_parent_obs(parent_obs,
-                            output={"error": "all_backends_failed", "route": "ollama_unexpected_fallback"})
+                        _end_parent_obs(
+                            parent_obs, output={"error": "all_backends_failed", "route": "ollama_unexpected_fallback"}
+                        )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
                         raise
                 else:
-                    _end_parent_obs(parent_obs,
-                        output={"error": type(e).__name__, "route": "ollama"})
+                    _end_parent_obs(parent_obs, output={"error": type(e).__name__, "route": "ollama"})
                     _close_prop_ctx(_prop_ctx)
                     _non_streaming_finalized = True
-                    raise HTTPException(
-                        status_code=429, detail="Ollama backend rate limited/unavailable"
-                    ) from e
+                    raise HTTPException(status_code=429, detail="Ollama backend rate limited/unavailable") from e
         else:
             try:
                 return await execute_proxy(target_model)
             except HTTPException:
-                _end_parent_obs(parent_obs,
-                    output={"error": "all_backends_failed", "route": "default_proxy"})
+                _end_parent_obs(parent_obs, output={"error": "all_backends_failed", "route": "default_proxy"})
                 _close_prop_ctx(_prop_ctx)
                 _non_streaming_finalized = True
                 raise
     finally:
         if not _is_streaming and not _non_streaming_finalized:
-            _end_parent_obs(parent_obs,
-                output={"error": "cancelled", "route": "non_streaming"})
+            _end_parent_obs(parent_obs, output={"error": "cancelled", "route": "non_streaming"})
             _prop_ctx = _close_prop_ctx(_prop_ctx)
-
 
 
 @app.get("/metrics")
@@ -4035,38 +3898,26 @@ async def metrics():
     # Circuit breaker metrics — dual breaker (google + vendor)
     google = breaker_status["google"]
     vendor = breaker_status["vendor"]
-    lines.append(
-        "# HELP circuit_breaker_google_tier Google breaker cooldown tier (0=open, 3=max)"
-    )
+    lines.append("# HELP circuit_breaker_google_tier Google breaker cooldown tier (0=open, 3=max)")
     lines.append("# TYPE circuit_breaker_google_tier gauge")
     lines.append(f"circuit_breaker_google_tier {google['tier']}")
-    lines.append(
-        "# HELP circuit_breaker_vendor_tier Vendor breaker cooldown tier (0=open, 3=max)"
-    )
+    lines.append("# HELP circuit_breaker_vendor_tier Vendor breaker cooldown tier (0=open, 3=max)")
     lines.append("# TYPE circuit_breaker_vendor_tier gauge")
     lines.append(f"circuit_breaker_vendor_tier {vendor['tier']}")
-    lines.append(
-        "# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)"
-    )
+    lines.append("# HELP circuit_breaker_agy_allowed Whether EITHER breaker allows agy (backward-compat)")
     lines.append("# TYPE circuit_breaker_agy_allowed gauge")
     lines.append(f"circuit_breaker_agy_allowed {int(breaker.is_allowed_peek())}")
     lines.append("# HELP circuit_breaker_total_trips Total trips across both breakers")
     lines.append("# TYPE circuit_breaker_total_trips counter")
-    lines.append(
-        f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}"
-    )
+    lines.append(f"circuit_breaker_total_trips {google['total_trips'] + vendor['total_trips']}")
 
     # Ollama router-side cooldown metrics
     _now_mono = time.monotonic()
     _ollama_remaining = max(0.0, _ollama_cooldown_until - _now_mono)
-    lines.append(
-        "# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)"
-    )
+    lines.append("# HELP ollama_cooldown_active Whether Ollama is in router-side cooldown (1=active)")
     lines.append("# TYPE ollama_cooldown_active gauge")
     lines.append(f"ollama_cooldown_active {int(_ollama_remaining > 0)}")
-    lines.append(
-        "# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown"
-    )
+    lines.append("# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown")
     lines.append("# TYPE ollama_cooldown_remaining_seconds gauge")
     lines.append(f"ollama_cooldown_remaining_seconds {_ollama_remaining:.0f}")
 
@@ -4106,7 +3957,7 @@ async def get_dashboard_data():
         asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
         asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
-        return_exceptions=True
+        return_exceptions=True,
     )
 
     # Coerce exceptions to safe defaults if any task failed/timed out, and log failures
@@ -4177,20 +4028,18 @@ async def get_dashboard_data():
     # 4. Generate dynamic conic-gradient CSS background for the Pie Chart
     pie_gradient = get_pie_chart_gradient()
     total_tool_tokens = sum(stats["tool_tokens"].values())
-    max_tool_val = max(stats["tool_tokens"].values()) if stats["tool_tokens"] and max(stats["tool_tokens"].values()) > 0 else 1
+    max_tool_val = (
+        max(stats["tool_tokens"].values()) if stats["tool_tokens"] and max(stats["tool_tokens"].values()) > 0 else 1
+    )
 
     tool_tokens = []
     for tool_name, token_count in stats["tool_tokens"].items():
         pct = (token_count / max_tool_val) * 100.0
         overall_pct = (token_count / total_tool_tokens * 100.0) if total_tool_tokens > 0 else 0.0
         color = TOOL_COLORS.get(tool_name, "#94a3b8")
-        tool_tokens.append({
-            "name": tool_name,
-            "count": token_count,
-            "pct": pct,
-            "overall_pct": overall_pct,
-            "color": color
-        })
+        tool_tokens.append(
+            {"name": tool_name, "count": token_count, "pct": pct, "overall_pct": overall_pct, "color": color}
+        )
 
     # 8. Routing Paths pie chart
     routing_paths = stats.get("routing_paths", {"google_oauth_direct": 0, "litellm_fallback": 0})
@@ -4208,13 +4057,15 @@ async def get_dashboard_data():
             next_angle = current_angle + rpct
             rcolor = routing_colors.get(rname, "#94a3b8")
             route_grad_parts.append(f"{rcolor} {current_angle:.1f}% {next_angle:.1f}%")
-            routing_data.append({
-                "name": rname,
-                "label": routing_labels.get(rname, rname),
-                "count": rcount,
-                "pct": rpct,
-                "color": rcolor
-            })
+            routing_data.append(
+                {
+                    "name": rname,
+                    "label": routing_labels.get(rname, rname),
+                    "count": rcount,
+                    "pct": rpct,
+                    "color": rcolor,
+                }
+            )
             current_angle = next_angle
         routing_pie_gradient = f"background: conic-gradient({', '.join(route_grad_parts)});"
 
@@ -4233,6 +4084,7 @@ async def get_dashboard_data():
                 roster_data = orjson.loads(roster_content)
 
             import html as html_lib
+
             rows = ""
             for m in roster_data.get("models", []):
                 mid = m.get("id", "")
@@ -4245,7 +4097,11 @@ async def get_dashboard_data():
                     if mid in models:
                         active_tiers.append(tier.replace("agent-", "").replace("-core", ""))
 
-                status_label = f"<span style='color:#34d399;'>Active ({', '.join(active_tiers)})</span>" if active_tiers else "<span style='opacity:0.5;'>Excluded</span>"
+                status_label = (
+                    f"<span style='color:#34d399;'>Active ({', '.join(active_tiers)})</span>"
+                    if active_tiers
+                    else "<span style='opacity:0.5;'>Excluded</span>"
+                )
                 tool_icon = "🛠️" if m.get("has_tools", True) else "❌"
                 score_val = m.get("score", 0.0)
                 ctx_val = m.get("context_length", 0) // 1000
@@ -4407,7 +4263,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
         return (
             f"{external_scheme}://langfuse.{service_netloc}",
             f"{external_scheme}://litellm.{service_netloc}/ui/",
-            f"{external_scheme}://llama.{service_netloc}/"
+            f"{external_scheme}://llama.{service_netloc}/",
         )
     else:
         # Local development fallback: derive schemes, ports, and paths dynamically from configuration constants
@@ -4434,7 +4290,7 @@ def resolve_external_urls(request: Request) -> tuple[str, str, str]:
         return (
             f"{lf_scheme}://{host_formatted}{lf_port}{lf_path}",
             f"{ll_scheme}://{host_formatted}{ll_port}{ll_path}",
-            f"{lm_scheme}://{host_formatted}{lm_port}{lm_path}"
+            f"{lm_scheme}://{host_formatted}{lm_port}{lm_path}",
         )
 
 
@@ -4459,9 +4315,8 @@ async def get_dashboard(request: Request):
             "valkey_port": _valkey_port(),
             "langfuse_port": os.getenv("LANGFUSE_WEB_PORT") or "3001",
             "src_badge": src_badge,
-        }
+        },
     )
-
 
 
 # --- Static files (visualizer, data files) ---
@@ -4498,7 +4353,11 @@ MAX_ANNOTATION_KEY_LENGTH = 128
 MAX_ANNOTATION_ITEM_BYTES = 4096
 
 AnnotationTier = Literal[
-    0, 1, 2, 3, 4,
+    0,
+    1,
+    2,
+    3,
+    4,
     "agent-simple-core",
     "agent-medium-core",
     "agent-complex-core",
@@ -4507,20 +4366,24 @@ AnnotationTier = Literal[
     "?",
 ]
 
+
 class AnnotationItem(BaseModel):
     """Pydantic model representing a single human dataset review annotation."""
+
     model_config = ConfigDict(extra="forbid")
 
-    tier: Optional[AnnotationTier] = None
-    note: Optional[str] = Field(default=None, max_length=1000)
-    ts: Optional[str] = Field(default=None, max_length=100)
+    tier: AnnotationTier | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    ts: str | None = Field(default=None, max_length=100)
+
 
 class AnnotationPayload(RootModel):
     """Pydantic model representing a payload of multiple annotations."""
-    root: Dict[str, AnnotationItem]
+
+    root: dict[str, AnnotationItem]
 
     @model_validator(mode="after")
-    def _validate_payload(self) -> "AnnotationPayload":
+    def _validate_payload(self) -> AnnotationPayload:
         """Validate the entire annotation payload for size and key constraints."""
         data = self.root
         if len(data) > 1000:
@@ -4532,10 +4395,14 @@ class AnnotationPayload(RootModel):
                 k.startswith("h") and len(k) > 1 and all(c in "0123456789abcdef" for c in k[1:].lower())
             )
             if not is_valid_key:
-                raise ValueError(f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc').")
+                raise ValueError(
+                    f"Invalid payload key '{k}': keys must be numeric strings or stable hash keys (e.g., 'h12345abc')."
+                )
             if len(item.model_dump_json().encode("utf-8")) > MAX_ANNOTATION_ITEM_BYTES:
                 raise ValueError(f"Annotation '{k}' exceeds the maximum serialized size.")
         return self
+
+
 # NOTE: annotations_lock (asyncio.Lock) only provides concurrency protection within
 # a single Python process. In multi-worker uvicorn deployments, concurrent requests
 # across different workers can still race. Eventual consistency is maintained via
@@ -4543,7 +4410,7 @@ class AnnotationPayload(RootModel):
 annotations_lock = asyncio.Lock()
 
 
-_annotations_cache = {}
+_annotations_cache: dict[str, Any] = {}
 
 
 async def _read_annotations_async(path) -> dict:
@@ -4579,9 +4446,7 @@ async def save_annotations(payload: AnnotationPayload):
                 try:
                     existing = await _read_annotations_async(str(ann_path))
                 except Exception as read_err:
-                    logger.warning(
-                        f"Could not read existing annotations: {read_err}. Overwriting."
-                    )
+                    logger.warning(f"Could not read existing annotations: {read_err}. Overwriting.")
 
             # Merge new annotations into existing
             for k, item in data.items():
@@ -4597,16 +4462,14 @@ async def save_annotations(payload: AnnotationPayload):
         return JSONResponse({"status": "ok", "saved": len(data)})
     except Exception as e:
         logger.error(f"Failed to save annotations: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save annotations")
+        raise HTTPException(status_code=500, detail="Failed to save annotations") from e
 
 
 @app.post("/admin/sync-models")
 async def admin_sync_models(request: Request):
     """Trigger on-demand synchronization and deduplication of LiteLLM DB models."""
     token = await _authenticate_client_request(request)
-    admin_keys = {
-        k.strip() for k in [os.getenv("ROUTER_API_KEY"), os.getenv("LITELLM_MASTER_KEY")] if k
-    }
+    admin_keys = {k.strip() for k in [os.getenv("ROUTER_API_KEY"), os.getenv("LITELLM_MASTER_KEY")] if k}
     if admin_keys and token not in admin_keys:
         raise HTTPException(status_code=403, detail="Admin privilege required")
 

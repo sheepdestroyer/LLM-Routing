@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from router.agy_proxy import _wrap_response, _is_quota_exhausted
 
+
 @pytest.mark.parametrize(
     "text, model_name, prompt, expected_prompt_tokens, expected_completion_tokens",
     [
@@ -33,6 +34,7 @@ def test_wrap_response(text, model_name, prompt, expected_prompt_tokens, expecte
     assert result["usage"]["completion_tokens"] == expected_completion_tokens
     assert result["usage"]["total_tokens"] == expected_prompt_tokens + expected_completion_tokens
 
+
 @pytest.mark.asyncio
 async def test_is_quota_exhausted_stderr_markers():
     markers = ["RESOURCE_EXHAUSTED", "code 429", "quota reached", "rate limit"]
@@ -40,13 +42,16 @@ async def test_is_quota_exhausted_stderr_markers():
         assert await _is_quota_exhausted(0, "", marker) is True
         assert await _is_quota_exhausted(1, "", f"Error: {marker}") is True
 
+
 @pytest.mark.asyncio
 async def test_is_quota_exhausted_success():
     assert await _is_quota_exhausted(0, "some valid response", "") is False
 
+
 @pytest.mark.asyncio
 async def test_is_quota_exhausted_other_error():
     assert await _is_quota_exhausted(1, "", "some other random error") is False
+
 
 @patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")
@@ -63,6 +68,7 @@ async def test_is_quota_exhausted_empty_reads_log(mock_time, mock_open):
     with patch("router.agy_proxy._last_log_check", 0):
         assert await _is_quota_exhausted(0, "", "") is True
 
+
 @patch("router.agy_proxy.time.time")
 @pytest.mark.asyncio
 async def test_is_quota_exhausted_empty_throttled(mock_time):
@@ -71,6 +77,7 @@ async def test_is_quota_exhausted_empty_throttled(mock_time):
     with patch("router.agy_proxy._last_log_check", 1000.0):
         # Even without reading log, falls back to True
         assert await _is_quota_exhausted(0, "", "") is True
+
 
 @patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")
@@ -81,6 +88,7 @@ async def test_is_quota_exhausted_empty_no_log_fallback(mock_time, mock_open):
 
     with patch("router.agy_proxy._last_log_check", 0):
         assert await _is_quota_exhausted(0, "", "") is True
+
 
 @patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")
@@ -94,6 +102,7 @@ async def test_is_quota_exhausted_empty_log_no_markers(mock_time, mock_open):
     mock_open.return_value.__aenter__.return_value = mock_file
     with patch("router.agy_proxy._last_log_check", 0):
         assert await _is_quota_exhausted(0, "", "") is False
+
 
 @patch("aiofiles.open")
 @patch("router.agy_proxy.time.time")

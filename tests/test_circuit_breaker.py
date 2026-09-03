@@ -32,7 +32,6 @@ def reset_breakers():
         sub.last_trip_time = 0.0
 
 
-
 def test_get_specific_breakers():
     """Verify get_google_breaker and get_vendor_breaker return the correct sub-breakers."""
     reset_breakers()
@@ -166,7 +165,9 @@ def test_dual_breaker_tier_max_logic():
     for google_tier, vendor_tier, expected_tier in test_cases:
         b.google.tier = google_tier
         b.vendor.tier = vendor_tier
-        assert b.tier == expected_tier, f"Expected tier {expected_tier} for google={google_tier}, vendor={vendor_tier}, but got {b.tier}"
+        assert b.tier == expected_tier, (
+            f"Expected tier {expected_tier} for google={google_tier}, vendor={vendor_tier}, but got {b.tier}"
+        )
 
     print("✓ Dual breaker tier correctly evaluates to max of sub-breakers")
 
@@ -209,11 +210,11 @@ def test_full_cycle():
 
     print("✓ Full cycle: 3 failures → Tier 3 → probe success → reset")
 
+
 def test_sync_from_valkey_exception_handling():
     """Exception during Valkey sync is caught and logged."""
     reset_breakers()
     b = get_breaker()
-
 
     mock_redis = AsyncMock()
     mock_redis.hgetall.side_effect = Exception("Simulated connection error")
@@ -241,7 +242,7 @@ async def test_save_to_valkey_success():
 
     mock_redis = AsyncMock()
 
-    with patch('time.time', return_value=1234560000.0):
+    with patch("time.time", return_value=1234560000.0):
         await sub.save_to_valkey(mock_redis)
 
     expected_state = {
@@ -278,9 +279,11 @@ async def test_save_to_valkey_exception_handling():
     mock_redis = AsyncMock()
     mock_redis.hset.side_effect = Exception("Connection lost")
 
-    with patch('router.circuit_breaker.logger') as mock_logger:
+    with patch("router.circuit_breaker.logger") as mock_logger:
         await sub.save_to_valkey(mock_redis)
         mock_logger.warning.assert_called_once()
+
+
 @pytest.mark.anyio
 async def test_dual_circuit_breaker_short_circuits():
     """Verify DualCircuitBreaker.is_allowed() short-circuits when Google is allowed, preserving Vendor probe slots."""
@@ -359,7 +362,7 @@ if __name__ == "__main__":
     asyncio.run(test_save_to_valkey_success())
     asyncio.run(test_save_to_valkey_no_client())
     asyncio.run(test_save_to_valkey_exception_handling())
-    asyncio.run(test_dual_circuit_breaker_evaluates_both())
+    asyncio.run(test_dual_circuit_breaker_short_circuits())
     asyncio.run(test_sync_from_valkey_bytes_and_str())
 
     print("\n" + "=" * 60)

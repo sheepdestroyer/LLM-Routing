@@ -5,19 +5,23 @@ import httpx
 
 from router.main import _register_ollama_models_in_db
 
+
 @pytest.fixture
 def mock_env():
     # Make sure we don't blow up router.main with missing env vars
-    with patch.dict(os.environ, {
-        "DATABASE_URL": "postgresql://test:test@localhost:5432/test",
-        "ROUTER_API_KEY": "test_api_key"
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {"DATABASE_URL": "postgresql://test:test@localhost:5432/test", "ROUTER_API_KEY": "test_api_key"},
+        clear=False,
+    ):
         yield
+
 
 @pytest.mark.asyncio
 async def test_register_ollama_models_no_master_key(mock_env, caplog):
     await _register_ollama_models_in_db(None)
     assert "No LiteLLM master key provided" in caplog.text
+
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
@@ -49,6 +53,7 @@ async def test_register_ollama_models_static_fallback(mock_open, mock_get_client
     }
     assert posted_models == expected_models
 
+
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
 async def test_register_ollama_models_from_config(mock_get_client, mock_env):
@@ -64,15 +69,12 @@ async def test_register_ollama_models_from_config(mock_get_client, mock_env):
         "model_list": [
             {
                 "model_name": "ollama-deepseek-test-model",
-                "litellm_params": {"model": "ollama_chat/deepseek-test-model"}
+                "litellm_params": {"model": "ollama_chat/deepseek-test-model"},
             },
-            {
-                "model_name": "ollama/GPT-5.6 Luna (max)",
-                "litellm_params": {"model": "ollama_chat/gpt-5.6-luna"}
-            },
+            {"model_name": "ollama/GPT-5.6 Luna (max)", "litellm_params": {"model": "ollama_chat/gpt-5.6-luna"}},
             {
                 "model_name": "ignore-this-model",
-            }
+            },
         ]
     }
 
@@ -89,6 +91,7 @@ async def test_register_ollama_models_from_config(mock_get_client, mock_env):
         for call in mock_client.post.call_args_list
     }
     assert posted_models == {"ollama-deepseek-test-model", "ollama/GPT-5.6 Luna (max)"}
+
 
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
@@ -118,6 +121,7 @@ async def test_register_ollama_models_http_failure(mock_open, mock_get_client, m
     assert "Failed to register ollama-deepseek-v4-flash" in caplog.text
     assert mock_client.post.call_count == 6
 
+
 @pytest.mark.asyncio
 @patch("router.main.get_http_client")
 @patch("router.main.asyncio.to_thread")
@@ -134,4 +138,4 @@ async def test_register_ollama_models_config_load_exception(mock_to_thread, mock
 
     assert "Failed to load/parse LiteLLM config at" in caplog.text
     assert "Could not load Ollama models from config.yaml, falling back to static definitions" in caplog.text
-    assert mock_client.post.call_count == 6 # Falls back to static
+    assert mock_client.post.call_count == 6  # Falls back to static

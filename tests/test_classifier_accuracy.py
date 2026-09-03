@@ -8,11 +8,13 @@ import urllib.request
 import urllib.error
 
 # Load config to get system prompt
-CONFIG_PATH = os.getenv("CONFIG_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "router", "config.yaml"))
+CONFIG_PATH = os.getenv(
+    "CONFIG_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "router", "config.yaml")
+)
 system_prompt = ""
 if os.path.exists(CONFIG_PATH):
     try:
-        with open(CONFIG_PATH, "r") as f:
+        with open(CONFIG_PATH) as f:
             config = yaml.safe_load(f)
             system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
     except Exception as e:
@@ -21,8 +23,8 @@ if os.path.exists(CONFIG_PATH):
 if not system_prompt:
     system_prompt = (
         "Analyze the user request complexity. Respond with exactly one of these identifiers:\n"
-        "- If the request requires deep algorithmic logic, complex code refactoring, system architecture decisions, or complex multi-file tracing: return \"agent-complex-core\".\n"
-        "- If the request is a simple syntax fix, file lookup, directory check, git message write, or repetitive boilerplate: return \"agent-simple-core\".\n"
+        '- If the request requires deep algorithmic logic, complex code refactoring, system architecture decisions, or complex multi-file tracing: return "agent-complex-core".\n'
+        '- If the request is a simple syntax fix, file lookup, directory check, git message write, or repetitive boilerplate: return "agent-simple-core".\n'
         "Do not add markdown formatting or explanation. Only output the target model name string."
     )
 
@@ -42,43 +44,52 @@ test_cases = [
     ("Define a helper function to calculate the square of a number", "agent-simple-core"),
     ("Delete all .tmp files in the current directory", "agent-simple-core"),
     ("Check if a package is installed using apt", "agent-simple-core"),
-
     # Complex prompts (agent-complex-core)
     ("Design a distributed pub/sub system with Valkey and describe failover states", "agent-complex-core"),
     ("Refactor this 500-line class to follow Clean Code principles and add unit tests", "agent-complex-core"),
-    ("Implement a custom memory-efficient Trie data structure in C++ and analyze its space complexity", "agent-complex-core"),
+    (
+        "Implement a custom memory-efficient Trie data structure in C++ and analyze its space complexity",
+        "agent-complex-core",
+    ),
     ("Troubleshoot a race condition in a multi-threaded Go web server handling WebSockets", "agent-complex-core"),
     ("Design a database schema for a multi-tenant e-commerce platform with row-level security", "agent-complex-core"),
-    ("Write a Kubernetes deployment configuration for a microservices app with strict affinity rules", "agent-complex-core"),
+    (
+        "Write a Kubernetes deployment configuration for a microservices app with strict affinity rules",
+        "agent-complex-core",
+    ),
     ("Optimize a slow PostgreSQL query with multiple joins, aggregations, and subqueries", "agent-complex-core"),
     ("Create a compiler frontend (lexer and parser) for a custom query language using ANTLR", "agent-complex-core"),
     ("Implement a secure OAuth2 login flow with refresh token rotation and PKCE in React", "agent-complex-core"),
     ("Refactor our monolithic legacy billing service into event-driven microservices", "agent-complex-core"),
     ("Analyze heap dump profiles to identify a memory leak in a Node.js production service", "agent-complex-core"),
-    ("Write a Python script to perform semantic search on a dataset using vector embeddings and cosine similarity", "agent-complex-core")
+    (
+        "Write a Python script to perform semantic search on a dataset using vector embeddings and cosine similarity",
+        "agent-complex-core",
+    ),
 ]
 
 # We support querying either llama-server directly or the router gateway
 # Default is llama-server directly
 LLAMA_SERVER_URL = "http://127.0.0.1:8080/v1/chat/completions"
 
+
 def query_model(prompt: str) -> tuple[str, float]:
     payload = {
         "model": "locallama-qwen-routing",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
         "temperature": 0.0,
         "max_tokens": 15,
-        "grammar": 'root ::= "agent-simple-core" | "agent-complex-core"'
+        "grammar": 'root ::= "agent-simple-core" | "agent-complex-core"',
     }
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         LLAMA_SERVER_URL,
         data=data,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}",
+        },
     )
 
     start_time = time.time()
@@ -93,6 +104,7 @@ def query_model(prompt: str) -> tuple[str, float]:
         latency = (time.time() - start_time) * 1000.0
         print(f"Error querying model for prompt '{prompt[:30]}...': {e}")
         return "ERROR", latency
+
 
 def calculate_metrics(results):
     total = len(results)
@@ -118,10 +130,11 @@ def calculate_metrics(results):
             "f1": f1 * 100.0,
             "tp": tp,
             "fp": fp,
-            "fn": fn
+            "fn": fn,
         }
 
     return accuracy, metrics
+
 
 def main():
     print("Starting Classifier Accuracy Evaluation Suite...")
@@ -138,23 +151,14 @@ def main():
         actual, latency = query_model(prompt)
         latencies.append(latency)
 
-        success = (actual == expected)
+        success = actual == expected
         status = "✓ PASS" if success else "✗ FAIL"
         print(f"      Expected: {expected} | Actual: {actual} | Latency: {latency:.2f}ms | {status}")
 
-        results.append({
-            "prompt": prompt,
-            "expected": expected,
-            "actual": actual,
-            "latency": latency
-        })
+        results.append({"prompt": prompt, "expected": expected, "actual": actual, "latency": latency})
 
         if not success:
-            misclassifications.append({
-                "prompt": prompt,
-                "expected": expected,
-                "actual": actual
-            })
+            misclassifications.append({"prompt": prompt, "expected": expected, "actual": actual})
 
     print("=" * 80)
     accuracy, metrics = calculate_metrics(results)
@@ -182,6 +186,7 @@ def main():
             print("-" * 40)
     else:
         print("🎉 No misclassifications! Perfect accuracy!")
+
 
 if __name__ == "__main__":
     main()

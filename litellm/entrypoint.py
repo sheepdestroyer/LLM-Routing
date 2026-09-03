@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Entrypoint for LiteLLM container — loads secrets from bind-mounted files."""
-import os
+
+import datetime
 import json
+import os
+import shlex
+import socket
 import sys
 import time
-import socket
-import datetime
-import shlex
-from datetime import datetime as original_datetime, timezone
+from datetime import datetime as original_datetime
 
 # Load .env into os.environ
 env_path = "/config/.env"
@@ -38,8 +39,9 @@ if os.path.exists(token_path) and "GEMINI_OAUTH_TOKEN" not in os.environ:
                     token = creds["token"].get("access_token")
                 if token:
                     os.environ["GEMINI_OAUTH_TOKEN"] = token
-    except (json.JSONDecodeError, IOError, AttributeError):
+    except OSError, json.JSONDecodeError, AttributeError:
         pass
+
 
 # Wait for PostgreSQL to be ready before starting LiteLLM
 # This prevents "Can't reach database server" errors during pod restarts
@@ -55,6 +57,7 @@ def check_tcp_port(ip: str, port: int) -> bool:
     except Exception:
         return False
 
+
 max_wait = 60
 postgres_port_str = os.environ.get("POSTGRES_PORT") or "5432"
 try:
@@ -65,17 +68,19 @@ except ValueError:
 print(f"🔌 Waiting for PostgreSQL on :{postgres_port} (max {max_wait}s)...")
 for i in range(max_wait):
     if check_tcp_port("127.0.0.1", postgres_port):
-        print(f"✅ PostgreSQL ready after {i+1}s")
+        print(f"✅ PostgreSQL ready after {i + 1}s")
         break
     time.sleep(1)
 else:
     print(f"⚠️ Warning: PostgreSQL not ready after {max_wait}s — proceeding anyway")
+
 
 # Patch LiteLLM at runtime to support flexible date formats
 # Based on PR feedback, we patch datetime.datetime globally for robustness.
 # We ensure naive/aware safety by trying the original format first.
 class RobustDatetime(original_datetime):
     """A datetime subclass that handles flexible date format parsing in strptime."""
+
     @classmethod
     def strptime(cls, date_str: str, fmt: str) -> original_datetime:
         """Flexible strptime implementation that handles various ISO-like formats."""
@@ -85,16 +90,20 @@ class RobustDatetime(original_datetime):
         # 1. Try the original format first to maintain compatibility (returning naive if expected)
         try:
             return original_datetime.strptime(date_str, fmt)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
         # 2. Try flexible fallbacks if the original format failed
         formats = [
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
-            "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
-            "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S%z"
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%S%z",
         ]
         for f in formats:
             if f == fmt:
@@ -103,13 +112,14 @@ class RobustDatetime(original_datetime):
                 dt = original_datetime.strptime(date_str, f)
                 # For fallbacks, ensure we return a UTC-aware datetime
                 if dt.tzinfo is not None:
-                    return dt.astimezone(timezone.utc)
-                return dt.replace(tzinfo=timezone.utc)
-            except (ValueError, TypeError):
+                    return dt.astimezone(datetime.UTC)
+                return dt.replace(tzinfo=datetime.UTC)
+            except ValueError, TypeError:
                 continue
 
         # Fallback to original behavior to raise expected ValueError if all formats fail
         return original_datetime.strptime(date_str, fmt)
+
 
 print("🩹 Applying global runtime patch for flexible date formats...")
 datetime.datetime = RobustDatetime
@@ -129,13 +139,15 @@ except ImportError as e:
     serializer = None
 
 if serializer is not None:
+
     def _serialize_dt(dt):
         """Serialize datetime to ISO8601 with timezone (UTC if naive)."""
         if dt.utcoffset() is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=datetime.UTC)
         else:
-            dt = dt.astimezone(timezone.utc)
+            dt = dt.astimezone(datetime.UTC)
         return dt.isoformat().replace("+00:00", "Z")
+
     serializer.register(original_datetime, _serialize_dt)
     serializer.register(RobustDatetime, _serialize_dt)
     print("🩹 Registered original_datetime + RobustDatetime with Prisma serializer")
@@ -144,6 +156,7 @@ sys.stdout.flush()
 # Configure logging: ensure INFO/DEBUG/WARNING route to stdout (priority 6 in journald)
 # and ERROR/CRITICAL route to stderr (priority 3 in journald).
 import logging
+
 
 class MaxLevelFilter(logging.Filter):
     """Filter that only passes log records up to a maximum severity level."""
@@ -215,4 +228,3 @@ except Exception:
 litellm_port = os.environ.get("LITELLM_PORT") or os.environ.get("PORT") or "4000"
 sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
 run_server()
-

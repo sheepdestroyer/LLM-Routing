@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Utility to query GitHub PR status and check for required approvals."""
-import subprocess
+
 import json
+import subprocess
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def run_cmd(argv: Sequence[str]) -> str:

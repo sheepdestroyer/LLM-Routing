@@ -4,7 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from router.main import get_http_client, proxy_models, HTTP_MAX_CONNECTIONS, HTTP_MAX_KEEPALIVE_CONNECTIONS, HTTP_KEEPALIVE_EXPIRY
+from router.main import (
+    get_http_client,
+    proxy_models,
+    HTTP_MAX_CONNECTIONS,
+    HTTP_MAX_KEEPALIVE_CONNECTIONS,
+    HTTP_KEEPALIVE_EXPIRY,
+)
+
 
 def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
@@ -32,7 +39,6 @@ def test_http_client_limits():
         main._http_client = original_client
 
 
-
 @pytest.mark.anyio
 async def test_proxy_models_success():
     # Mock the AsyncClient.get to return a successful mock response
@@ -50,11 +56,13 @@ async def test_proxy_models_success():
 
         # Verify that the response contains injected models
         import json
+
         body = json.loads(response.body)
         model_ids = [m["id"] for m in body["data"]]
         assert "llm-routing-auto-free" in model_ids
         assert "llm-routing-auto-agy" in model_ids
         assert "model-a" in model_ids
+
 
 @pytest.mark.anyio
 async def test_proxy_models_error_status():
@@ -72,6 +80,7 @@ async def test_proxy_models_error_status():
         assert isinstance(response, Response)
         assert response.status_code == 500
         assert response.body == b"Internal Server Error"
+
 
 @pytest.mark.anyio
 async def test_proxy_models_invalid_json():
@@ -98,7 +107,7 @@ def test_litellm_config_local_model_context_limits():
     from pathlib import Path
 
     config_path = Path(__file__).resolve().parent.parent / "litellm" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     models_by_name = {m["model_name"]: m for m in config.get("model_list", []) if "model_name" in m}
@@ -119,5 +128,3 @@ def test_litellm_config_local_model_context_limits():
 
     assert "locallama-qwen-routing" in models_by_name
     assert models_by_name["locallama-qwen-routing"]["model_info"]["max_tokens"] == 8192
-
-

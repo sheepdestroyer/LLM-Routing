@@ -4,17 +4,21 @@ import json
 from unittest.mock import patch, MagicMock
 from scripts.get_pr_status import run_cmd, get_pr_status
 
+
 def test_run_cmd_success():
     output = run_cmd(["echo", "hello"])
     assert output == "hello"
+
 
 def test_run_cmd_strips_whitespace():
     output = run_cmd(["echo", "  hello  "])
     assert output == "hello"
 
+
 def test_run_cmd_error():
     with pytest.raises(subprocess.CalledProcessError):
         run_cmd(["false"])
+
 
 @patch("scripts.get_pr_status.subprocess.run")
 def test_run_cmd_timeout(mock_run):
@@ -22,6 +26,7 @@ def test_run_cmd_timeout(mock_run):
     mock_run.side_effect = subprocess.TimeoutExpired(["sleep", "0.1"], 30)
     with pytest.raises(subprocess.TimeoutExpired):
         run_cmd(["sleep", "0.1"])
+
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_success(mock_run_cmd, capsys):
@@ -31,8 +36,8 @@ def test_get_pr_status_success(mock_run_cmd, capsys):
         "statusCheckRollup": [
             {"conclusion": "SUCCESS", "name": "test1"},
             {"state": "SUCCESS", "name": "test2"},
-            {"conclusion": "FAILURE", "name": "test3"}
-        ]
+            {"conclusion": "FAILURE", "name": "test3"},
+        ],
     }
     mock_run_cmd.return_value = json.dumps(mock_data)
 
@@ -42,15 +47,14 @@ def test_get_pr_status_success(mock_run_cmd, capsys):
     assert "PR Status: OPEN" in captured.out
     assert "Review Decision: APPROVED" in captured.out
     assert "Checks: 2/3 passed" in captured.out
-    mock_run_cmd.assert_called_once_with(["gh", "pr", "view", "123", "--json", "state,reviewDecision,statusCheckRollup"])
+    mock_run_cmd.assert_called_once_with(
+        ["gh", "pr", "view", "123", "--json", "state,reviewDecision,statusCheckRollup"]
+    )
+
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_no_id(mock_run_cmd, capsys):
-    mock_data = {
-        "state": "MERGED",
-        "reviewDecision": None,
-        "statusCheckRollup": []
-    }
+    mock_data = {"state": "MERGED", "reviewDecision": None, "statusCheckRollup": []}
     mock_run_cmd.return_value = json.dumps(mock_data)
 
     get_pr_status()
@@ -60,6 +64,7 @@ def test_get_pr_status_no_id(mock_run_cmd, capsys):
     assert "Review Decision: NONE" in captured.out
     assert "Checks: 0/0 passed" in captured.out
     mock_run_cmd.assert_called_once_with(["gh", "pr", "view", "--json", "state,reviewDecision,statusCheckRollup"])
+
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_error(mock_run_cmd, capsys):
@@ -71,6 +76,7 @@ def test_get_pr_status_error(mock_run_cmd, capsys):
     assert e.value.code == 1
     captured = capsys.readouterr()
     assert "Error: Failed to fetch PR status: gh not found" in captured.err
+
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_invalid_json(mock_run_cmd, capsys):
@@ -86,11 +92,7 @@ def test_get_pr_status_invalid_json(mock_run_cmd, capsys):
 
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_null_checks(mock_run_cmd, capsys):
-    mock_data = {
-        "state": "OPEN",
-        "reviewDecision": "REVIEW_REQUIRED",
-        "statusCheckRollup": None
-    }
+    mock_data = {"state": "OPEN", "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": None}
     mock_run_cmd.return_value = json.dumps(mock_data)
 
     get_pr_status("123")
@@ -100,6 +102,7 @@ def test_get_pr_status_null_checks(mock_run_cmd, capsys):
     assert "Review Decision: REVIEW_REQUIRED" in captured.out
     assert "Checks: 0/0 passed" in captured.out
 
+
 def test_get_pr_status_invalid_pr_id(capsys):
     with pytest.raises(SystemExit) as e:
         get_pr_status("invalid_id")
@@ -107,13 +110,10 @@ def test_get_pr_status_invalid_pr_id(capsys):
     captured = capsys.readouterr()
     assert "Error: Invalid PR ID format. Must be numeric." in captured.err
 
+
 @patch("scripts.get_pr_status.run_cmd")
 def test_get_pr_status_numeric_int_and_padded_string(mock_run_cmd, capsys):
-    mock_data = {
-        "state": "OPEN",
-        "reviewDecision": "APPROVED",
-        "statusCheckRollup": []
-    }
+    mock_data = {"state": "OPEN", "reviewDecision": "APPROVED", "statusCheckRollup": []}
     mock_run_cmd.return_value = json.dumps(mock_data)
 
     get_pr_status(123)

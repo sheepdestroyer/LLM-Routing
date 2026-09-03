@@ -1,9 +1,13 @@
 """Benchmark local-qwen-routing classifier against labeled dataset."""
-import os
-import json, urllib.request, urllib.error, time
+
 import concurrent.futures
+import json
+import os
 import threading
-from collections import defaultdict, Counter
+import time
+import urllib.error
+import urllib.request
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # Shared chat response parser (used by verification scripts too)
@@ -28,10 +32,8 @@ agent-advanced-core: system-level architecture, cross-cutting concerns, novel de
 
 Task: """
 
-TIERS = [
-    "agent-simple-core", "agent-medium-core", "agent-complex-core",
-    "agent-reasoning-core", "agent-advanced-core"
-]
+TIERS = ["agent-simple-core", "agent-medium-core", "agent-complex-core", "agent-reasoning-core", "agent-advanced-core"]
+
 
 def classify(prompt):
     """Call local-qwen-routing via llama-server."""
@@ -44,12 +46,16 @@ def classify(prompt):
     req = urllib.request.Request(
         "http://127.0.0.1:8080/v1/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}"}
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('ROUTER_API_KEY', 'local-token')}",
+        },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     content, _ = parse_chat_response(data)
     return content if content else "ERROR"
+
 
 total = len(dataset.get("prompts", []))
 print(f"Benchmark: local-qwen-routing vs {total} labeled prompts\n")
@@ -59,6 +65,7 @@ results = []
 correct = 0
 per_tier = {t: {"correct": 0, "total": 0} for t in TIERS}
 confusion = defaultdict(Counter)  # confusion[expected][predicted]
+
 
 def process_item(item):
     """Process a single dataset item and return expected/predicted labels."""
@@ -76,12 +83,13 @@ def process_item(item):
 
     return expected, predicted
 
+
 results_list = [None] * total
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
     rate_lock = threading.Lock()
     next_start_time = [time.monotonic()]
-    
+
     def process_item_with_rate_limit(index_and_item):
         """Helper to process an item with a simplified rate limit delay."""
         i, item = index_and_item
@@ -98,8 +106,10 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         expected, predicted = process_item(item)
         return i, item, expected, predicted
 
-    futures = [executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))]
-    
+    futures = [
+        executor.submit(process_item_with_rate_limit, (i, item)) for i, item in enumerate(dataset.get("prompts", []))
+    ]
+
     completed_count = 0
     for future in concurrent.futures.as_completed(futures):
         i, item, expected, predicted = future.result()
@@ -136,18 +146,18 @@ results = [r for r in results_list if r is not None]
 scored_total = sum(t["total"] for t in per_tier.values())
 overall = (correct / scored_total * 100) if scored_total > 0 else 0.0
 
-print(f"\n{'='*60}")
+print(f"\n{'=' * 60}")
 print(f"Overall accuracy: {correct}/{scored_total} ({overall:.1f}%)")
-print(f"{'='*60}")
+print(f"{'=' * 60}")
 
-print(f"\nPer-tier accuracy:")
+print("\nPer-tier accuracy:")
 for tier in TIERS:
     t = per_tier[tier]
     pct = t["correct"] / t["total"] * 100 if t["total"] > 0 else 0
     bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
     print(f"  {tier:30s} {t['correct']:3d}/{t['total']:3d}  {bar} {pct:.1f}%")
 
-print(f"\nConfusion matrix (expected → predicted):")
+print("\nConfusion matrix (expected → predicted):")
 header = " " * 30 + "".join(f"{t:25s}" for t in TIERS)
 print(header)
 for exp_tier in TIERS:
@@ -168,18 +178,28 @@ for exp_tier in TIERS:
 
 # Save detailed results
 out_path = Path(__file__).resolve().parent.parent / "data" / "benchmark_results.json"
-with open(out_path, 'w') as f:
-    json.dump({
-        "classifier": "local-qwen-routing",
-        "dataset_total": total,
-        "overall_accuracy": round(overall, 1),
-        "per_tier": {t: {
-            "correct": per_tier[t]["correct"],
-            "total": per_tier[t]["total"],
-            "accuracy": round(per_tier[t]["correct"] / per_tier[t]["total"] * 100, 1) if per_tier[t]["total"] > 0 else 0
-        } for t in TIERS},
-        "confusion": {t: dict(confusion[t]) for t in TIERS},
-        "details": results,
-    }, f, indent=2, ensure_ascii=False)
+with open(out_path, "w") as f:
+    json.dump(
+        {
+            "classifier": "local-qwen-routing",
+            "dataset_total": total,
+            "overall_accuracy": round(overall, 1),
+            "per_tier": {
+                t: {
+                    "correct": per_tier[t]["correct"],
+                    "total": per_tier[t]["total"],
+                    "accuracy": round(per_tier[t]["correct"] / per_tier[t]["total"] * 100, 1)
+                    if per_tier[t]["total"] > 0
+                    else 0,
+                }
+                for t in TIERS
+            },
+            "confusion": {t: dict(confusion[t]) for t in TIERS},
+            "details": results,
+        },
+        f,
+        indent=2,
+        ensure_ascii=False,
+    )
 
 print(f"\nDetailed results saved to {out_path}")

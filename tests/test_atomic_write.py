@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from router.main import _atomic_write_json_sync, _atomic_write_json_async
 
+
 def test_atomic_write_json_sync_success(tmp_path):
     """Test successful synchronous atomic JSON write."""
     target_dir = tmp_path / "subdir"
@@ -18,10 +19,11 @@ def test_atomic_write_json_sync_success(tmp_path):
     assert target_file.exists()
     assert target_dir.exists()
 
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
 
     assert loaded_data == data
+
 
 @patch("router.main.os.replace")
 def test_atomic_write_json_sync_replace_error(mock_replace, tmp_path):
@@ -42,6 +44,7 @@ def test_atomic_write_json_sync_replace_error(mock_replace, tmp_path):
     # because the target wasn't written, and the tmp file was unlinked.
     assert list(tmp_path.iterdir()) == []
 
+
 def test_atomic_write_json_sync_dump_error(tmp_path):
     """Test error handling when json.dump fails."""
     target_file = tmp_path / "data.json"
@@ -58,6 +61,7 @@ def test_atomic_write_json_sync_dump_error(tmp_path):
     assert not target_file.exists()
     assert list(tmp_path.iterdir()) == []
 
+
 @patch("router.main.os.fdopen")
 def test_atomic_write_json_sync_fdopen_error(mock_fdopen, tmp_path):
     """Test error handling when os.fdopen fails."""
@@ -72,6 +76,7 @@ def test_atomic_write_json_sync_fdopen_error(mock_fdopen, tmp_path):
     assert not target_file.exists()
     assert list(tmp_path.iterdir()) == []
 
+
 @pytest.mark.anyio
 async def test_atomic_write_json_async_success(tmp_path):
     """Test successful asynchronous atomic JSON write."""
@@ -82,10 +87,11 @@ async def test_atomic_write_json_async_success(tmp_path):
 
     assert target_file.exists()
 
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
 
     assert loaded_data == data
+
 
 def test_atomic_write_json_sync_overwrite_success(tmp_path):
     """Test that atomic write successfully overwrites an existing file."""
@@ -100,9 +106,10 @@ def test_atomic_write_json_sync_overwrite_success(tmp_path):
     # Overwrite with new data
     _atomic_write_json_sync(str(target_file), new_data)
 
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == new_data
+
 
 def test_atomic_write_json_sync_overwrite_failure_keeps_original(tmp_path):
     """Test that if replace fails during overwrite, the existing target file remains intact."""
@@ -122,9 +129,10 @@ def test_atomic_write_json_sync_overwrite_failure_keeps_original(tmp_path):
             _atomic_write_json_sync(str(target_file), new_data)
 
     # Verify the original file was NOT deleted or modified
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+
 
 def test_atomic_write_json_sync_overwrite_dump_failure_keeps_original(tmp_path):
     """Test that if dump fails during overwrite, the existing target file remains intact."""
@@ -143,9 +151,10 @@ def test_atomic_write_json_sync_overwrite_dump_failure_keeps_original(tmp_path):
         _atomic_write_json_sync(str(target_file), {"new": Unserializable()})
 
     # Verify the original file was NOT deleted or modified
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+
 
 @pytest.mark.anyio
 async def test_atomic_write_json_async_overwrite_success(tmp_path):
@@ -161,9 +170,10 @@ async def test_atomic_write_json_async_overwrite_success(tmp_path):
     # Overwrite with new data
     await _atomic_write_json_async(str(target_file), new_data)
 
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == new_data
+
 
 @pytest.mark.anyio
 async def test_atomic_write_json_async_overwrite_failure_keeps_original(tmp_path):
@@ -184,9 +194,10 @@ async def test_atomic_write_json_async_overwrite_failure_keeps_original(tmp_path
             await _atomic_write_json_async(str(target_file), new_data)
 
     # Verify the original file was NOT deleted or modified
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+
 
 @pytest.mark.anyio
 async def test_atomic_write_json_async_overwrite_dump_failure_keeps_original(tmp_path):
@@ -206,9 +217,10 @@ async def test_atomic_write_json_async_overwrite_dump_failure_keeps_original(tmp
         await _atomic_write_json_async(str(target_file), {"new": Unserializable()})
 
     # Verify the original file was NOT deleted or modified
-    with open(target_file, "r", encoding="utf-8") as f:
+    with open(target_file, encoding="utf-8") as f:
         loaded_data = json.load(f)
     assert loaded_data == old_data
+
 
 @patch("router.main.os.replace")
 @patch("router.main.os.unlink")

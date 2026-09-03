@@ -1,6 +1,7 @@
 import pytest
 from router.main import estimate_prompt_tokens
 
+
 @pytest.mark.parametrize(
     "body, expected_tokens",
     [
@@ -59,11 +60,7 @@ from router.main import estimate_prompt_tokens
             id="message_with_no_content_key",
         ),
         pytest.param(
-            {
-                "messages": [
-                    {"content": {"key": "value"}}
-                ]
-            },
+            {"messages": [{"content": {"key": "value"}}]},
             50,
             id="unsupported_content_type_ignored",
         ),

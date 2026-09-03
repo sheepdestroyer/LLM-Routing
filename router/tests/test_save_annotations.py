@@ -8,6 +8,7 @@ from pathlib import Path
 from router import main
 from router.main import AnnotationPayload, AnnotationItem
 
+
 @pytest.fixture(autouse=True)
 def reset_globals():
     """Reset global variables related to annotations."""
@@ -19,6 +20,7 @@ def reset_globals():
     main._annotations_cache.clear()
     main._annotations_cache.update(original_cache)
 
+
 @pytest.mark.asyncio
 @patch("router.main.DATA_DIR", new_callable=lambda: Path("/tmp"))
 @patch("router.main._read_annotations_async", new_callable=AsyncMock)
@@ -28,9 +30,7 @@ async def test_save_annotations_success(mock_exists, mock_write, mock_read, mock
     # Setup mocks
     mock_exists.return_value = True
 
-    existing_data = {
-        "123": {"tier": 1, "note": "old note", "ts": "123"}
-    }
+    existing_data = {"123": {"tier": 1, "note": "old note", "ts": "123"}}
     mock_read.return_value = existing_data
 
     # Create payload
@@ -44,7 +44,7 @@ async def test_save_annotations_success(mock_exists, mock_write, mock_read, mock
     assert isinstance(response, JSONResponse)
 
     # Need to decode JSON content to verify it
-    body = json.loads(response.body.decode('utf-8'))
+    body = json.loads(response.body.decode("utf-8"))
     assert body["status"] == "ok"
     assert body["saved"] == 2
 
@@ -63,6 +63,7 @@ async def test_save_annotations_success(mock_exists, mock_write, mock_read, mock
     assert written_data["h456"]["note"] is None
     assert written_data["h456"]["ts"] is None
 
+
 @pytest.mark.asyncio
 @patch("router.main.DATA_DIR", new_callable=lambda: Path("/tmp"))
 @patch("router.main._read_annotations_async", new_callable=AsyncMock)
@@ -72,9 +73,7 @@ async def test_save_annotations_partial_update(mock_exists, mock_write, mock_rea
     # Setup mocks
     mock_exists.return_value = True
 
-    existing_data = {
-        "123": {"tier": 1, "note": "old note", "ts": "123"}
-    }
+    existing_data = {"123": {"tier": 1, "note": "old note", "ts": "123"}}
     mock_read.return_value = existing_data
 
     # Create payload for a partial update - only tier is changed
@@ -91,8 +90,9 @@ async def test_save_annotations_partial_update(mock_exists, mock_write, mock_rea
     written_data = mock_write.call_args[0][1]
     assert "123" in written_data
     assert written_data["123"]["tier"] == 2
-    assert written_data["123"]["note"] == "old note" # Should be preserved
-    assert written_data["123"]["ts"] == "123" # Should be preserved
+    assert written_data["123"]["note"] == "old note"  # Should be preserved
+    assert written_data["123"]["ts"] == "123"  # Should be preserved
+
 
 @pytest.mark.asyncio
 @patch("router.main.DATA_DIR", new_callable=lambda: Path("/tmp"))
@@ -121,6 +121,7 @@ async def test_save_annotations_no_existing(mock_exists, mock_write, mock_read, 
     assert "123" in written_data
     assert written_data["123"]["tier"] == 1
 
+
 @pytest.mark.asyncio
 @patch("router.main.DATA_DIR", new_callable=lambda: Path("/tmp"))
 @patch("router.main._read_annotations_async", new_callable=AsyncMock)
@@ -148,6 +149,7 @@ async def test_save_annotations_read_error(mock_exists, mock_write, mock_read, m
     written_data = mock_write.call_args[0][1]
     assert "123" in written_data
     assert len(written_data) == 1
+
 
 @pytest.mark.asyncio
 @patch("router.main.DATA_DIR", new_callable=lambda: Path("/tmp"))

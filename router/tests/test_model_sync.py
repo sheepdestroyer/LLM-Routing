@@ -75,9 +75,18 @@ async def test_prune_duplicates(sync_engine, mock_client):
 
     grouped = {
         "locallama-qwen": [
-            {"model_name": "locallama-qwen", "model_info": {"id": "dup-1", "db_model": True, "updated_at": "2026-01-01"}},
-            {"model_name": "locallama-qwen", "model_info": {"id": "dup-2", "db_model": True, "updated_at": "2026-01-02"}},
-            {"model_name": "locallama-qwen", "model_info": {"id": "keep-3", "db_model": True, "updated_at": "2026-01-03"}},
+            {
+                "model_name": "locallama-qwen",
+                "model_info": {"id": "dup-1", "db_model": True, "updated_at": "2026-01-01"},
+            },
+            {
+                "model_name": "locallama-qwen",
+                "model_info": {"id": "dup-2", "db_model": True, "updated_at": "2026-01-02"},
+            },
+            {
+                "model_name": "locallama-qwen",
+                "model_info": {"id": "keep-3", "db_model": True, "updated_at": "2026-01-03"},
+            },
         ],
         "unmanaged-model": [
             {"model_name": "unmanaged-model", "model_info": {"id": "unm-1", "db_model": True}},
@@ -85,7 +94,7 @@ async def test_prune_duplicates(sync_engine, mock_client):
         ],
         "single-model": [
             {"model_name": "single-model", "model_info": {"id": "keep-1", "db_model": True}},
-        ]
+        ],
     }
 
     # Only prune managed models
@@ -124,7 +133,7 @@ async def test_remove_stale_models(sync_engine, mock_client):
         ],
         "locallama-qwen": [
             {"model_name": "locallama-qwen", "model_info": {"id": "keep-1", "db_model": True}},
-        ]
+        ],
     }
 
     removed = await sync_engine.remove_stale_models(grouped)
@@ -156,7 +165,7 @@ async def test_discover_agy_latest_flash(sync_engine, mock_client):
             {"id": "gemini-3.8-flash-high"},
             {"id": "gemini-3.10-flash-high"},  # Double-digit minor version
             {"id": "claude-opus-4-6-thinking"},
-        ]
+        ],
     }
     mock_client.get.return_value = mock_resp
 
@@ -235,11 +244,13 @@ async def test_upsert_model_update_on_drift(sync_engine, mock_client):
     mock_client.post.return_value = mock_resp
 
     existing = {
-        "agy-gemini": [{
-            "model_name": "agy-gemini",
-            "litellm_params": {"model": "openai/gemini-3.7-flash", "api_base": "http://127.0.0.1:5005/v1"},
-            "model_info": {"id": "mod-123", "db_model": True, "supports_vision": False},
-        }]
+        "agy-gemini": [
+            {
+                "model_name": "agy-gemini",
+                "litellm_params": {"model": "openai/gemini-3.7-flash", "api_base": "http://127.0.0.1:5005/v1"},
+                "model_info": {"id": "mod-123", "db_model": True, "supports_vision": False},
+            }
+        ]
     }
     # Param drift
     target1 = {
@@ -266,11 +277,13 @@ async def test_upsert_model_update_on_drift(sync_engine, mock_client):
 async def test_upsert_model_update_errors(sync_engine, mock_client):
     mock_client.post.return_value = MagicMock(status_code=500, text="error")
     existing = {
-        "agy-gemini": [{
-            "model_name": "agy-gemini",
-            "litellm_params": {"model": "old"},
-            "model_info": {"id": "mod-123", "db_model": True},
-        }]
+        "agy-gemini": [
+            {
+                "model_name": "agy-gemini",
+                "litellm_params": {"model": "old"},
+                "model_info": {"id": "mod-123", "db_model": True},
+            }
+        ]
     }
     target = {"model_name": "agy-gemini", "litellm_params": {"model": "new"}}
     action, ok = await sync_engine.upsert_model(target, existing_grouped=existing)
@@ -284,11 +297,13 @@ async def test_upsert_model_update_errors(sync_engine, mock_client):
 @pytest.mark.asyncio
 async def test_upsert_model_unchanged(sync_engine, mock_client):
     existing = {
-        "agy-gemini": [{
-            "model_name": "agy-gemini",
-            "litellm_params": {"model": "openai/gemini-3.8-flash", "api_base": "http://127.0.0.1:5005/v1"},
-            "model_info": {"id": "mod-123", "db_model": True, "supports_vision": False},
-        }]
+        "agy-gemini": [
+            {
+                "model_name": "agy-gemini",
+                "litellm_params": {"model": "openai/gemini-3.8-flash", "api_base": "http://127.0.0.1:5005/v1"},
+                "model_info": {"id": "mod-123", "db_model": True, "supports_vision": False},
+            }
+        ]
     }
     target = {
         "model_name": "agy-gemini",
@@ -315,8 +330,16 @@ async def test_sync_all_models_success(sync_engine, mock_client):
     info_resp = MagicMock(status_code=200)
     info_resp.json.return_value = {
         "data": [
-            {"model_name": "locallama-qwen", "model_info": {"id": "d1", "db_model": True}, "litellm_params": {"model": "openai/local-qwen"}},
-            {"model_name": "locallama-qwen", "model_info": {"id": "d2", "db_model": True}, "litellm_params": {"model": "openai/local-qwen"}},
+            {
+                "model_name": "locallama-qwen",
+                "model_info": {"id": "d1", "db_model": True},
+                "litellm_params": {"model": "openai/local-qwen"},
+            },
+            {
+                "model_name": "locallama-qwen",
+                "model_info": {"id": "d2", "db_model": True},
+                "litellm_params": {"model": "openai/local-qwen"},
+            },
             {"model_name": "ollama/GPT-5.6 Luna (max)", "model_info": {"id": "stale-1", "db_model": True}},
         ]
     }
@@ -340,9 +363,11 @@ async def test_admin_sync_models_endpoint():
     client = TestClient(app)
     mock_sync = AsyncMock(return_value={"pruned_duplicates": 2, "created": 5})
 
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}), \
-         patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="test-key"), \
-         patch.object(ModelRegistrySync, "sync_all_models", mock_sync):
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
+        patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="test-key"),
+        patch.object(ModelRegistrySync, "sync_all_models", mock_sync),
+    ):
         resp = client.post("/admin/sync-models", headers={"Authorization": "Bearer test-key"})
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -355,8 +380,12 @@ async def test_admin_sync_models_endpoint_auth_rejection():
     from router.main import app
 
     client = TestClient(app)
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key", "ROUTER_API_KEY": "router-key"}), \
-         patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="unauthorized-virtual-key"):
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-master-key", "ROUTER_API_KEY": "router-key"}),
+        patch(
+            "router.main._authenticate_client_request", new_callable=AsyncMock, return_value="unauthorized-virtual-key"
+        ),
+    ):
         resp = client.post("/admin/sync-models", headers={"Authorization": "Bearer unauthorized-virtual-key"})
         assert resp.status_code == 403
 
@@ -367,8 +396,10 @@ async def test_admin_sync_models_missing_master_key():
     from router.main import app
 
     client = TestClient(app)
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "", "ROUTER_API_KEY": "admin-key"}), \
-         patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="admin-key"):
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "", "ROUTER_API_KEY": "admin-key"}),
+        patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="admin-key"),
+    ):
         resp = client.post("/admin/sync-models", headers={"Authorization": "Bearer admin-key"})
         assert resp.status_code == 500
 
@@ -379,9 +410,11 @@ async def test_periodic_model_sync():
     from router.main import _periodic_model_sync
 
     mock_sync = AsyncMock(return_value={"pruned_duplicates": 0})
-    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}), \
-         patch.object(ModelRegistrySync, "sync_all_models", mock_sync), \
-         patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError()]):
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
+        patch.object(ModelRegistrySync, "sync_all_models", mock_sync),
+        patch("asyncio.sleep", side_effect=[None, asyncio.CancelledError()]),
+    ):
         try:
             await _periodic_model_sync()
         except asyncio.CancelledError:

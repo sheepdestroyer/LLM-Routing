@@ -13,10 +13,7 @@ async def test_favicon_ico_and_svg_assets(page: Page, base_url: str):
     # Test favicon.ico endpoint
     ico_response = await page.request.get(f"{base_url}/favicon.ico")
     assert ico_response.status == 200
-    assert any(
-        t in ico_response.headers.get("content-type", "")
-        for t in ["image/x-icon", "image/vnd.microsoft.icon"]
-    )
+    assert any(t in ico_response.headers.get("content-type", "") for t in ["image/x-icon", "image/vnd.microsoft.icon"])
 
 
 @pytest.mark.anyio

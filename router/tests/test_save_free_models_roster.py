@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from router.main import _save_free_models_roster
 
+
 def test_save_free_models_roster_success():
     free_models = [{"model": "agent-1"}, {"model": "agent-2"}]
 
@@ -15,6 +16,7 @@ def test_save_free_models_roster_success():
         assert payload["models"] == free_models
         assert payload["count"] == 2
         assert "updated_at" in payload
+
 
 def test_save_free_models_roster_exception():
     free_models = []

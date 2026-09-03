@@ -163,9 +163,10 @@ async def test_dashboard_offline_service_status_badges(page: Page, base_url: str
         "routing_gradient": "",
     }
 
-    await page.route("**/api/dashboard-stats*", lambda route: route.fulfill(
-        status=200, content_type="application/json", json=mock_stats
-    ))
+    await page.route(
+        "**/api/dashboard-stats*",
+        lambda route: route.fulfill(status=200, content_type="application/json", json=mock_stats),
+    )
 
     await page.goto(f"{base_url}/dashboard")
     await page.evaluate("refreshStats()")
@@ -223,9 +224,10 @@ async def test_dashboard_pie_chart_gradients(page: Page, base_url: str):
         "routing_gradient": "background: conic-gradient(rgb(129, 140, 248) 0%, rgb(129, 140, 248) 100%);",
     }
 
-    await page.route("**/api/dashboard-stats*", lambda route: route.fulfill(
-        status=200, content_type="application/json", json=mock_stats
-    ))
+    await page.route(
+        "**/api/dashboard-stats*",
+        lambda route: route.fulfill(status=200, content_type="application/json", json=mock_stats),
+    )
 
     await page.goto(f"{base_url}/dashboard")
     await page.evaluate("refreshStats()")
@@ -251,7 +253,9 @@ async def test_dashboard_quick_links_accessibility_and_security(page: Page, base
         inner_text = await link.inner_text()
 
         assert target == "_blank", f"Link {inner_text} missing target='_blank'"
-        assert "noopener" in (rel or "") and "noreferrer" in (rel or ""), f"Link {inner_text} missing secure rel attribute"
+        assert "noopener" in (rel or "") and "noreferrer" in (rel or ""), (
+            f"Link {inner_text} missing secure rel attribute"
+        )
         assert aria_describedby == "new-tab-desc", f"Link {inner_text} missing aria-describedby for accessibility"
 
 

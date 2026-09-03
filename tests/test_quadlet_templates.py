@@ -1,4 +1,5 @@
 """Static deployment-contract tests for the systemd Quadlet templates."""
+
 from pathlib import Path
 import os
 import re
@@ -26,17 +27,20 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     assert 'HealthCmd=["curl", "-sf", "http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live"]' in minio
 
     clickhouse = (QUADLETS / "llm-routing-clickhouse.container").read_text()
-    assert 'HealthCmd=["clickhouse-client", "--host", "127.0.0.1", "--port", "CLICKHOUSE_TCP_PORT_PLACEHOLDER", "--user", "clickhouse", "--password", "CLICKHOUSE_PASSWORD_PLACEHOLDER", "--query", "SELECT 1"]' in clickhouse
+    assert (
+        'HealthCmd=["clickhouse-client", "--host", "127.0.0.1", "--port", "CLICKHOUSE_TCP_PORT_PLACEHOLDER", "--user", "clickhouse", "--password", "CLICKHOUSE_PASSWORD_PLACEHOLDER", "--query", "SELECT 1"]'
+        in clickhouse
+    )
 
     worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
     assert 'HealthCmd=node -e "process.exit(0)"' in worker
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
-    assert 'Image=LITELLM_IMAGE_PLACEHOLDER' in litellm
+    assert "Image=LITELLM_IMAGE_PLACEHOLDER" in litellm
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in litellm
 
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
-    assert 'Image=POSTGRES_IMAGE_PLACEHOLDER' in postgres
+    assert "Image=POSTGRES_IMAGE_PLACEHOLDER" in postgres
     assert "Label=wud.tag.exclude=.*(trixie|bookworm|bullseye).*" in postgres
 
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
@@ -60,7 +64,6 @@ def test_quadlet_templates_remain_env_rendered_and_secret_free():
         text = template.read_text()
         assert "_PLACEHOLDER" in text, template.name
         assert not re.search(r"sk-(?:or|lf|lit)-[A-Za-z0-9_-]{12,}", text), template.name
-
 
 
 def test_upgrade_syncs_quadlets_before_quadlet_start_stack():
@@ -91,7 +94,7 @@ def test_quadlet_renderer_quotes_environment_values_for_systemd():
 
 def test_quadlet_renderer_stages_before_replacing_live_units():
     script = (ROOT / "start-stack.sh").read_text()
-    assert "tempfile.mkdtemp(prefix=\".llm-routing-render-\"" in script
+    assert 'tempfile.mkdtemp(prefix=".llm-routing-render-"' in script
     assert "os.replace(os.path.join(staging_dir, name), os.path.join(out_dir, name))" in script
     assert "shutil.rmtree(staging_dir, ignore_errors=True)" in script
 
@@ -138,32 +141,55 @@ def test_quadlet_namespace_is_environment_specific():
     assert 'QUADLET_NAMESPACE="${QUADLET_NAMESPACE:-llm-routing-prod}"' in (ROOT / "start-stack.sh").read_text()
     assert prod_namespace in (ROOT / "start-stack.sh").read_text()
     script = (ROOT / "start-stack.sh").read_text()
-    assert 'def namespace_identifier(match):' in script
-    assert 'identifier_suffixes = (' in script
+    assert "def namespace_identifier(match):" in script
+    assert "identifier_suffixes = (" in script
     assert 'identifier_prefix.sub(namespace + "-", value)' in script
     assert 'rendered_name = os.path.basename(tpl).replace("llm-routing", namespace)' in script
 
 
 def test_namespace_rendering_preserves_non_identifiers():
     script = (ROOT / "start-stack.sh").read_text()
-    embedded = script.split("python3 - \"$src_dir\" \"$QUADLET_DIR\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    embedded = script.split('python3 - "$src_dir" "$QUADLET_DIR" <<\'PY\'\n', 1)[1].split("\nPY\n", 1)[0]
     env = os.environ.copy()
     values = {
-        "POSTGRES_PASSWORD": "pg", "WORKDIR": str(ROOT), "HOME": str(ROOT),
-        "LITELLM_MASTER_KEY": "master", "NEXTAUTH_SECRET": "next", "SALT": "salt",
-        "ENCRYPTION_KEY": "encrypt", "OLLAMA_API_KEY": "ollama", "OPENROUTER_API_KEY": "openrouter",
-        "LANGFUSE_PUBLIC_KEY": "public", "LANGFUSE_SECRET_KEY": "secret", "MINIO_ROOT_USER": "minio",
-        "MINIO_ROOT_PASSWORD": "minio-pass", "LANGFUSE_INIT_USER_PASSWORD": "lf-pass",
-        "REDIS_AUTH": "redis", "CLICKHOUSE_PASSWORD": "click", "PROXY_BASE_URL_DERIVED": "https://proxy",
-        "NEXTAUTH_URL_DERIVED": "https://next", "PUBLIC_BASE_URL": "https://host/llm-routing",
-        "ROUTING_DOMAIN": "vendeuvre.lan", "LLAMA_CLASSIFIER_URL": "http://127.0.0.1:8083/v1",
-        "LLAMA_SERVER_URL": "http://127.0.0.1:8083", "POD_NAME": "dev-router-pod",
-        "DATA_ROOT": str(ROOT / "data"), "EFFECTIVE_ENV_FILE": str(ROOT / "data" / "effective.env"),
+        "POSTGRES_PASSWORD": "pg",
+        "WORKDIR": str(ROOT),
+        "HOME": str(ROOT),
+        "LITELLM_MASTER_KEY": "master",
+        "NEXTAUTH_SECRET": "next",
+        "SALT": "salt",
+        "ENCRYPTION_KEY": "encrypt",
+        "OLLAMA_API_KEY": "ollama",
+        "OPENROUTER_API_KEY": "openrouter",
+        "LANGFUSE_PUBLIC_KEY": "public",
+        "LANGFUSE_SECRET_KEY": "secret",
+        "MINIO_ROOT_USER": "minio",
+        "MINIO_ROOT_PASSWORD": "minio-pass",
+        "LANGFUSE_INIT_USER_PASSWORD": "lf-pass",
+        "REDIS_AUTH": "redis",
+        "CLICKHOUSE_PASSWORD": "click",
+        "PROXY_BASE_URL_DERIVED": "https://proxy",
+        "NEXTAUTH_URL_DERIVED": "https://next",
+        "PUBLIC_BASE_URL": "https://host/llm-routing",
+        "ROUTING_DOMAIN": "vendeuvre.lan",
+        "LLAMA_CLASSIFIER_URL": "http://127.0.0.1:8083/v1",
+        "LLAMA_SERVER_URL": "http://127.0.0.1:8083",
+        "POD_NAME": "dev-router-pod",
+        "DATA_ROOT": str(ROOT / "data"),
+        "EFFECTIVE_ENV_FILE": str(ROOT / "data" / "effective.env"),
         "ROUTER_IMAGE": "registry/llm-routing-router:latest",
-        "ROUTER_PORT": "5010", "LITELLM_PORT": "4010", "LANGFUSE_WEB_PORT": "3011",
-        "LANGFUSE_WORKER_PORT": "3030", "POSTGRES_PORT": "5442", "VALKEY_CACHE_PORT": "6389",
-        "VALKEY_LF_PORT": "6390", "CLICKHOUSE_HTTP_PORT": "8123", "CLICKHOUSE_TCP_PORT": "9003",
-        "MINIO_S3_PORT": "9002", "MINIO_CONSOLE_PORT": "9001", "QUADLET_NAMESPACE": "llm-routing-dev",
+        "ROUTER_PORT": "5010",
+        "LITELLM_PORT": "4010",
+        "LANGFUSE_WEB_PORT": "3011",
+        "LANGFUSE_WORKER_PORT": "3030",
+        "POSTGRES_PORT": "5442",
+        "VALKEY_CACHE_PORT": "6389",
+        "VALKEY_LF_PORT": "6390",
+        "CLICKHOUSE_HTTP_PORT": "8123",
+        "CLICKHOUSE_TCP_PORT": "9003",
+        "MINIO_S3_PORT": "9002",
+        "MINIO_CONSOLE_PORT": "9001",
+        "QUADLET_NAMESPACE": "llm-routing-dev",
     }
     env.update(values)
     with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +202,9 @@ def test_namespace_rendering_preserves_non_identifiers():
             "Image=registry/llm-routing-router:latest\n"
             "Environment=PUBLIC_BASE_URL=https://host/llm-routing-router\nPod=llm-routing.pod\n"
         )
-        subprocess.run(["python3", "-c", embedded, str(src), str(out)], env=env, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["python3", "-c", embedded, str(src), str(out)], env=env, check=True, capture_output=True, text=True
+        )
         rendered = (out / "llm-routing-dev-router.container").read_text()
         assert "After=llm-routing-dev-litellm.service" in rendered
         assert "Image=registry/llm-routing-router:latest" in rendered
@@ -189,14 +217,14 @@ def test_namespace_is_validated_and_ownership_preserves_exact_unit():
     assert '[[ ! "$QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$ ]]' in script
     assert "printf 'quadlet:%s\\n' \"$infra_unit\"" in script
     assert 'owner_unit="${STACK_OWNERSHIP#quadlet:}"' in script
-    assert 'failed to restart ${owner_unit}' in script
-    assert 'status ${owner_unit} --no-pager' in script
-    assert 'legacy_unit_owns_pod()' in script
+    assert "failed to restart ${owner_unit}" in script
+    assert "status ${owner_unit} --no-pager" in script
+    assert "legacy_unit_owns_pod()" in script
     assert "grep -E 'podman[[:space:]]+pod[[:space:]]+create'" in script
     assert 'grep -Eq -- "--name[=[:space:]]${pod_name_pattern}' in script
     assert '&& legacy_unit_owns_pod "$LEGACY_LLM_ROUTING_POD_UNIT"' in script
     assert 'elif [[ "$infra_unit" == "$LEGACY_LLM_ROUTING_POD_UNIT" ]]; then' in script
-    assert 'printf \'conflict:%s\\n\' "$infra_unit"' in script
+    assert "printf 'conflict:%s\\n' \"$infra_unit\"" in script
     assert 'STACK_OWNERSHIP" == conflict:*' in script
 
 
@@ -232,9 +260,8 @@ def test_langfuse_dual_write_mode_configured():
 
 def test_environment_isolation_guards_and_clean_zombie_ports():
     script = (ROOT / "start-stack.sh").read_text()
-    assert 'Production namespace (llm-routing-prod) cannot use a development data directory' in script
-    assert 'Development namespace (llm-routing-dev) cannot use a production data directory' in script
-    assert 'Refusing to start production stack' in script
-    assert 'automatically applying .env.dev overlay' in script
-    assert '8080' not in script.split('cleanup_zombie_ports()')[1].split('echo "🧹')[0]
-
+    assert "Production namespace (llm-routing-prod) cannot use a development data directory" in script
+    assert "Development namespace (llm-routing-dev) cannot use a production data directory" in script
+    assert "Refusing to start production stack" in script
+    assert "automatically applying .env.dev overlay" in script
+    assert "8080" not in script.split("cleanup_zombie_ports()")[1].split('echo "🧹')[0]

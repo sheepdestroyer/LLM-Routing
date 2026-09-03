@@ -1,4 +1,5 @@
 """Unit tests for scripts/backup.sh prune logic."""
+
 import subprocess
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ def test_backup_pruning_operator_precedence(tmp_path: Path):
 
     now = time.time()
     old_time = now - (15 * 86400)  # 15 days old (> 14 days)
-    new_time = now - (2 * 86400)   # 2 days old (< 14 days)
+    new_time = now - (2 * 86400)  # 2 days old (< 14 days)
 
     # Create test files
     old_dump = backup_dir / "postgres_db_20260101_000000.dump"
@@ -27,18 +28,14 @@ def test_backup_pruning_operator_precedence(tmp_path: Path):
 
     # Set timestamps
     import os
+
     os.utime(old_dump, (old_time, old_time))
     os.utime(old_tar, (old_time, old_time))
     os.utime(new_dump, (new_time, new_time))
     os.utime(new_tar, (new_time, new_time))
 
     # Run find command matching the fixed backup.sh logic
-    cmd = [
-        "find", str(backup_dir),
-        "(", "-name", "*.dump", "-o", "-name", "*.tar.gz", ")",
-        "-mtime", "+14",
-        "-delete"
-    ]
+    cmd = ["find", str(backup_dir), "(", "-name", "*.dump", "-o", "-name", "*.tar.gz", ")", "-mtime", "+14", "-delete"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     assert res.returncode == 0
 

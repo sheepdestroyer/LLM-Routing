@@ -1,6 +1,7 @@
 """Benchmark token estimation logic against ground truth examples."""
-import sys
+
 import os
+import sys
 from pathlib import Path
 
 # Set CONFIG_PATH and ROUTER_API_KEY for import
@@ -8,10 +9,11 @@ os.environ["CONFIG_PATH"] = str(Path(__file__).resolve().parent.parent / "router
 os.environ["ROUTER_API_KEY"] = "local-token"
 
 try:
-    from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
+    from router.main import METADATA_OVERHEAD, estimate_prompt_tokens
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from router.main import estimate_prompt_tokens, METADATA_OVERHEAD
+    from router.main import METADATA_OVERHEAD, estimate_prompt_tokens
+
 
 def verify_accuracy():
     """Benchmarking utility to verify token estimation accuracy across content types."""
@@ -19,7 +21,8 @@ def verify_accuracy():
     test_cases = [
         {
             "name": "English prose",
-            "content": "This is a standard English prose sentence intended to evaluate the accuracy of the token estimation heuristic for typical content. " * 5,
+            "content": "This is a standard English prose sentence intended to evaluate the accuracy of the token estimation heuristic for typical content. "
+            * 5,
             # Ground truth: 110 tokens, verified via cl100k_base tokenizer (GPT-4)
             "actual_tokens": 110,
         },
@@ -34,7 +37,8 @@ def calculate_factorial(n):
 
 for i in range(10):
     print(f"Factorial of {i} is {calculate_factorial(i)}")
-""" * 3,
+"""
+            * 3,
             # Ground truth: 150 tokens, verified via cl100k_base tokenizer (GPT-4)
             "actual_tokens": 150,
         },
@@ -55,7 +59,7 @@ for i in range(10):
             "content": "🚀🔥-🤖✨-📈💎-🚨🛠️-🌐" * 5,
             # Ground truth: 25 tokens, verified via cl100k_base/Llama-3 tokenizer
             "actual_tokens": 25,
-        }
+        },
     ]
 
     print(f"{'Case':<25} | {'Actual':<7} | {'Estimated':<9} | {'Error':<7}")
@@ -64,7 +68,7 @@ for i in range(10):
     all_passed = True
     for case in test_cases:
         body = {"messages": [{"content": case["content"]}]}
-        est = estimate_prompt_tokens(body) - METADATA_OVERHEAD # Subtract metadata overhead
+        est = estimate_prompt_tokens(body) - METADATA_OVERHEAD  # Subtract metadata overhead
         error = abs(est - case["actual_tokens"]) / case["actual_tokens"]
         print(f"{case['name']:<25} | {case['actual_tokens']:<7} | {est:<9} | {error:.1%}")
         # Acceptance criteria: within ±25% for these rough heuristics
@@ -74,6 +78,7 @@ for i in range(10):
 
     if not all_passed:
         raise ValueError("Token estimation accuracy benchmark failed")
+
 
 if __name__ == "__main__":
     try:

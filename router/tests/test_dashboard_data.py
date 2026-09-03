@@ -1,32 +1,36 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+
 @pytest.mark.asyncio
 async def test_get_dashboard_data_structure():
     from router import main
 
     # Mocking all I/O and external calls
-    with patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync, \
-         patch("router.main.check_tcp_port", new_callable=AsyncMock) as mock_tcp, \
-         patch("router.main.check_http_endpoint", new_callable=AsyncMock) as mock_http, \
-         patch("router.main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth, \
-         patch("router.main.get_best_free_model", new_callable=AsyncMock) as mock_best_model, \
-         patch("router.main.get_goose_sessions") as mock_goose, \
-         patch("router.main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp, \
-         patch("router.main.get_pie_chart_gradient") as mock_gradient, \
-         patch("router.main.stats") as mock_stats:
-
+    with (
+        patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync,
+        patch("router.main.check_tcp_port", new_callable=AsyncMock) as mock_tcp,
+        patch("router.main.check_http_endpoint", new_callable=AsyncMock) as mock_http,
+        patch("router.main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth,
+        patch("router.main.get_best_free_model", new_callable=AsyncMock) as mock_best_model,
+        patch("router.main.get_goose_sessions") as mock_goose,
+        patch("router.main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp,
+        patch("router.main.get_pie_chart_gradient") as mock_gradient,
+        patch("router.main.stats") as mock_stats,
+    ):
         # Setup mock return values
         mock_sync.return_value = None
         mock_tcp.return_value = True
         mock_http.return_value = True
         mock_oauth.return_value = {"status": "valid", "detail": "Expires in 1h", "expiry_ms": 123456789}
         mock_best_model.return_value = {"id": "test-model", "name": "Test Model", "score": 90.0}
-        mock_goose.return_value = [{"id": 1, "name": "Session 1", "updated_at": "2023-01-01", "accumulated_total_tokens": 100}]
+        mock_goose.return_value = [
+            {"id": 1, "name": "Session 1", "updated_at": "2023-01-01", "accumulated_total_tokens": 100}
+        ]
         mock_llamacpp.return_value = {
             "models": [{"id": "model-1", "status": "loaded", "n_params": 7e9, "n_ctx": 4096, "size_bytes": 4e9}],
             "slots": [{"id": 0, "is_processing": True, "n_prompt_processed": 10, "n_decoded": 20}],
-            "build": "test-build"
+            "build": "test-build",
         }
         mock_gradient.return_value = "conic-gradient(red 0% 100%)"
 
@@ -46,7 +50,7 @@ async def test_get_dashboard_data_structure():
             "total_requests": 100,
             "last_triage_decision": "simple",
             "timeline": [],
-            "tool_tokens": {"tree": 10, "shell": 20, "write": 30, "view": 40, "other": 50}
+            "tool_tokens": {"tree": 10, "shell": 20, "write": 30, "view": 40, "other": 50},
         }
 
         mock_stats.get.side_effect = lambda key, default=None: mock_stats_dict.get(key, default)

@@ -21,7 +21,11 @@ async def test_read_json_file_async_success():
     "mock_kwargs, expected_exc, match_msg",
     [
         (
-            {"return_value": AsyncMock(__aenter__=AsyncMock(return_value=AsyncMock(read=AsyncMock(return_value='{"key": "value"'))))},
+            {
+                "return_value": AsyncMock(
+                    __aenter__=AsyncMock(return_value=AsyncMock(read=AsyncMock(return_value='{"key": "value"')))
+                )
+            },
             (json.JSONDecodeError, orjson.JSONDecodeError),
             r"unexpected end of data|string is not terminated|Unterminated string starting at|Expecting",
         ),

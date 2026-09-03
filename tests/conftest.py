@@ -14,4 +14,3 @@ for path in [str(root), str(root / "router"), str(root / "scripts")]:
 os.environ.setdefault("CONFIG_PATH", str(root / "router" / "config.yaml"))
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-litellm-testkey")
 os.environ.setdefault("ROUTER_API_KEY", "sk-router-testkey")
-

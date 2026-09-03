@@ -8,7 +8,7 @@ Session Architecture:
   - First call in session: agy --print "prompt" → creates conversation
   - Tier switch within session: agy --conversation <id> --print "prompt" with new model override
   - Subsequent calls: agy --conversation <id> --print "next prompt" (same model tier)
-  
+
   The conversation ID is tracked per router session and persisted across calls.
   When a tier switch is needed (quota), the SAME conversation is continued with
   a different model backend — preserving full context.
@@ -20,18 +20,21 @@ Fallback Tiers (same conversation, different model):
 """
 
 import json
-import orjson
-import aiofiles
 import logging
 import os
 import time
-import httpx
-from typing import Optional, Protocol, runtime_checkable
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+import aiofiles
+import httpx
+import orjson
+
 
 @runtime_checkable
 class CooldownPersistence(Protocol):
     """Interface for persisting/syncing Valkey cooldown state."""
+
     async def sync(self) -> None:
         """Pull latest cooldown state from Valkey."""
         ...
@@ -40,14 +43,14 @@ class CooldownPersistence(Protocol):
         """Push updated cooldown state to Valkey."""
         ...
 
+
 try:
     from router.circuit_breaker import get_google_breaker, get_vendor_breaker
 except ModuleNotFoundError as e:
     if e.name == "router":
-        from circuit_breaker import get_google_breaker, get_vendor_breaker
+        from circuit_breaker import get_google_breaker, get_vendor_breaker  # type: ignore[no-redef]
     else:
         raise
-
 
 
 logger = logging.getLogger("agy-proxy")
@@ -61,8 +64,8 @@ if not os.path.exists(AGY_BINARY):
 
 # Ordered fallback tiers
 AGY_FALLBACK_TIERS = [
-    {"model_name": "gemini-3.8-flash",  "env_override": ""},                             # Tier 1: default
-    {"model_name": "claude-opus-4.6",   "env_override": "claude-opus-4-6@default"},      # Tier 2
+    {"model_name": "gemini-3.8-flash", "env_override": ""},  # Tier 1: default
+    {"model_name": "claude-opus-4.6", "env_override": "claude-opus-4-6@default"},  # Tier 2
 ]
 
 AGY_TIMEOUT_SECS = 120
@@ -79,7 +82,8 @@ def cleanup_session_store(max_size: int = MAX_SESSION_STORE_SIZE) -> None:
     """Purge expired sessions and evict oldest (LRU) sessions if size exceeds max_size."""
     now = time.time()
     expired_keys = [
-        k for k, v in _session_store.items()
+        k
+        for k, v in _session_store.items()
         if isinstance(v, dict) and now - v.get("last_accessed", now) >= SESSION_TTL_SECONDS
     ]
     for k in expired_keys:
@@ -88,14 +92,14 @@ def cleanup_session_store(max_size: int = MAX_SESSION_STORE_SIZE) -> None:
     if len(_session_store) > max_size:
         sorted_keys = sorted(
             _session_store.keys(),
-            key=lambda k: _session_store[k].get("last_accessed", 0) if isinstance(_session_store[k], dict) else 0
+            key=lambda k: _session_store[k].get("last_accessed", 0) if isinstance(_session_store[k], dict) else 0,
         )
         excess = len(_session_store) - max_size
         for k in sorted_keys[:excess]:
             _session_store.pop(k, None)
 
 
-def get_session_store(session_id: str) -> Optional[dict]:
+def get_session_store(session_id: str) -> dict | None:
     """Retrieve session data for session_id with TTL check and LRU timestamp update."""
     if session_id not in _session_store:
         return None
@@ -121,12 +125,17 @@ def set_session_store(session_id: str, conversation_id: str, current_tier_index:
         "last_accessed": time.time(),
     }
 
+
 AGY_DAEMON_URL = os.environ.get("AGY_DAEMON_URL", "http://127.0.0.1:5005")
 
 
-async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override: str = "",
-                         conversation_id: Optional[str] = None,
-                         timeout: float = AGY_TIMEOUT_SECS) -> tuple[int, str, str, Optional[str]]:
+async def _run_agy_print(
+    client: httpx.AsyncClient,
+    prompt: str,
+    model_override: str = "",
+    conversation_id: str | None = None,
+    timeout: float = AGY_TIMEOUT_SECS,
+) -> tuple[int, str, str, str | None]:
     """
     Forward the agy execution request to the host-side agy daemon.
     """
@@ -135,13 +144,13 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
         "prompt": prompt,
         "model_override": model_override,
         "conversation_id": conversation_id,
-        "timeout": timeout
+        "timeout": timeout,
     }
-    
+
     model_tag = model_override if model_override else "default (gemini-3.8-flash)"
     conv_tag = f" (continuing {conversation_id[:8]}...)" if conversation_id else " (new)"
     logger.info(f"agy proxy forwarding to host: [{model_tag}]{conv_tag} {prompt[:60]}...")
-    
+
     try:
         r = await client.post(url, json=payload, timeout=timeout + 5.0)
         if r.status_code == 200:
@@ -154,7 +163,7 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
                 0 if ret_code is None else ret_code,
                 "" if stdout_val is None else stdout_val,
                 "" if stderr_val is None else stderr_val,
-                conv_id
+                conv_id,
             )
         else:
             return -1, "", f"Daemon returned HTTP status {r.status_code}", None
@@ -166,21 +175,20 @@ async def _run_agy_print(client: httpx.AsyncClient, prompt: str, model_override:
 # Track the last log check time to avoid hammering the file
 _last_log_check: float = 0
 
+
 async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool:
     """
     Detect quota exhaustion from agy subprocess results.
-    
+
     agy returns:
       rc=0, stdout="", stderr="" → quota exhausted (error goes to cli.log)
       rc=0, stdout="response"    → success
       rc!=0                       → other error
     """
     # Direct stderr check
-    if any(marker in stderr for marker in [
-        "RESOURCE_EXHAUSTED", "code 429", "quota reached", "rate limit"
-    ]):
+    if any(marker in stderr for marker in ["RESOURCE_EXHAUSTED", "code 429", "quota reached", "rate limit"]):
         return True
-    
+
     # agy returns rc=0 with empty stdout when quota is exhausted
     # The error is written to cli.log, not stderr
     if returncode == 0 and not stdout and not stderr:
@@ -207,7 +215,7 @@ async def _is_quota_exhausted(returncode: int, stdout: str, stderr: str) -> bool
                 pass
         # Empty stdout+stderr with rc=0 strongly suggests quota exhaustion
         return True
-    
+
     return False
 
 
@@ -220,11 +228,13 @@ def _wrap_response(text: str, model_name: str, prompt: str) -> dict:
         "object": "chat.completion",
         "created": int(time.time()),
         "model": f"{model_name} (via agy)",
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": text},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }
+        ],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -232,24 +242,26 @@ def _wrap_response(text: str, model_name: str, prompt: str) -> dict:
         },
     }
 
+
 @dataclass
 class AgyProxyRequest:
     prompt: str
-    messages: Optional[list] = None
-    session_id: Optional[str] = None
+    messages: list | None = None
+    session_id: str | None = None
     total_timeout: float = AGY_TOTAL_TIMEOUT_SECS
     stream: bool = False
     target_tier: str = "agent-advanced-core"
-    client: Optional[httpx.AsyncClient] = None
-    cooldown_persistence: Optional[CooldownPersistence] = None
+    client: httpx.AsyncClient | None = None
+    cooldown_persistence: CooldownPersistence | None = None
 
-async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
+
+async def try_agy_proxy(request: AgyProxyRequest) -> dict | None:
     """
     Attempt agy proxy with session-aware tier fallback.
-    
+
     Args:
         request: AgyProxyRequest containing all parameters
-    
+
     Returns:
         OpenAI-compatible response dict, streaming dict, or None if all tiers failed.
     """
@@ -307,7 +319,11 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 role = msg.get("role", "user")
                 content = msg.get("content") or ""
                 if isinstance(content, list):
-                    content = "".join(block.get("text") or "" for block in content if isinstance(block, dict) and block.get("type") == "text")
+                    content = "".join(
+                        block.get("text") or ""
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    )
                 if role == "user":
                     context_parts.append(f"User: {content}")
                 elif role == "assistant":
@@ -324,10 +340,10 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 start_tier_index = session.get("current_tier_index", 0)
                 conv_id_str = f"conversation={existing_conv_id[:8]}..." if existing_conv_id else "no conversation_id"
                 logger.info(f"agy proxy: resuming session {session_id[:8]}..., {conv_id_str}")
-        
+
         start_time = time.time()
         last_conv_id = existing_conv_id
-        
+
         for tier_idx, tier in enumerate(agy_tiers[start_tier_index:]):
             actual_tier_idx = start_tier_index + tier_idx
             elapsed = time.time() - start_time
@@ -350,7 +366,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 continue
 
             tier_timeout = min(AGY_TIMEOUT_SECS, remaining)
-            
+
             if stream:
                 url = f"{AGY_DAEMON_URL}/run"
                 payload = {
@@ -358,19 +374,19 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     "model_override": tier["env_override"],
                     "conversation_id": last_conv_id if actual_tier_idx > 0 or existing_conv_id else None,
                     "timeout": tier_timeout,
-                    "stream": True
+                    "stream": True,
                 }
-                
+
                 model_tag = tier["env_override"] if tier["env_override"] else "default (gemini-3.8-flash)"
                 logger.info(f"agy proxy connecting stream to daemon: [{model_tag}]...")
-                
+
                 req = client.build_request("POST", url, json=payload, timeout=tier_timeout + 5.0)
                 try:
                     r = await client.send(req, stream=True)
                 except Exception as e:
                     logger.error(f"Failed to connect stream to daemon: {e}")
                     continue
-                    
+
                 # Read first line to see if it's successful or quota error
                 first_line = None
                 try:
@@ -380,19 +396,19 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                     pass
                 except Exception as e:
                     logger.warning(f"agy proxy: failed reading initial stream line from {tier['model_name']}: {e}")
-                    
+
                 if not first_line:
                     await r.aclose()
                     logger.warning(f"agy proxy: tier {tier['model_name']} returned empty stream. Trying next tier...")
                     continue
-                    
+
                 try:
                     first_data = orjson.loads(first_line)
                 except Exception:
                     await r.aclose()
                     logger.error(f"agy proxy: invalid JSON from daemon: {first_line}")
                     continue
-                    
+
                 # Check if first message is a status failure
                 if first_data.get("type") == "status":
                     raw_rc = first_data.get("returncode", 0)
@@ -409,9 +425,11 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                                 except Exception as e:
                                     logger.warning(f"Failed to save cooldowns to Valkey: {e}")
                         await r.aclose()
-                        logger.warning(f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier...")
+                        logger.warning(
+                            f"agy proxy: tier {tier['model_name']} failed immediately (rc={rc}). Trying next tier..."
+                        )
                         continue
-                        
+
                 # Success! Stream has started.
                 tier_breaker.record_success()
                 if cooldown_persistence is not None:
@@ -419,8 +437,10 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                         await cooldown_persistence.save()
                     except Exception as e:
                         logger.warning(f"Failed to save cooldowns to Valkey: {e}")
-                
-                async def token_generator(stream_resp, httpx_client, initial_line, current_conv_id, close_client):
+
+                async def token_generator(
+                    stream_resp, httpx_client, initial_line, current_conv_id, close_client, tier_idx, iterator
+                ):
                     """Asynchronously yields tokens from the agy daemon stream and manages session state updates."""
                     try:
                         # Yield the initial token if it was a token
@@ -434,12 +454,12 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                                     set_session_store(
                                         session_id,
                                         current_conv_id,
-                                        actual_tier_idx,
+                                        tier_idx,
                                     )
                         except (orjson.JSONDecodeError, json.JSONDecodeError, Exception) as parse_err:
                             logger.warning(f"agy proxy: failed parsing initial token line: {parse_err}")
 
-                        async for line in lines_iter:
+                        async for line in iterator:
                             if not line.strip():
                                 continue
                             try:
@@ -452,7 +472,7 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                                         set_session_store(
                                             session_id,
                                             current_conv_id,
-                                            actual_tier_idx,
+                                            tier_idx,
                                         )
                             except (orjson.JSONDecodeError, json.JSONDecodeError, Exception) as parse_err:
                                 logger.warning(f"agy proxy: failed parsing streaming token line: {parse_err}")
@@ -460,13 +480,15 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                         await stream_resp.aclose()
                         if close_client:
                             await httpx_client.aclose()
-                        
+
                 stream_returned = True
                 return {
-                    "stream": token_generator(r, client, first_line, last_conv_id, should_close_client),
-                    "model": tier["model_name"]
+                    "stream": token_generator(
+                        r, client, first_line, last_conv_id, should_close_client, actual_tier_idx, lines_iter
+                    ),
+                    "model": tier["model_name"],
                 }
-                
+
             else:
                 # Non-streaming path
                 returncode, stdout, stderr, result_conv_id = await _run_agy_print(
@@ -507,16 +529,17 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                 # Success!
                 if stdout:
                     elapsed_total = time.time() - start_time
-                    
+
                     # Save session state for continuation
                     if session_id and last_conv_id is not None:
                         set_session_store(session_id, last_conv_id, actual_tier_idx)
-                        logger.info(f"agy proxy: saved session {session_id[:8]}..."
-                                    f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}")
-                    
+                        logger.info(
+                            f"agy proxy: saved session {session_id[:8]}..."
+                            f" → conversation={last_conv_id[:8]}..., tier={tier['model_name']}"
+                        )
+
                     logger.info(
-                        f"agy proxy: ✅ tier {tier['model_name']} succeeded "
-                        f"({len(stdout)} chars, {elapsed_total:.1f}s)"
+                        f"agy proxy: ✅ tier {tier['model_name']} succeeded ({len(stdout)} chars, {elapsed_total:.1f}s)"
                     )
                     tier_breaker.record_success()
                     if cooldown_persistence is not None:
@@ -526,15 +549,13 @@ async def try_agy_proxy(request: AgyProxyRequest) -> Optional[dict]:
                             logger.warning(f"Failed to save cooldowns to Valkey: {e}")
                     return _wrap_response(stdout, tier["model_name"], proxy_prompt)
                 else:
-                    logger.warning(
-                        f"agy proxy: tier {tier['model_name']} returned empty response"
-                    )
+                    logger.warning(f"agy proxy: tier {tier['model_name']} returned empty response")
                     continue
 
         # All tiers exhausted — clean up session
         if session_id and session_id in _session_store:
             del _session_store[session_id]
-        
+
         logger.warning("agy proxy: all tiers exhausted — falling back to LiteLLM")
         return None
     finally:

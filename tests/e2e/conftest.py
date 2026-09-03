@@ -77,9 +77,7 @@ def live_server_url():
             log_file.seek(0)
             logs = log_file.read()
             log_file.close()
-            raise RuntimeError(
-                f"Server process terminated early with code {proc.returncode}:\n{logs}"
-            )
+            raise RuntimeError(f"Server process terminated early with code {proc.returncode}:\n{logs}")
         try:
             resp = httpx.get(f"{base_url}/favicon.ico", timeout=1.0)
             if resp.status_code in (200, 404):
@@ -94,9 +92,7 @@ def live_server_url():
         log_file.seek(0)
         logs = log_file.read()
         log_file.close()
-        raise RuntimeError(
-            f"Live test server failed to respond on {base_url} within 15 seconds:\n{logs}"
-        )
+        raise RuntimeError(f"Live test server failed to respond on {base_url} within 15 seconds:\n{logs}")
 
     yield base_url
 

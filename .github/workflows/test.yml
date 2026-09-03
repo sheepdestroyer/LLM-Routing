@@ -24,8 +24,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright
+          pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright ruff mypy
           playwright install --with-deps chromium
+
+      - name: Run Ruff Lint & Format Check
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Run Mypy Type Check
+        run: |
+          mypy
 
       - name: Run Unit Tests
         run: CONFIG_PATH=router/config.yaml PYTHONPATH=. pytest --ignore=tests/test_agy_behavior.py --ignore=tests/test_agy_tiers.py --ignore=tests/test_antigravity.py --ignore=router/tests/test_agy_proxy.py --ignore=tests/test_host_agy_daemon.py
