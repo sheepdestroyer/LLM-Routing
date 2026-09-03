@@ -45,17 +45,6 @@ litellm_settings:
     - agent-complex-core
     - agent-medium-core
     - agent-simple-core
-    # Legacy aliases
-    - local-qwen
-    - local-qwen-hass
-    - local-qwen-routing
-    - whisper-1
-    - gpt-4o-mini-transcribe
-    - gpt-4o-mini-tts
-    - tts-1
-    - llm-routing-agy
-    - llm-routing-agy-sse
-    - agy-sse
     - gpt-4o-mini
     - gpt-4o
   fallbacks:
@@ -65,21 +54,6 @@ litellm_settings:
     - ollama-deepseek-v4-pro
     - openrouter-auto
   - agy-gemini-sse:
-    - agy-opus-sse
-    - agent-advanced-core
-    - ollama-deepseek-v4-pro
-    - openrouter-auto
-  - llm-routing-agy:
-    - agy-opus
-    - agent-advanced-core
-    - ollama-deepseek-v4-pro
-    - openrouter-auto
-  - llm-routing-agy-sse:
-    - agy-opus-sse
-    - agent-advanced-core
-    - ollama-deepseek-v4-pro
-    - openrouter-auto
-  - agy-sse:
     - agy-opus-sse
     - agent-advanced-core
     - ollama-deepseek-v4-pro
@@ -130,7 +104,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen
+    model: openai/locallama-qwen
     extra_body:
       chat_template_kwargs:
         preserve_thinking: true
@@ -148,7 +122,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen
+    model: openai/locallama-qwen-hass
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
@@ -166,7 +140,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen-routing
+    model: openai/locallama-qwen-routing
     request_timeout: 60
   model_name: locallama-qwen-routing
   model_info:
@@ -181,58 +155,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen
-    extra_body:
-      chat_template_kwargs:
-        preserve_thinking: true
-    request_timeout: 600
-  model_name: local-qwen
-  model_info:
-    supports_vision: true
-    supports_reasoning: true
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
-    is_public_model_group: true
-
-- litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen
-    extra_body:
-      chat_template_kwargs:
-        enable_thinking: false
-    request_timeout: 600
-  model_name: local-qwen-hass
-  model_info:
-    supports_vision: true
-    supports_reasoning: false
-    supports_function_calling: true
-    mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
-    is_public_model_group: true
-
-- litellm_params:
-    api_base: LLAMA_CLASSIFIER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen-routing
-    request_timeout: 60
-  model_name: local-qwen-routing
-  model_info:
-    supports_vision: false
-    supports_reasoning: false
-    supports_function_calling: false
-    mode: chat
-    max_tokens: 8192
-    max_input_tokens: 8192
-    is_public_model_group: true
-
-- litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
-    api_key: local-token
-    model: openai/local-qwen
+    model: openai/locallama-qwen
     request_timeout: 600
   model_name: gpt-4o-mini
   model_info:
@@ -247,7 +170,7 @@ model_list:
 - litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen
+    model: openai/locallama-qwen
     request_timeout: 600
   model_name: gpt-4o
   model_info:
@@ -263,7 +186,7 @@ model_list:
   litellm_params:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/local-qwen
+    model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat

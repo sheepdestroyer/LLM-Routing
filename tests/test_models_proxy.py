@@ -103,13 +103,13 @@ def test_litellm_config_local_model_context_limits():
 
     models_by_name = {m["model_name"]: m for m in config.get("model_list", []) if "model_name" in m}
 
-    assert "local-qwen" in models_by_name
-    assert models_by_name["local-qwen"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["local-qwen"]["model_info"]["max_input_tokens"] == 240896
+    assert "locallama-qwen" in models_by_name
+    assert models_by_name["locallama-qwen"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["locallama-qwen"]["model_info"]["max_input_tokens"] == 240896
 
-    assert "local-qwen-hass" in models_by_name
-    assert models_by_name["local-qwen-hass"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["local-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
+    assert "locallama-qwen-hass" in models_by_name
+    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
 
     assert "gpt-4o-mini" in models_by_name
     assert models_by_name["gpt-4o-mini"]["model_info"]["max_tokens"] == 240896
@@ -117,6 +117,7 @@ def test_litellm_config_local_model_context_limits():
     assert "gpt-4o" in models_by_name
     assert models_by_name["gpt-4o"]["model_info"]["max_tokens"] == 240896
 
-    assert "local-qwen-routing" in models_by_name
-    assert models_by_name["local-qwen-routing"]["model_info"]["max_tokens"] == 8192
+    assert "locallama-qwen-routing" in models_by_name
+    assert models_by_name["locallama-qwen-routing"]["model_info"]["max_tokens"] == 8192
+
 

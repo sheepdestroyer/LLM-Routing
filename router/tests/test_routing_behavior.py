@@ -102,7 +102,7 @@ def test_llm_routing_agy_proxied_to_litellm():
         mock_client.post.assert_called_once()
         _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
-        assert json_payload["model"] == "llm-routing-agy"
+        assert json_payload["model"] == "agy-gemini"
         assert "session_id" in json_payload["metadata"]
         assert called_kwargs["headers"]["x-session-id"] == response.headers["x-session-id"]
 
@@ -437,35 +437,25 @@ def test_chat_completions_agy_dual_mode_routing():
         # Path A
         resp_a = client.post(
             "/v1/chat/completions",
-            json={"model": "llm-routing-agy", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "agy-gemini", "messages": [{"role": "user", "content": "hi"}]},
             headers={"Authorization": "Bearer test-key"}
         )
         assert resp_a.status_code == 200
         _called_args, called_kwargs = mock_client.post.call_args
-        assert called_kwargs["json"]["model"] == "llm-routing-agy"
+        assert called_kwargs["json"]["model"] == "agy-gemini"
 
         # Path B
         resp_b = client.post(
             "/v1/chat/completions",
-            json={"model": "llm-routing-agy-sse", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "agy-gemini-sse", "messages": [{"role": "user", "content": "hi"}]},
             headers={"Authorization": "Bearer test-key"}
         )
         assert resp_b.status_code == 200
         _called_args, called_kwargs = mock_client.post.call_args
-        assert called_kwargs["json"]["model"] == "llm-routing-agy-sse"
+        assert called_kwargs["json"]["model"] == "agy-gemini-sse"
 
-        # Path B alias
-        resp_alias = client.post(
-            "/v1/chat/completions",
-            json={"model": "agy-sse", "messages": [{"role": "user", "content": "hi"}]},
-            headers={"Authorization": "Bearer test-key"}
-        )
-        assert resp_alias.status_code == 200
-        _called_args, called_kwargs = mock_client.post.call_args
-        assert called_kwargs["json"]["model"] == "llm-routing-agy-sse"
-
-def test_models_endpoint_includes_agy_sse():
-    """Verify that /v1/models lists llm-routing-agy-sse."""
+def test_models_endpoint_includes_routing_models():
+    """Verify that /v1/models lists injected llm-routing-* auto-routing entrypoints."""
     client = TestClient(app)
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -478,8 +468,10 @@ def test_models_endpoint_includes_agy_sse():
         resp = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
         assert resp.status_code == 200
         model_ids = [m["id"] for m in resp.json()["data"]]
-        assert "llm-routing-agy" in model_ids
-        assert "llm-routing-agy-sse" in model_ids
+        assert "llm-routing-auto-free" in model_ids
+        assert "llm-routing-auto-agy" in model_ids
+        assert "llm-routing-ollama" in model_ids
+
 
 
 

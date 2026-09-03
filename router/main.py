@@ -779,7 +779,7 @@ if router_api_key.startswith("os.environ/"):
             router_api_key = "local-token"
         else:
             raise RuntimeError(f"Configuration error: Environment variable '{env_var}' is missing or empty.")
-router_model_name = router_model_conf.get("model", "local-qwen-routing")
+router_model_name = router_model_conf.get("model", "locallama-qwen-routing")
 
 system_prompt = config.get("classification_rules", {}).get("system_prompt", "")
 backends = {b["name"]: b for b in config.get("backends", [])}
@@ -1544,27 +1544,27 @@ async def _register_ollama_models_in_db(master_key: str):
 
 LANGFUSE_MANAGED_MODELS = [
     (
-        "local-qwen-model-def",
-        "local-qwen",
-        "(?i)^(openai/)?(local-qwen)$",
+        "locallama-qwen-model-def",
+        "locallama-qwen",
+        "(?i)^(openai/)?(locallama-qwen)$",
         "TOKENS",
         0.0,
         0.0,
         0.0,
     ),
     (
-        "local-qwen-hass-model-def",
-        "local-qwen-hass",
-        "(?i)^(openai/)?(local-qwen-hass)$",
+        "locallama-qwen-hass-model-def",
+        "locallama-qwen-hass",
+        "(?i)^(openai/)?(locallama-qwen-hass)$",
         "TOKENS",
         0.0,
         0.0,
         0.0,
     ),
     (
-        "local-qwen-routing-model-def",
-        "local-qwen-routing",
-        "(?i)^(openai/)?(local-qwen-routing)$",
+        "locallama-qwen-routing-model-def",
+        "locallama-qwen-routing",
+        "(?i)^(openai/)?(locallama-qwen-routing)$",
         "TOKENS",
         0.0,
         0.0,
@@ -2857,20 +2857,7 @@ async def proxy_models():
                             "owned_by": "llm-routing",
                             "context_length": 524288,
                         },
-                        {
-                            "id": "llm-routing-agy",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 1048576,
-                        },
-                        {
-                            "id": "llm-routing-agy-sse",
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": "llm-routing",
-                            "context_length": 1048576,
-                        },
+
                         {
                             "id": "llm-routing-ollama",
                             "object": "model",
@@ -3444,16 +3431,16 @@ async def chat_completions(request: Request):
         # (gemini-3.8-flash -> claude-opus-4.6 -> agent-advanced-core -> openrouter-auto).
         # We proxy to LiteLLM with appropriate model name.
         if should_try_agy:
-            if client_model in ("llm-routing-agy-sse", "agy-sse"):
-                target_model = "llm-routing-agy-sse"
+            if client_model in ("agy-gemini-sse", "llm-routing-agy-sse", "agy-sse"):
+                target_model = "agy-gemini-sse"
             elif client_model in (
-                "agy-gemini", "agy-gemini-sse", "agy-opus", "agy-opus-sse",
+                "agy-gemini", "agy-opus", "agy-opus-sse",
                 "agy-sonnet", "agy-sonnet-sse",
                 "agy-gptoss", "agy-gptoss-sse"
             ):
                 target_model = client_model
             else:
-                target_model = "llm-routing-agy"
+                target_model = "agy-gemini"
             logger.info(f"agy route: proxying to LiteLLM as model={target_model}")
 
         original_target_model = target_model
@@ -3553,9 +3540,6 @@ async def chat_completions(request: Request):
                         "locallama-qwen-routing": 8192,
                         "locallama-whisper": 32768,
                         "locallama-nomic-embed": 8192,
-                        "local-qwen": 240896,
-                        "local-qwen-hass": 240896,
-                        "local-qwen-routing": 8192,
                         "gpt-4o-mini": 240896,
                         "gpt-4o": 240896,
                         "agent-advanced-core": 240896,
@@ -3566,12 +3550,8 @@ async def chat_completions(request: Request):
                         "ollama-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna": 1050000,
                         "openrouter-gpt-5.6-luna-max": 1050000,
-                        "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
                         "openrouter-tts": 32768,
-                        "llm-routing-agy": 1048576,
-                        "llm-routing-agy-sse": 1048576,
-                        "agy-sse": 1048576,
                         "agy-gemini": 1048576,
                         "agy-gemini-sse": 1048576,
                         "agy-opus": 200000,
