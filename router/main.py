@@ -2301,8 +2301,22 @@ def get_goose_sessions() -> list:
         return []
 
 
-async def get_llamacpp_metrics() -> dict:
-    """Fetches live model inventory and slot statistics from the local llama-server."""
+# In-Memory Cache for llama.cpp metrics (slots, models, build info) to prevent flooding llama-server
+llamacpp_metrics_cache: dict[str, Any] = {"data": None, "last_fetched": 0.0}
+LLAMACPP_METRICS_CACHE_TTL = float(os.getenv("LLAMACPP_METRICS_CACHE_TTL", "10.0"))
+
+
+async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
+    """Fetches live model inventory and slot statistics from the local llama-server, cached with short TTL."""
+    global llamacpp_metrics_cache
+    now = time.time()
+    if (
+        not force_refresh
+        and llamacpp_metrics_cache["data"] is not None
+        and (now - llamacpp_metrics_cache["last_fetched"] < LLAMACPP_METRICS_CACHE_TTL)
+    ):
+        return llamacpp_metrics_cache["data"]
+
     result = {"models": [], "slots": [], "build": "unknown"}
     try:
         client = get_llama_client()
@@ -2359,8 +2373,12 @@ async def get_llamacpp_metrics() -> dict:
                         "n_decoded": decoded,
                         "speculative": s.get("speculative", False),
                     })
+        llamacpp_metrics_cache["data"] = result
+        llamacpp_metrics_cache["last_fetched"] = now
     except Exception as e:
         logger.warning(f"Failed to fetch llama.cpp metrics: {e}")
+        if llamacpp_metrics_cache["data"] is not None:
+            return llamacpp_metrics_cache["data"]
     return result
 
 
@@ -2734,6 +2752,13 @@ async def proxy_audio(request: Request, path: str = ""):
     except Exception as e:
         logger.error(f"Failed to proxy audio request: {e}")
         raise HTTPException(status_code=502, detail="Audio proxy failed")
+
+
+@app.get("/health")
+@app.head("/health")
+async def health():
+    """Liveness probe returning HTTP 200."""
+    return {"status": "ok"}
 
 
 @app.get("/v1/models")
