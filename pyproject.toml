@@ -34,7 +34,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 exclude = [
     ".git",
     ".venv",
@@ -75,7 +75,7 @@ ignore = [
 "litellm/entrypoint.py" = ["E402"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 files = ["router", "scripts/host_agy_daemon.py"]
 ignore_missing_imports = true
 follow_imports = "silent"
