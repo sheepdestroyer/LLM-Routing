@@ -43,6 +43,7 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
     assert "Image=POSTGRES_IMAGE_PLACEHOLDER" in postgres
     assert "Label=wud.tag.exclude=.*(trixie|bookworm|bullseye).*" in postgres
+    assert "Exec=postgres -c log_checkpoints=off -c log_min_messages=warning" in postgres
 
     assert "Label=wud.tag.include=^RELEASE[.][0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$" in minio
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
@@ -276,3 +277,14 @@ def test_environment_isolation_guards_and_clean_zombie_ports():
     assert "Refusing to start production stack" in script
     assert "automatically applying .env.dev overlay" in script
     assert "8080" not in script.split("cleanup_zombie_ports()")[1].split('echo "🧹')[0]
+    assert 'ALTER SYSTEM SET log_checkpoints = \'off\'' in script
+
+
+def test_postgres_checkpoint_logging_suppressed():
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    assert "- log_checkpoints=off" in pod_yaml
+    assert "- log_min_messages=warning" in pod_yaml
+
+    postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
+    assert "Exec=postgres -c log_checkpoints=off -c log_min_messages=warning" in postgres
+

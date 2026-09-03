@@ -594,6 +594,7 @@ verify_stack_health() {
     while [ "$waited" -lt "$MAX_WAIT" ]; do
         if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" -q 2>/dev/null; then
             echo "   ✓ PostgreSQL ready after ${waited}s"
+            podman exec "${POD_NAME}-postgres-db" psql -U postgres -d postgres -c "ALTER SYSTEM SET log_checkpoints = 'off'; SELECT pg_reload_conf();" >/dev/null 2>&1 || true
             break
         fi
         sleep 5
