@@ -10,7 +10,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import uuid
 
-PORT = 5005
+PORT = int(os.environ.get("AGY_PORT", os.environ.get("PORT", 5005)))
 AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversations.json")
 CLI_TOKEN_PATH = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
@@ -213,7 +213,7 @@ async def execute_agy_print(prompt: str, model_override: str = "", conversation_
     }
 
 TOOL_CALL_RE = re.compile(
-    r"(?:<tool_call>|```(?:tool_call|json:tool_call)\s*)([\s\S]*?)(?:</tool_call>|```)",
+    r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)",
     re.IGNORECASE
 )
 
@@ -248,13 +248,13 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     tool_calls = []
 
     def repl(m):
-        raw = m.group(1).strip()
+        raw = (m.group(1) or m.group(2) or "").strip()
         try:
-            parsed = json.loads(raw)
+            parsed = json.loads(raw, strict=False)
             items = parsed if isinstance(parsed, list) else [parsed]
             for item in items:
                 if isinstance(item, dict) and "name" in item:
-                    args = item.get("arguments", {})
+                    args = item.get("arguments") or {}
                     args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
                     tool_calls.append({
                         "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -273,10 +273,10 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     # Fallback: if entire response is a JSON object with name & arguments or tool_calls
     if not tool_calls and text.strip().startswith("{") and text.strip().endswith("}"):
         try:
-            data = json.loads(text.strip())
+            data = json.loads(text.strip(), strict=False)
             if isinstance(data, dict):
                 if "name" in data and ("arguments" in data or "parameters" in data):
-                    args = data.get("arguments", data.get("parameters", {}))
+                    args = data.get("arguments") or data.get("parameters") or {}
                     args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
                     tool_calls.append({
                         "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -290,7 +290,7 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
                 elif "tool_calls" in data and isinstance(data["tool_calls"], list):
                     for tc in data["tool_calls"]:
                         if isinstance(tc, dict) and "name" in tc:
-                            args = tc.get("arguments", {})
+                            args = tc.get("arguments") or {}
                             args_str = json.dumps(args) if isinstance(args, (dict, list)) else str(args)
                             tool_calls.append({
                                 "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -635,7 +635,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         model = body.get("model", "gemini-3.8-flash")
         stream = body.get("stream", False)
         timeout = float(body.get("timeout", 120.0))
-        conversation_id = body.get("conversation_id") or self.headers.get("x-session-id")
+        raw_conv_id = body.get("conversation_id")
+        conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
         # Swap Gemini 3.5 to 3.8 and resolve model overrides:
         # Default Gemini tier -> gemini-3.8-flash-low
@@ -672,6 +673,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 cmd = [AGY_BINARY]
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
+                cmd.extend(["--print-timeout", f"{int(timeout)}s"])
                 cmd.extend(["--print", prompt])
 
                 master_fd, slave_fd = pty.openpty()

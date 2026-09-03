@@ -574,9 +574,11 @@ def extract_or_synthesize_session_id(body: dict, request: Request) -> str:
 
     if messages and isinstance(messages, list):
         root_parts = []
-        for msg in messages[:2]:
-            if isinstance(msg, dict):
-                role = msg.get("role", "")
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            if role in ("system", "user"):
                 content = msg.get("content") or ""
                 if isinstance(content, list):
                     content = "".join(
@@ -585,6 +587,8 @@ def extract_or_synthesize_session_id(body: dict, request: Request) -> str:
                         if isinstance(b, dict) and b.get("type") == "text"
                     )
                 root_parts.append(f"{role}:{str(content)[:160]}")
+                if role == "user":
+                    break
         if root_parts:
             seed = "||".join(root_parts)
             h = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
@@ -3472,9 +3476,9 @@ async def chat_completions(request: Request):
                         "openrouter-gpt-5.6-luna-max": 1050000,
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
-                        "llm-routing-agy": 1048576,
-                        "agy-gemini": 1048576,
-                        "agy-opus": 200000,
+                        "llm-routing-agy": 30000,
+                        "agy-gemini": 30000,
+                        "agy-opus": 30000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)

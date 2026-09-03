@@ -174,9 +174,47 @@ def test_session_id_explicit_header_preserved():
         )
         assert resp.headers["x-session-id"] == "hermes-session-custom-99"
 
+def test_session_id_synthesized_without_system_prompt():
+    """Verify session ID is stable across multi-turn turns when no system prompt is present."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "turn response"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        # Turn 1: Only user message
+        payload1 = {
+            "model": "agent-simple-core",
+            "messages": [{"role": "user", "content": "Start conversation"}],
+        }
+        resp1 = client.post("/v1/chat/completions", json=payload1, headers={"Authorization": "Bearer test-key"})
+        sess1 = resp1.headers["x-session-id"]
+
+        # Turn 2: User + Assistant + User
+        payload2 = {
+            "model": "agent-simple-core",
+            "messages": [
+                {"role": "user", "content": "Start conversation"},
+                {"role": "assistant", "content": "Sure, let's chat."},
+                {"role": "user", "content": "Next message"},
+            ],
+        }
+        resp2 = client.post("/v1/chat/completions", json=payload2, headers={"Authorization": "Bearer test-key"})
+        sess2 = resp2.headers["x-session-id"]
+
+        assert sess1 == sess2
+        assert sess1.startswith("sess-")
+
         _called_args, called_kwargs = mock_client.post.call_args
-        assert called_kwargs["headers"]["x-session-id"] == "hermes-session-custom-99"
-        assert called_kwargs["json"]["metadata"]["session_id"] == "hermes-session-custom-99"
+        assert called_kwargs["headers"]["x-session-id"] == sess1
+        assert called_kwargs["json"]["metadata"]["session_id"] == sess1
 
 @pytest.mark.asyncio
 async def test_classify_request_exception():

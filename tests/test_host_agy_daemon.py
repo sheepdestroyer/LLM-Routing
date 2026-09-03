@@ -890,5 +890,88 @@ def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch
     # Second chunk has finish_reason = tool_calls
     assert sse_data[1]["choices"][0]["finish_reason"] == "tool_calls"
 
+def test_parse_tool_calls_with_embedded_code_fences():
+    text = '<tool_call>\n{"name": "write_code", "arguments": {"code": "```python\\ndef hello():\\n    print(\'hi\')\\n```"}}\n</tool_call>'
+    cleaned, calls = host_agy_daemon.parse_tool_calls_from_text(text)
+    assert cleaned == ""
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "write_code"
+    args = json.loads(calls[0]["function"]["arguments"])
+    assert "```python" in args["code"]
+
+def test_parse_tool_calls_with_null_arguments():
+    text = '<tool_call>\n{"name": "no_arg_tool", "arguments": null}\n</tool_call>'
+    cleaned, calls = host_agy_daemon.parse_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "no_arg_tool"
+    assert calls[0]["function"]["arguments"] == "{}"
+
+def test_daemon_chat_completions_with_tools_streaming_conversational(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    read_count = 0
+    def mock_read(fd, n):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 1:
+            return b"Hello, I am a conversational assistant!"
+        return b""
+    monkeypatch.setattr(host_agy_daemon.os, "read", mock_read)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "terminal"}}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 2
+    assert sse_data[0]["choices"][0]["delta"]["content"] == "Hello, I am a conversational assistant!"
+    assert sse_data[1]["choices"][0]["finish_reason"] == "stop"
+
+def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
+    captured_conv_id = None
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        nonlocal captured_conv_id
+        captured_conv_id = conversation_id
+        return {
+            "returncode": 0,
+            "stdout": "Acknowledged.",
+            "stderr": "",
+            "conversation_id": "new_conv_1",
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_print", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hi"}],
+        "conversation_id": "sess-some-http-session",
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+
+    # Ensure sess- session was ignored and not passed as agy --conversation
+    assert captured_conv_id is None
+
 
 
