@@ -18,12 +18,16 @@ mock_proxy_cli = MagicMock()
 mock_socket_instance = MagicMock()
 mock_socket_instance.connect_ex.return_value = 0
 
-# Save original modules to avoid leaking fake ones globally
+import threading
+
+# Save original modules and excepthooks to avoid leaking state globally
 orig_modules = {
     "litellm": sys.modules.get("litellm"),
     "litellm.proxy": sys.modules.get("litellm.proxy"),
     "litellm.proxy.proxy_cli": sys.modules.get("litellm.proxy.proxy_cli"),
 }
+orig_excepthook = sys.excepthook
+orig_threading_excepthook = getattr(threading, "excepthook", None)
 
 try:
     with (
@@ -41,12 +45,15 @@ try:
         sys.modules["litellm.proxy.proxy_cli"] = mock_proxy_cli
         spec.loader.exec_module(entrypoint)
 finally:
-    # Restore original modules state
+    # Restore original modules and excepthooks state
     for k, v in orig_modules.items():
         if v is None:
             sys.modules.pop(k, None)
         else:
             sys.modules[k] = v
+    sys.excepthook = orig_excepthook
+    if orig_threading_excepthook is not None:
+        threading.excepthook = orig_threading_excepthook
 
 
 def test_check_tcp_port_success():
@@ -233,5 +240,91 @@ def test_single_line_excepthook(capsys):
     assert "[CRITICAL]" in lines[0]
     assert "[UncaughtException]" in lines[0]
     assert "RuntimeError: Fatal crash" in lines[0]
+
+
+def test_single_line_excepthook_delegates_signals(capsys):
+    with patch("sys.__excepthook__") as mock_orig_hook:
+        entrypoint.single_line_excepthook(KeyboardInterrupt, KeyboardInterrupt(), None)
+        assert mock_orig_hook.called is True
+
+    with patch("sys.__excepthook__") as mock_orig_hook:
+        entrypoint.single_line_excepthook(SystemExit, SystemExit(0), None)
+        assert mock_orig_hook.called is True
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_threading_excepthook():
+    mock_args = MagicMock()
+    mock_args.exc_type = ValueError
+    mock_args.exc_value = ValueError("Thread error")
+    mock_args.exc_tb = None
+
+    with patch.object(entrypoint, "single_line_excepthook") as mock_hook:
+        entrypoint._threading_excepthook(mock_args)
+        mock_hook.assert_called_once_with(ValueError, mock_args.exc_value, None)
+
+
+def test_single_line_formatter_non_string_msg():
+    formatter = entrypoint.SingleLineFormatter()
+    rec = logging.LogRecord(
+        "test_logger",
+        logging.INFO,
+        "test.py",
+        15,
+        12345,
+        (),
+        None,
+    )
+    result = formatter.format(rec)
+    assert "12345" in result
+    assert "[INFO]" in result
+
+
+def test_single_line_formatter_bare_carriage_return():
+    formatter = entrypoint.SingleLineFormatter()
+    rec = logging.LogRecord(
+        "test_logger",
+        logging.INFO,
+        "test.py",
+        25,
+        "Progress 50%\rProgress 100%",
+        (),
+        None,
+    )
+    result = formatter.format(rec)
+    assert "\r" not in result
+    assert "Progress 50% | Progress 100%" in result
+
+
+def test_single_line_formatter_partial_correlation_context():
+    formatter = entrypoint.SingleLineFormatter()
+
+    rec_trace = logging.LogRecord("test", logging.INFO, "test.py", 1, "msg", (), None)
+    rec_trace.trace_id = "trace-only"
+    result_trace = formatter.format(rec_trace)
+    assert "[trace_id=trace-only]" in result_trace
+    assert "session_id" not in result_trace
+
+    rec_sess = logging.LogRecord("test", logging.INFO, "test.py", 2, "msg", (), None)
+    rec_sess.session_id = "sess-only"
+    result_sess = formatter.format(rec_sess)
+    assert "[session_id=sess-only]" in result_sess
+    assert "trace_id" not in result_sess
+
+
+def test_single_line_formatter_correlation_context_before_traceback():
+    formatter = entrypoint.SingleLineFormatter()
+    try:
+        raise RuntimeError("Crash with context")
+    except RuntimeError:
+        exc = sys.exc_info()
+        rec = logging.LogRecord("test", logging.ERROR, "test.py", 1, "failed", (), exc)
+        rec.trace_id = "trace-corr"
+        rec.session_id = "sess-corr"
+        result = formatter.format(rec)
+        assert "[trace_id=trace-corr session_id=sess-corr] [Traceback:" in result
+        assert "\n" not in result
 
 

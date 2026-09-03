@@ -8,6 +8,7 @@ import re
 import shlex
 import socket
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime as original_datetime
@@ -203,10 +204,6 @@ class SingleLineFormatter(logging.Formatter):
         return " [Traceback: " + " | ".join(cleaned) + "]"
 
     def format(self, record: logging.LogRecord) -> str:
-        # Strip ANSI escape sequences from record message if string
-        if isinstance(record.msg, str):
-            record.msg = _ANSI_RE.sub("", record.msg)
-
         formatted = super().format(record)
         cleaned = _ANSI_RE.sub("", formatted)
 
@@ -215,10 +212,15 @@ class SingleLineFormatter(logging.Formatter):
         session_id = getattr(record, "session_id", None)
         if trace_id or session_id:
             parts = [f"trace_id={trace_id}" if trace_id else "", f"session_id={session_id}" if session_id else ""]
-            cleaned = f"{cleaned} [{' '.join(p for p in parts if p)}]"
+            ctx = f" [{' '.join(p for p in parts if p)}]"
+            if " [Traceback:" in cleaned:
+                prefix, sep, suffix = cleaned.partition(" [Traceback:")
+                cleaned = f"{prefix}{ctx}{sep}{suffix}"
+            else:
+                cleaned = f"{cleaned}{ctx}"
 
-        # Collapse any internal newlines so journald/conmon preserves it as a single line
-        if "\n" in cleaned:
+        # Collapse any internal newlines or carriage returns so journald/conmon preserves it as a single line
+        if "\n" in cleaned or "\r" in cleaned:
             cleaned = " | ".join(part.strip() for part in cleaned.splitlines() if part.strip())
 
         return cleaned
@@ -226,6 +228,9 @@ class SingleLineFormatter(logging.Formatter):
 
 def single_line_excepthook(exc_type, exc_value, exc_tb):
     """Ensure uncaught exceptions are formatted as a single line with [CRITICAL] severity."""
+    if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
     lines = traceback.format_exception(exc_type, exc_value, exc_tb)
     cleaned = " | ".join(part.strip() for chunk in lines for part in chunk.splitlines() if part.strip())
     now = original_datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -233,7 +238,13 @@ def single_line_excepthook(exc_type, exc_value, exc_tb):
     sys.stderr.flush()
 
 
+def _threading_excepthook(args):
+    """Ensure uncaught exceptions in background threads are formatted on a single line."""
+    single_line_excepthook(args.exc_type, args.exc_value, args.exc_tb)
+
+
 sys.excepthook = single_line_excepthook
+threading.excepthook = _threading_excepthook
 
 
 class MaxLevelFilter(logging.Filter):
@@ -300,8 +311,8 @@ try:
             _lg.handlers = [_stdout_h, _stderr_h]
             _lg.setLevel(_ll_level)
             _lg.propagate = False
-except Exception:
-    pass
+except Exception as e:
+    sys.stderr.write(f"⚠️ Warning: Failed to configure custom single-line logging: {e}\n")
 
 litellm_port = os.environ.get("LITELLM_PORT") or os.environ.get("PORT") or "4000"
 sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
