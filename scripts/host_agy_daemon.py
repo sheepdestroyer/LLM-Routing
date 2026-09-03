@@ -219,6 +219,7 @@ async def execute_agy_stream_json(
     timeout: float = 600.0,
     tools: list = None,
     intercept_tools: bool = True,
+    effort: str = None,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
     env = os.environ.copy()
@@ -231,6 +232,8 @@ async def execute_agy_stream_json(
     if conversation_id:
         cmd.extend(["--conversation", conversation_id])
     cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
+    if effort in ("low", "medium", "high"):
+        cmd.extend(["--effort", effort])
 
     input_msg = json.dumps({"event": "user", "message": {"content": prompt}}) + "\n"
     proc = None
@@ -434,6 +437,45 @@ def map_native_tool_call(tool_name: str, parameters: dict, client_tools: list) -
             "arguments": json.dumps(mapped_args) if isinstance(mapped_args, (dict, list)) else str(mapped_args),
         },
     }
+
+def extract_reasoning_effort(body: dict) -> str | None:
+    """Extract requested reasoning effort from an OpenAI/LiteLLM request body.
+
+    Supports:
+    - top-level `reasoning_effort`: "low" | "medium" | "high" | "max" | "minimal" | "none" | dict
+    - `reasoning`: {"effort": "..."}
+    - `extra_body`: {"reasoning_effort": "..."} or {"reasoning": {"effort": "..."}}
+    """
+    if not isinstance(body, dict):
+        return None
+
+    effort = body.get("reasoning_effort")
+    if not effort and isinstance(body.get("reasoning"), dict):
+        effort = body.get("reasoning", {}).get("effort")
+    if not effort and isinstance(body.get("extra_body"), dict):
+        eb = body.get("extra_body")
+        if isinstance(eb, dict):
+            effort = eb.get("reasoning_effort") or (
+                eb.get("reasoning", {}).get("effort")
+                if isinstance(eb.get("reasoning"), dict)
+                else None
+            )
+
+    if isinstance(effort, dict):
+        effort = effort.get("effort")
+    if not effort:
+        return None
+
+    e = str(effort).strip().lower()
+    if e in ("max", "high", "xhigh", "ultra"):
+        return "high"
+    if e in ("medium", "med"):
+        return "medium"
+    if e in ("low", "minimal"):
+        return "low"
+    if e in ("none", "off", "disabled", "false", "0"):
+        return "low"
+    return e
 
 def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     """Parse <tool_call> blocks from text and convert them into OpenAI tool_calls dicts."""
@@ -858,11 +900,13 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         raw_conv_id = body.get("conversation_id")
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 
+        effort = extract_reasoning_effort(body)
+        effort_cli = effort if effort in ("low", "medium", "high") else None
+
         # Swap Gemini 3.5 to 3.8 and resolve model overrides:
         # Claude Opus tier -> claude-opus-4-6-thinking
         # Claude Sonnet tier -> claude-sonnet-4-6
         # GPT-OSS tier (cheapest 3rd-party vendor model) -> gpt-oss-120b-medium
-        # Default Gemini tier -> gemini-3.8-flash-low
         if "opus" in model_lower:
             model_override = "claude-opus-4-6-thinking"
         elif "sonnet" in model_lower:
@@ -873,8 +917,22 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             model_override = "gemini-3.8-flash-high"
         elif "gemini-3.8-flash-medium" in model_lower:
             model_override = "gemini-3.8-flash-medium"
-        else:
+        elif "gemini-3.8-flash-low" in model_lower:
             model_override = "gemini-3.8-flash-low"
+        elif "gemini-3.1-pro" in model_lower:
+            if effort in ("high", "medium"):
+                model_override = "gemini-3.1-pro-high"
+            else:
+                model_override = "gemini-3.1-pro-low"
+        else:
+            # Default Gemini tier (including llm-routing-agy, llm-routing-agy-sse, agy-gemini, agy-sse, etc.)
+            # Dynamically select flash variant based on requested reasoning effort:
+            if effort == "high":
+                model_override = "gemini-3.8-flash-high"
+            elif effort == "medium":
+                model_override = "gemini-3.8-flash-medium"
+            else:
+                model_override = "gemini-3.8-flash-low"
 
         if stream:
             self.protocol_version = 'HTTP/1.1'
@@ -898,6 +956,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
                 cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
+                if effort_cli:
+                    cmd.extend(["--effort", effort_cli])
 
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                 created_time = int(time.time())
@@ -1265,6 +1325,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 kwargs["tools"] = tools
             if "intercept_tools" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
                 kwargs["intercept_tools"] = not is_sse_mode
+            if "effort" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                kwargs["effort"] = effort_cli
             exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))
         finally:
             loop.close()
