@@ -37,16 +37,27 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
     assert "Image=LITELLM_IMAGE_PLACEHOLDER" in litellm
+    assert "Label=wud.tag.include=^v[0-9]+[.][0-9]+[.][0-9]+$" in litellm
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in litellm
 
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
     assert "Image=POSTGRES_IMAGE_PLACEHOLDER" in postgres
     assert "Label=wud.tag.exclude=.*(trixie|bookworm|bullseye).*" in postgres
 
+    assert "Label=wud.tag.include=^RELEASE[.][0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$" in minio
     assert "Label=wud.tag.exclude=.*-cpu.*" in minio
+    assert (
+        'Label="wud.tag.transform=^RELEASE[.]([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2})-([0-9]{2})-([0-9]{2})Z$ => $1.$2$3.$4$5$6"'
+        in minio
+    )
+
+    assert "Label=wud.tag.include=^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+-distroless$" in clickhouse
+    assert (
+        'Label="wud.tag.transform=^([0-9]+)[.]([0-9]+)[.]([0-9]+)[.]([0-9]+)-distroless$ => $1.$2.$3-$4"' in clickhouse
+    )
 
     router = (QUADLETS / "llm-routing-router.container").read_text()
-    assert "Label=wud.tag.include=^v?\\d+\\.\\d+\\.\\d+$" in router
+    assert "Label=wud.tag.include=^v[0-9]+[.][0-9]+[.][0-9]+$" in router
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in router
 
 

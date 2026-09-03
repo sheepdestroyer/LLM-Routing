@@ -4,8 +4,9 @@ Description=MinIO S3 — Langfuse v3 event storage (POD_NAME_PLACEHOLDER)
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-minio-s3
 Image=MINIO_IMAGE_PLACEHOLDER
-Label=wud.tag.include=^RELEASE\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$
+Label=wud.tag.include=^RELEASE[.][0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$
 Label=wud.tag.exclude=.*-cpu.*
+Label="wud.tag.transform=^RELEASE[.]([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2})-([0-9]{2})-([0-9]{2})Z$ => $1.$2$3.$4$5$6"
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.

@@ -6,7 +6,7 @@ Wants=llm-routing-postgres.service llm-routing-valkey-cache.service
 [Container]
 ContainerName=POD_NAME_PLACEHOLDER-litellm-gateway
 Image=LITELLM_IMAGE_PLACEHOLDER
-Label=wud.tag.include=^v?\d+\.\d+\.\d+$
+Label=wud.tag.include=^v[0-9]+[.][0-9]+[.][0-9]+$
 Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*
 Pod=llm-routing.pod
 # play-kube injected <pod-name> -> 127.0.0.1 into /etc/hosts; replicate for apps
