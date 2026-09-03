@@ -1,6 +1,7 @@
 """Main FastAPI application for the LLM Triage & Fallback Gateway."""
 import os
 import uuid
+import hashlib
 import posixpath
 import aiofiles
 import re
@@ -551,6 +552,49 @@ def _make_prop_ctx(session_id, user_id):
         user_id=user_id or None,
         tags=[os.getenv("ENVIRONMENT", "production"), "llm-routing"],
     )
+
+
+def extract_or_synthesize_session_id(body: dict, request: Request) -> str:
+    """Extract an explicit session ID or synthesize a stable conversation-scoped ID.
+
+    Ensures every trace and LiteLLM completion groups into a session in Langfuse
+    even when clients omit custom session headers.
+    """
+    explicit = (
+        body.get("session_id")
+        or body.get("session")
+        or request.headers.get("x-session-id")
+    )
+    if explicit:
+        return str(explicit).strip()
+
+    messages = body.get("messages") or []
+    auth_alias = getattr(request.state, "auth_key_alias", "") or ""
+    prefix = f"sess-{auth_alias}" if auth_alias else "sess"
+
+    if messages and isinstance(messages, list):
+        root_parts = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            if role in ("system", "user"):
+                content = msg.get("content") or ""
+                if isinstance(content, list):
+                    content = "".join(
+                        b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                root_parts.append(f"{role}:{str(content)[:160]}")
+                if role == "user":
+                    break
+        if root_parts:
+            seed = "||".join(root_parts)
+            h = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+            return f"{prefix}-{h}"
+
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
 async def push_aggregate_scores():
@@ -3161,14 +3205,8 @@ async def chat_completions(request: Request):
 
     client_model = body.get("model", "llm-routing-auto-free")
 
-    # Extract session_id and user_id for Langfuse tracing
-    _trace_session_id = (
-        body.get("session_id")
-        or body.get("session")
-        or request.headers.get("x-session-id")
-    )
-    if _trace_session_id:
-        _trace_session_id = str(_trace_session_id)
+    # Extract or synthesize session_id and user_id for Langfuse tracing
+    _trace_session_id = extract_or_synthesize_session_id(body, request)
     _trace_user_id = (
         body.get("user")
         or request.headers.get("x-user-id")
@@ -3290,9 +3328,9 @@ async def chat_completions(request: Request):
         # agy: triggered unconditionally for llm-routing-agy (direct).
         #      For AUTO models: only triggered when classifier picks agent-advanced-core
         #      or agent-reasoning-core.
-        #      Reasoning tier → gemini-3.5-flash (single tier, low thinking)
-        #      Advanced tier → gemini-3.5-flash → claude-opus-4.6 (full 2-tier chain)
-        #      Proxied to host agy daemon on port 5005.
+        #      Reasoning tier → gemini-3.8-flash (single tier, low thinking)
+        #      Advanced tier → gemini-3.8-flash → claude-opus-4.6 (full 2-tier chain)
+        #      Proxied via LiteLLM to host agy daemon on port 5005.
         # ollama: triggered unconditionally for llm-routing-ollama (direct).
         #      For AUTO models: only triggered when classifier picks agent-advanced-core
         #      or agent-reasoning-core.
@@ -3321,328 +3359,14 @@ async def chat_completions(request: Request):
             )
         )
 
-        # --- AGY PROXY ---
+        # --- AGY PROXY (via LiteLLM) ---
+        # LiteLLM routes llm-routing-agy to host_agy_daemon (:5005) with native fallbacks
+        # (gemini-3.8-flash -> claude-opus-4.6 -> agent-advanced-core -> openrouter-auto).
+        # We proxy to LiteLLM with model="llm-routing-agy".
         if should_try_agy:
-            agy_span_obj = None
-            try:
-                from agy_proxy import try_agy_proxy, AgyProxyRequest
+            target_model = "llm-routing-agy"
+            logger.info(f"agy route: proxying to LiteLLM as model={target_model}")
 
-                last_prompt = ""
-                for msg in reversed(messages):
-                    if not isinstance(msg, dict):
-                        continue
-                    if msg.get("role") == "user":
-                        content = msg.get("content") or ""
-                        if isinstance(content, list):
-                            content = "".join(
-                                block.get("text") or ""
-                                for block in content
-                                if isinstance(block, dict) and block.get("type") == "text"
-                            )
-                        last_prompt = str(content)
-                        break
-
-                session_id = (
-                    body.get("session_id")
-                    or body.get("session")
-                    or request.headers.get("x-session-id")
-                )
-                if session_id:
-                    session_id = str(session_id)
-
-                if last_prompt:
-                    # --- Langfuse child span: agy proxy ---
-                    if langfuse_trace_id:
-                        lf_agy = get_langfuse()
-                        if lf_agy:
-                            try:
-                                agy_span_obj = lf_agy.start_observation(
-                                    trace_context={"trace_id": langfuse_trace_id},
-                                    name="agy-proxy",
-                                    input=last_prompt[:200],
-                                    metadata={"tier": target_model},
-                                    level="DEFAULT",
-                                )
-                            except Exception:
-                                pass
-
-                    is_stream_requested = body.get("stream", False)
-                    agy_request = AgyProxyRequest(
-                        prompt=last_prompt,
-                        messages=messages,
-                        session_id=session_id,
-                        total_timeout=300.0,
-                        stream=is_stream_requested,
-                        target_tier=target_model,
-                        client=get_http_client(),
-                        cooldown_persistence=ValkeyCooldownPersistence(),
-                    )
-                    agy_response = await try_agy_proxy(agy_request)
-                    if agy_response:
-                        model_name = agy_response.get("model", "gemini-3.5-flash (via agy)")
-
-                        if "stream" in agy_response:
-                            # Real native stream generator
-                            async def native_agy_stream_generator(stream_gen, model_name):
-                                """Asynchronous generator yielding native OpenAI-compatible streaming chunks from the real agy daemon."""
-                                created_time = int(time.time())
-                                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-                                token_count = 0
-                                finalized = False
-                                _native_agy_prop = (
-                                    _make_prop_ctx(_trace_session_id, _trace_user_id)
-                                    or nullcontext()
-                                )
-                                _native_agy_prop.__enter__()
-                                try:
-                                    async for token in stream_gen:
-                                        if not token:
-                                            continue
-                                        token_count += 1
-                                        chunk_data = {
-                                            "id": chunk_id,
-                                            "object": "chat.completion.chunk",
-                                            "created": created_time,
-                                            "model": model_name,
-                                            "choices": [
-                                                {
-                                                    "index": 0,
-                                                    "delta": {"content": token},
-                                                    "finish_reason": None,
-                                                }
-                                            ],
-                                        }
-                                        yield b"data: " + orjson.dumps(chunk_data) + b"\n\n"
-
-                                    # End of stream chunk
-                                    finish_data = {
-                                        "id": chunk_id,
-                                        "object": "chat.completion.chunk",
-                                        "created": created_time,
-                                        "model": model_name,
-                                        "choices": [
-                                            {
-                                                "index": 0,
-                                                "delta": {},
-                                                "finish_reason": "stop",
-                                            }
-                                        ],
-                                    }
-                                    yield b"data: " + orjson.dumps(finish_data) + b"\n\n"
-                                    yield b"data: [DONE]\n\n"
-
-                                    # Success telemetry
-                                    latency_ms = (time.time() - start_time) * 1000.0
-                                    stats["total_proxy_time_ms"] += latency_ms
-                                    stats["avg_proxy_latency_ms"] = (
-                                        stats["total_proxy_time_ms"] / stats["total_requests"]
-                                    )
-                                    approx_prompt_tokens = estimate_prompt_tokens(body)
-
-                                    record_tool_usage(ToolUsageRecord(
-                                        active_tool,
-                                        approx_prompt_tokens,
-                                        token_count,
-                                        model_name,
-                                        latency_ms,
-                                        route="google_oauth_direct",
-                                    ))
-                                    logger.info(
-                                        f"✅ native agy stream succeeded: {model_name}, {latency_ms:.0f}ms"
-                                    )
-                                    _end_child_span(agy_span_obj, 
-                                        output={
-                                            "model": model_name,
-                                            "tokens": token_count,
-                                        },
-                                        metadata={
-                                            "latency_ms": latency_ms,
-                                            "tier": target_model,
-                                        },
-                                    )
-                                    # Finalize parent trace for native agy stream
-                                    _end_parent_obs(parent_obs,
-                                        output={"model": model_name, "stream": True,
-                                                "tier": target_model, "route": "google_oauth_direct"},
-                                        metadata={"latency_ms": latency_ms,
-                                                  "completion_tokens": token_count})
-                                    _close_prop_ctx(_native_agy_prop)
-                                    finalized = True
-                                except Exception as stream_err:
-                                    logger.error(
-                                        f"Error during native agy stream generation: {type(stream_err).__name__}"
-                                    )
-                                    _end_child_span(agy_span_obj, 
-                                        output={"error": type(stream_err).__name__},
-                                        metadata={"status": "failed"},
-                                    )
-                                    # End parent trace on stream error
-                                    _end_parent_obs(parent_obs,
-                                        output={"error": type(stream_err).__name__,
-                                                "route": "google_oauth_direct", "stream": True})
-                                    _close_prop_ctx(_native_agy_prop)
-                                    finalized = True
-                                    raise
-                                finally:
-                                    if not finalized:
-                                        _end_child_span(agy_span_obj,
-                                            output={"error": "cancelled"},
-                                            metadata={"status": "cancelled"},
-                                        )
-                                        _end_parent_obs(parent_obs,
-                                            output={"error": "cancelled",
-                                                    "route": "google_oauth_direct", "stream": True})
-                                        _close_prop_ctx(_native_agy_prop)
-
-                            return StreamingResponse(
-                                native_agy_stream_generator(
-                                    agy_response["stream"], model_name
-                                ),
-                                media_type="text/event-stream",
-                            )
-                        else:
-                            latency_ms = (time.time() - start_time) * 1000.0
-                            stats["total_proxy_time_ms"] += latency_ms
-                            stats["avg_proxy_latency_ms"] = (
-                                stats["total_proxy_time_ms"] / stats["total_requests"]
-                            )
-                            usage = agy_response.get("usage") or {}
-                            prompt_tokens = usage.get("prompt_tokens") or 0
-                            completion_tokens = usage.get("completion_tokens") or 0
-                            record_tool_usage(ToolUsageRecord(
-                                active_tool,
-                                prompt_tokens,
-                                completion_tokens,
-                                model_name,
-                                latency_ms,
-                                route="google_oauth_direct",
-                            ))
-                            logger.info(
-                                f"✅ agy proxy succeeded: {model_name}, {latency_ms:.0f}ms"
-                            )
-
-                            # Finalize agy span
-                            _end_child_span(agy_span_obj, 
-                                output={
-                                    "model": model_name,
-                                    "tokens": completion_tokens,
-                                },
-                                metadata={
-                                    "latency_ms": latency_ms,
-                                    "tier": target_model,
-                                },
-                            )
-
-                            if is_stream_requested:
-                                # Robust fallback: simulate stream if we requested stream but got buffered response
-                                content = (agy_response.get("choices") or [{}])[0].get(
-                                    "message", {}
-                                ).get("content") or ""
-
-                                async def agy_stream_generator():
-                                    """Asynchronous generator yielding simulated OpenAI-compatible streaming chunks from a static agy response."""
-                                    created_time = int(time.time())
-                                    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-                                    chunk_size = 40
-                                    finalized = False
-                                    _agy_gen_prop = (
-                                        _make_prop_ctx(_trace_session_id, _trace_user_id)
-                                        or nullcontext()
-                                    )
-                                    _agy_gen_prop.__enter__()
-                                    try:
-                                        for i in range(0, len(content), chunk_size):
-                                            chunk_text = content[i : i + chunk_size]
-                                            chunk_data = {
-                                                "id": chunk_id,
-                                                "object": "chat.completion.chunk",
-                                                "created": created_time,
-                                                "model": model_name,
-                                                "choices": [
-                                                    {
-                                                        "index": 0,
-                                                        "delta": {"content": chunk_text},
-                                                        "finish_reason": None,
-                                                    }
-                                                ],
-                                            }
-                                            yield b"data: " + orjson.dumps(chunk_data) + b"\n\n"
-                                            await asyncio.sleep(0.005)
-
-                                        finish_data = {
-                                            "id": chunk_id,
-                                            "object": "chat.completion.chunk",
-                                            "created": created_time,
-                                            "model": model_name,
-                                            "choices": [
-                                                {
-                                                    "index": 0,
-                                                    "delta": {},
-                                                    "finish_reason": "stop",
-                                                }
-                                            ],
-                                        }
-                                        yield b"data: " + orjson.dumps(finish_data) + b"\n\n"
-                                        yield b"data: [DONE]\n\n"
-                                        # Finalize parent trace for simulated agy stream
-                                        _end_parent_obs(parent_obs,
-                                            output={"model": model_name, "stream": True,
-                                                    "tier": target_model, "route": "google_oauth_direct"},
-                                            metadata={"latency_ms": latency_ms,
-                                                      "completion_tokens": len(content) // 4})
-                                        _close_prop_ctx(_agy_gen_prop)
-                                        finalized = True
-                                    except Exception as e:
-                                        logger.error(
-                                            f"Error during agy stream generation: {type(e).__name__}"
-                                        )
-                                        _end_parent_obs(parent_obs,
-                                            output={"error": type(e).__name__,
-                                                    "route": "google_oauth_direct", "stream": True})
-                                        _close_prop_ctx(_agy_gen_prop)
-                                        finalized = True
-                                        raise
-                                    finally:
-                                        if not finalized:
-                                            _end_parent_obs(parent_obs,
-                                                output={"error": "cancelled",
-                                                        "route": "google_oauth_direct", "stream": True})
-                                            _close_prop_ctx(_agy_gen_prop)
-
-                                return StreamingResponse(
-                                    agy_stream_generator(), media_type="text/event-stream"
-                                )
-                            else:
-                                # Finalize parent trace for non-streaming agy
-                                _end_parent_obs(parent_obs,
-                                    output={"model": model_name, "tier": target_model,
-                                            "route": "google_oauth_direct"},
-                                    metadata={"latency_ms": latency_ms,
-                                              "completion_tokens": completion_tokens})
-                                _close_prop_ctx(_prop_ctx)
-                                _non_streaming_finalized = True
-                                return agy_response
-                # agy_response was falsy (None) — finalize agy span before falling back
-                _end_child_span(agy_span_obj, 
-                    output={"error": "no_response"},
-                    metadata={"status": "failed"},
-                )
-                logger.warning("agy proxy returned no response, falling back to LiteLLM")
-            except ImportError:
-                _end_child_span(agy_span_obj, 
-                    output={"error": "module_not_available"},
-                    metadata={"status": "skipped"},
-                )
-                logger.warning("agy_proxy module not available, falling back to LiteLLM")
-            except Exception as e:
-                _end_child_span(agy_span_obj, 
-                    output={"error": type(e).__name__},
-                    metadata={"status": "failed"},
-                )
-                logger.error(f"agy proxy failed: {type(e).__name__}, falling back to LiteLLM")
-
-        if target_model == "llm-routing-agy":
-            target_model = "agent-advanced-core"
         original_target_model = target_model
 
         # --- OLLAMA (via LiteLLM) ---
@@ -3713,6 +3437,8 @@ async def chat_completions(request: Request):
             client = get_http_client()
             try:
                 headers = {"Authorization": f"Bearer {backend_api_key}"}
+                if _trace_session_id:
+                    headers["x-session-id"] = _trace_session_id
                 if langfuse_trace_id:
                     headers["X-Langfuse-Trace-Id"] = langfuse_trace_id
                     headers["langfuse_existing_trace_id"] = langfuse_trace_id
@@ -3750,6 +3476,9 @@ async def chat_completions(request: Request):
                         "openrouter-gpt-5.6-luna-max": 1050000,
                         "gpt-5.6-luna": 1050000,
                         "openrouter-auto": 2000000,
+                        "llm-routing-agy": 1048576,
+                        "agy-gemini": 1048576,
+                        "agy-opus": 200000,
                     }
                     _min_ctx = _tier_min_ctx.get(model_name, 262144)
                     _est_input = estimate_prompt_tokens(body_to_send)
@@ -3919,8 +3648,11 @@ async def chat_completions(request: Request):
                                     _close_prop_ctx(_litellm_gen_prop)
                                 await r.aclose()
 
+                        resp_headers = {}
+                        if _trace_session_id:
+                            resp_headers["X-Session-ID"] = _trace_session_id
                         return StreamingResponse(
-                            stream_generator(), media_type="text/event-stream"
+                            stream_generator(), media_type="text/event-stream", headers=resp_headers
                         )
                     else:
                         error_body = await r.aread() if r else b""
@@ -3992,7 +3724,10 @@ async def chat_completions(request: Request):
                                       "completion_tokens": completion_tokens})
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
-                        return resp_json
+                        return JSONResponse(
+                            content=resp_json,
+                            headers={"X-Session-ID": _trace_session_id} if _trace_session_id else None
+                        )
                     else:
                         logger.warning(
                             f"LiteLLM failed ({response.status_code}): {response.text[:300]}"

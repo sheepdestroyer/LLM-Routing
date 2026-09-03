@@ -72,8 +72,8 @@ async def test_classify_request_truncation_custom_env():
         assert not sent_content.endswith("a" * 11)
 
 
-def test_llm_routing_agy_fallback_to_advanced_core():
-    """Verify that if a direct request for 'llm-routing-agy' fails or is skipped, the target_model is rewritten to 'agent-advanced-core'."""
+def test_llm_routing_agy_proxied_to_litellm():
+    """Verify that a request for 'llm-routing-agy' is proxied to LiteLLM with model='llm-routing-agy'."""
     client = TestClient(app)
 
     mock_response = MagicMock()
@@ -85,10 +85,7 @@ def test_llm_routing_agy_fallback_to_advanced_core():
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
-    # Patch try_agy_proxy to raise exception to simulate failure / unavailability
-    # Patch get_http_client to capture the outgoing request to the LiteLLM backend
-    with patch("agy_proxy.try_agy_proxy", side_effect=Exception("Agy unavailable"), create=True), \
-         patch("router.main.get_http_client", return_value=mock_client), \
+    with patch("router.main.get_http_client", return_value=mock_client), \
          patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
         payload = {
             "model": "llm-routing-agy",
@@ -99,12 +96,125 @@ def test_llm_routing_agy_fallback_to_advanced_core():
         
         assert response.status_code == 200
         assert response.json() == {"choices": [{"message": {"content": "completed response"}}]}
+        assert "x-session-id" in response.headers
         
-        # Verify the outgoing request had model set to agent-advanced-core
+        # Verify the outgoing request had model set to llm-routing-agy
         mock_client.post.assert_called_once()
         _called_args, called_kwargs = mock_client.post.call_args
         json_payload = called_kwargs["json"]
-        assert json_payload["model"] == "agent-advanced-core"
+        assert json_payload["model"] == "llm-routing-agy"
+        assert "session_id" in json_payload["metadata"]
+        assert called_kwargs["headers"]["x-session-id"] == response.headers["x-session-id"]
+
+def test_session_id_synthesis_deterministic():
+    """Verify Option C1: session ID is deterministically synthesized from initial messages."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "turn response"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload1 = {
+            "model": "agent-simple-core",
+            "messages": [
+                {"role": "system", "content": "You are a coding assistant."},
+                {"role": "user", "content": "Write a python script"},
+            ],
+        }
+        resp1 = client.post("/v1/chat/completions", json=payload1, headers={"Authorization": "Bearer test-key"})
+        sess1 = resp1.headers["x-session-id"]
+
+        # Turn 2: same conversation root + continuation
+        payload2 = {
+            "model": "agent-simple-core",
+            "messages": [
+                {"role": "system", "content": "You are a coding assistant."},
+                {"role": "user", "content": "Write a python script"},
+                {"role": "assistant", "content": "Here is the code"},
+                {"role": "user", "content": "Now add tests"},
+            ],
+        }
+        resp2 = client.post("/v1/chat/completions", json=payload2, headers={"Authorization": "Bearer test-key"})
+        sess2 = resp2.headers["x-session-id"]
+
+        # Must have the exact same synthesized session ID across multi-turn conversation
+        assert sess1 == sess2
+        assert sess1.startswith("sess-")
+
+def test_session_id_explicit_header_preserved():
+    """Verify explicit x-session-id header is preserved and forwarded."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "turn response"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        payload = {
+            "model": "agent-simple-core",
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        resp = client.post(
+            "/v1/chat/completions",
+            json=payload,
+            headers={"Authorization": "Bearer test-key", "X-Session-ID": "hermes-session-custom-99"},
+        )
+        assert resp.headers["x-session-id"] == "hermes-session-custom-99"
+
+def test_session_id_synthesized_without_system_prompt():
+    """Verify session ID is stable across multi-turn turns when no system prompt is present."""
+    client = TestClient(app)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "turn response"}}]
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_client), \
+         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        # Turn 1: Only user message
+        payload1 = {
+            "model": "agent-simple-core",
+            "messages": [{"role": "user", "content": "Start conversation"}],
+        }
+        resp1 = client.post("/v1/chat/completions", json=payload1, headers={"Authorization": "Bearer test-key"})
+        sess1 = resp1.headers["x-session-id"]
+
+        # Turn 2: User + Assistant + User
+        payload2 = {
+            "model": "agent-simple-core",
+            "messages": [
+                {"role": "user", "content": "Start conversation"},
+                {"role": "assistant", "content": "Sure, let's chat."},
+                {"role": "user", "content": "Next message"},
+            ],
+        }
+        resp2 = client.post("/v1/chat/completions", json=payload2, headers={"Authorization": "Bearer test-key"})
+        sess2 = resp2.headers["x-session-id"]
+
+        assert sess1 == sess2
+        assert sess1.startswith("sess-")
+
+        _called_args, called_kwargs = mock_client.post.call_args
+        assert called_kwargs["headers"]["x-session-id"] == sess1
+        assert called_kwargs["json"]["metadata"]["session_id"] == sess1
 
 @pytest.mark.asyncio
 async def test_classify_request_exception():

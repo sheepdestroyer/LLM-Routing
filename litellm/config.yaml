@@ -47,7 +47,24 @@ litellm_settings:
     - local-qwen-routing
     - gpt-4o-mini
     - gpt-4o
+    - llm-routing-agy
+    - agy-gemini
+    - agy-opus
   fallbacks:
+  - llm-routing-agy:
+    - agy-opus
+    - agent-advanced-core
+    - llm-routing-ollama
+    - openrouter-auto
+  - agy-gemini:
+    - agy-opus
+    - agent-advanced-core
+    - llm-routing-ollama
+    - openrouter-auto
+  - agy-opus:
+    - agent-advanced-core
+    - llm-routing-ollama
+    - openrouter-auto
   - agent-simple-core:
     - agent-medium-core
     - agent-complex-core
@@ -76,6 +93,48 @@ litellm_settings:
     - openrouter-auto
 
 model_list:
+- litellm_params:
+    model: openai/gemini-3.8-flash
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 120
+  model_name: llm-routing-agy
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/gemini-3.8-flash
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 120
+  model_name: agy-gemini
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 1048576
+    is_public_model_group: true
+- litellm_params:
+    model: openai/claude-opus-4.6
+    api_base: http://127.0.0.1:5005/v1
+    api_key: "dummy"
+    request_timeout: 180
+  model_name: agy-opus
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 65536
+    max_input_tokens: 200000
+    is_public_model_group: true
 - litellm_params:
     model: openrouter/openrouter/auto
     request_timeout: 120

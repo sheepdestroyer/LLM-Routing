@@ -5,7 +5,7 @@ import socket
 import threading
 import urllib.error
 import urllib.request
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -579,6 +579,576 @@ def test_daemon_get_status(daemon_server):
         data = json.loads(resp.read().decode())
     assert data["status"] == "ok"
     assert "auth" in data
+
+def test_extract_prompt_from_messages():
+    assert host_agy_daemon.extract_prompt_from_messages([]) == ""
+    assert host_agy_daemon.extract_prompt_from_messages(None) == ""
+
+    msgs = [
+        {"role": "system", "content": "You are a helpful bot"},
+        {"role": "user", "content": [{"type": "text", "text": "Hello world"}]},
+        {"role": "assistant", "content": "Hi there!", "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city": "Paris"}'}}]},
+        {"role": "tool", "content": "Sunny 25C"},
+        {"role": "user", "content": "Great!"},
+    ]
+    prompt = host_agy_daemon.extract_prompt_from_messages(msgs)
+    assert "System: You are a helpful bot" in prompt
+    assert "User: Hello world" in prompt
+    assert "Assistant: Hi there!" in prompt
+    assert "[Tool Call: get_weather" in prompt
+    assert "Tool Output: Sunny 25C" in prompt
+    assert "User: Great!" in prompt
+
+def test_daemon_get_v1_models(daemon_server):
+    req = urllib.request.Request(f"{daemon_server}/v1/models")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+    assert data["object"] == "list"
+    model_ids = [m["id"] for m in data["data"]]
+    assert "gemini-3.8-flash" in model_ids
+    assert "claude-opus-4.6" in model_ids
+
+def test_daemon_chat_completions_non_streaming(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["prompt"] = prompt
+        captured["model_override"] = model_override
+        captured["conversation_id"] = conversation_id
+        return {
+            "returncode": 0,
+            "stdout": "Hello from Gemini 3.8 Flash",
+            "stderr": "",
+            "conversation_id": "conv_999",
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "stream": False,
+        "conversation_id": "test_conv"
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Session-ID": "sess_123"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["object"] == "chat.completion"
+    assert data["choices"][0]["message"]["content"] == "Hello from Gemini 3.8 Flash"
+    assert captured["model_override"] == "gemini-3.8-flash-low"
+    assert captured["conversation_id"] == "test_conv"
+    assert "User: Hi" in captured["prompt"]
+
+def test_daemon_chat_completions_opus_override(daemon_server, monkeypatch):
+    captured = {}
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        captured["model_override"] = model_override
+        return {"returncode": 0, "stdout": "Opus reply", "stderr": "", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "claude-opus-4.6",
+        "messages": [{"role": "user", "content": "Think deeply"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["message"]["content"] == "Opus reply"
+    assert captured["model_override"] == "claude-opus-4-6-thinking"
+
+def test_daemon_chat_completions_quota_error(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {"returncode": 1, "stdout": "", "stderr": "Resource exhausted: quota limit reached (429)", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 429
+    err_data = json.loads(exc.value.read().decode())
+    assert err_data["error"]["type"] == "rate_limit_error"
+
+def test_daemon_chat_completions_generic_error(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {"returncode": 2, "stdout": "", "stderr": "Crash or socket error", "conversation_id": None}
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 502
+
+def test_daemon_chat_completions_streaming(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[
+            b'{"event":"step_update","step_update":{"text_delta":"Hello world"}}\n',
+            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello world"}}\n',
+            b'',
+        ])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Stream me"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 1
+    parsed_chunk = json.loads(sse_data[0].replace("data: ", ""))
+    assert parsed_chunk["object"] == "chat.completion.chunk"
+    assert parsed_chunk["choices"][0]["delta"]["content"] == "Hello world"
+
+def test_format_tools_instruction():
+    assert host_agy_daemon.format_tools_instruction([]) == ""
+    assert host_agy_daemon.format_tools_instruction(None) == ""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "terminal",
+                "description": "Run a command",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+            }
+        }
+    ]
+    instr = host_agy_daemon.format_tools_instruction(tools)
+    assert "# Available Tools" in instr
+    assert "<tools>" in instr
+    assert "terminal" in instr
+    assert "<tool_call>" in instr
+
+def test_parse_tool_calls_from_text():
+    # Empty
+    assert host_agy_daemon.parse_tool_calls_from_text("") == ("", [])
+    assert host_agy_daemon.parse_tool_calls_from_text(None) == ("", [])
+
+    # Standard XML tool call tag
+    text1 = "I will check uptime:\n<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>"
+    cleaned1, calls1 = host_agy_daemon.parse_tool_calls_from_text(text1)
+    assert cleaned1 == "I will check uptime:"
+    assert len(calls1) == 1
+    assert calls1[0]["function"]["name"] == "terminal"
+    assert json.loads(calls1[0]["function"]["arguments"]) == {"command": "uptime"}
+    assert calls1[0]["id"].startswith("call_")
+
+    # Markdown fence tool call
+    text2 = "```tool_call\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"test.txt\"}}\n```"
+    cleaned2, calls2 = host_agy_daemon.parse_tool_calls_from_text(text2)
+    assert cleaned2 == ""
+    assert len(calls2) == 1
+    assert calls2[0]["function"]["name"] == "read_file"
+
+    # Multiple tool calls
+    text3 = "<tool_call>{\"name\": \"tool_a\", \"arguments\": {}}</tool_call>\n<tool_call>{\"name\": \"tool_b\", \"arguments\": {\"x\": 1}}</tool_call>"
+    cleaned3, calls3 = host_agy_daemon.parse_tool_calls_from_text(text3)
+    assert len(calls3) == 2
+    assert calls3[0]["function"]["name"] == "tool_a"
+    assert calls3[1]["function"]["name"] == "tool_b"
+
+    # Fallback raw JSON
+    text4 = '{"name": "terminal", "arguments": {"command": "df -h"}}'
+    cleaned4, calls4 = host_agy_daemon.parse_tool_calls_from_text(text4)
+    assert len(calls4) == 1
+    assert calls4[0]["function"]["name"] == "terminal"
+
+    # Conversational text only
+    text5 = "Hello, I am an AI assistant."
+    cleaned5, calls5 = host_agy_daemon.parse_tool_calls_from_text(text5)
+    assert cleaned5 == "Hello, I am an AI assistant."
+    assert calls5 == []
+
+def test_extract_prompt_with_tools():
+    msgs = [{"role": "user", "content": "What is the date?"}]
+    tools = [{"type": "function", "function": {"name": "get_date", "parameters": {}}}]
+    prompt = host_agy_daemon.extract_prompt_from_messages(msgs, tools=tools)
+    assert "System: # Available Tools" in prompt
+    assert "get_date" in prompt
+    assert "User: What is the date?" in prompt
+
+def test_daemon_chat_completions_with_tools_non_streaming(daemon_server, monkeypatch):
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        return {
+            "returncode": 0,
+            "stdout": "<tool_call>\n{\"name\": \"terminal\", \"arguments\": {\"command\": \"uptime\"}}\n</tool_call>",
+            "stderr": "",
+            "conversation_id": "conv_tool_1",
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "Check uptime"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "description": "Run shell command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            }
+        ],
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+
+    assert data["choices"][0]["finish_reason"] == "tool_calls"
+    tool_calls = data["choices"][0]["message"]["tool_calls"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["name"] == "terminal"
+    assert json.loads(tool_calls[0]["function"]["arguments"]) == {"command": "uptime"}
+
+def test_daemon_chat_completions_with_tools_streaming(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        tc_line = json.dumps({
+            "event": "step_update",
+            "step_update": {
+                "text_delta": '<tool_call>\n{"name": "terminal", "arguments": {"command": "uname -a"}}\n</tool_call>'
+            }
+        }).encode("utf-8") + b"\n"
+        res_line = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": ""}}).encode("utf-8") + b"\n"
+        mock_proc.stdout.readline = AsyncMock(side_effect=[tc_line, res_line, b""])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "uname"}],
+        "tools": [{"type": "function", "function": {"name": "terminal"}}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 2
+    # First chunk has tool_calls delta
+    assert sse_data[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "terminal"
+    # Second chunk has finish_reason = tool_calls
+    assert sse_data[1]["choices"][0]["finish_reason"] == "tool_calls"
+
+def test_parse_tool_calls_with_embedded_code_fences():
+    text = '<tool_call>\n{"name": "write_code", "arguments": {"code": "```python\\ndef hello():\\n    print(\'hi\')\\n```"}}\n</tool_call>'
+    cleaned, calls = host_agy_daemon.parse_tool_calls_from_text(text)
+    assert cleaned == ""
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "write_code"
+    args = json.loads(calls[0]["function"]["arguments"])
+    assert "```python" in args["code"]
+
+def test_parse_tool_calls_with_null_arguments():
+    text = '<tool_call>\n{"name": "no_arg_tool", "arguments": null}\n</tool_call>'
+    cleaned, calls = host_agy_daemon.parse_tool_calls_from_text(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "no_arg_tool"
+    assert calls[0]["function"]["arguments"] == "{}"
+
+def test_daemon_chat_completions_with_tools_streaming_conversational(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[
+            b'{"event":"step_update","step_update":{"text_delta":"Hello, I am a conversational assistant!"}}\n',
+            b'{"event":"result","result":{"status":"SUCCESS","response":"Hello, I am a conversational assistant!"}}\n',
+            b'',
+        ])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "terminal"}}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        lines = resp.read().decode("utf-8").split("\n\n")
+
+    sse_data = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(sse_data) >= 2
+    assert sse_data[0]["choices"][0]["delta"]["content"] == "Hello, I am a conversational assistant!"
+    assert sse_data[1]["choices"][0]["finish_reason"] == "stop"
+
+def test_conversation_id_ignores_http_session_id(daemon_server, monkeypatch):
+    captured_conv_id = None
+    async def mock_print(prompt, model_override="", conversation_id=None, timeout=120.0):
+        nonlocal captured_conv_id
+        captured_conv_id = conversation_id
+        return {
+            "returncode": 0,
+            "stdout": "Acknowledged.",
+            "stderr": "",
+            "conversation_id": "new_conv_1",
+        }
+    monkeypatch.setattr(host_agy_daemon, "execute_agy_stream_json", mock_print)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hi"}],
+        "conversation_id": "sess-some-http-session",
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+
+    # Ensure sess- session was ignored and not passed as agy --conversation
+    assert captured_conv_id is None
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_success(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    ndjson_out = (
+        b'{"event":"init","conversation_id":"c123"}\n'
+        b'{"event":"step_update","step_update":{"text_delta":"streamed content"}}\n'
+        b'{"event":"result","result":{"status":"SUCCESS","response":"streamed content","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}\n'
+    )
+    mock_proc.communicate = AsyncMock(return_value=(ndjson_out, b""))
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt", model_override="gemini-3.8-flash-low")
+    assert res["returncode"] == 0
+    assert res["stdout"] == "streamed content"
+    assert res["conversation_id"] == "c123"
+    assert res["usage"]["total_tokens"] == 120
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_error(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 1
+    ndjson_out = b'{"event":"result","result":{"status":"ERROR","error":"bad stream input"}}\n'
+    mock_proc.communicate = AsyncMock(return_value=(ndjson_out, b"error details"))
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt")
+    assert res["returncode"] == 1
+    assert res["stderr"] == "bad stream input"
+
+@pytest.mark.asyncio
+async def test_execute_agy_stream_json_timeout(monkeypatch):
+    mock_proc = AsyncMock()
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    res = await host_agy_daemon.execute_agy_stream_json("test prompt", timeout=0.01)
+    assert res["returncode"] == -1
+    assert "timed out" in res["stderr"]
+
+def test_daemon_chat_completions_streaming_error_propagated(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock()
+        err_line = json.dumps({
+            "event": "result",
+            "result": {"status": "ERROR", "error": "Resource exhausted: quota limit reached (429)"}
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[err_line, b""])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    lines = raw_body.split("\n\n")
+    data_lines = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(data_lines) == 1
+    err_obj = json.loads(data_lines[0].replace("data: ", ""))
+    assert "error" in err_obj
+    assert err_obj["error"]["code"] == 429
+    assert err_obj["error"]["type"] == "rate_limit_error"
+    # Crucially, stream must terminate WITHOUT [DONE] so client/LiteLLM detects error and triggers fallback
+    assert "data: [DONE]" not in raw_body
+
+def test_daemon_chat_completions_streaming_timeout_error(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = None
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hang"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    lines = raw_body.split("\n\n")
+    data_lines = [l for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(data_lines) == 1
+    err_obj = json.loads(data_lines[0].replace("data: ", ""))
+    assert "error" in err_obj
+    assert "timed out" in err_obj["error"]["message"].lower()
+    assert "data: [DONE]" not in raw_body
+
+def test_daemon_chat_completions_streaming_fallback_when_deltas_omitted(daemon_server, monkeypatch):
+    async def mock_exec(*args, **kwargs):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock()
+        # No step_update events, text only in result.response
+        res_line = json.dumps({
+            "event": "result",
+            "result": {"status": "SUCCESS", "response": "Response delivered only in result"}
+        }).encode("utf-8") + b"\n"
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[res_line, b""])
+        mock_proc.stdin = MagicMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.stdin.wait_closed = AsyncMock()
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
+
+    payload = {
+        "model": "gemini-3.8-flash",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        f"{daemon_server}/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        assert resp.status == 200
+        raw_body = resp.read().decode("utf-8")
+
+    lines = raw_body.split("\n\n")
+    data_chunks = [json.loads(l.replace("data: ", "")) for l in lines if l.startswith("data: ") and not l.startswith("data: [DONE]")]
+    assert len(data_chunks) >= 2
+    assert data_chunks[0]["choices"][0]["delta"]["content"] == "Response delivered only in result"
+    assert data_chunks[1]["choices"][0]["finish_reason"] == "stop"
+    assert "data: [DONE]" in raw_body
+
 
 
 
