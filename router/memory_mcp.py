@@ -105,7 +105,7 @@ def _parse_memory_value(raw: str) -> dict:
         else:
             tags_val = val["tags"]
         return {"data": data_val, "tags": tags_val}
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         return {"data": str(raw) if raw is not None else "", "tags": []}
 
 

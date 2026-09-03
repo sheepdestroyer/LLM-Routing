@@ -39,7 +39,7 @@ if os.path.exists(token_path) and "GEMINI_OAUTH_TOKEN" not in os.environ:
                     token = creds["token"].get("access_token")
                 if token:
                     os.environ["GEMINI_OAUTH_TOKEN"] = token
-    except OSError, json.JSONDecodeError, AttributeError:
+    except (OSError, json.JSONDecodeError, AttributeError):
         pass
 
 
@@ -90,7 +90,7 @@ class RobustDatetime(original_datetime):
         # 1. Try the original format first to maintain compatibility (returning naive if expected)
         try:
             return original_datetime.strptime(date_str, fmt)
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             pass
 
         # 2. Try flexible fallbacks if the original format failed
@@ -114,7 +114,7 @@ class RobustDatetime(original_datetime):
                 if dt.tzinfo is not None:
                     return dt.astimezone(datetime.UTC)
                 return dt.replace(tzinfo=datetime.UTC)
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 continue
 
         # Fallback to original behavior to raise expected ValueError if all formats fail

@@ -4383,7 +4383,7 @@ class AnnotationPayload(RootModel):
     root: dict[str, AnnotationItem]
 
     @model_validator(mode="after")
-    def _validate_payload(self) -> AnnotationPayload:
+    def _validate_payload(self) -> "AnnotationPayload":
         """Validate the entire annotation payload for size and key constraints."""
         data = self.root
         if len(data) > 1000:

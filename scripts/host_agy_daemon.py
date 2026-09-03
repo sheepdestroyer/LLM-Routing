@@ -974,7 +974,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         try:
                             self.wfile.write(chunk_json.encode("utf-8"))
                             self.wfile.flush()
-                        except BrokenPipeError, ConnectionResetError, OSError:
+                        except (BrokenPipeError, ConnectionResetError, OSError):
                             break
 
                     try:
@@ -1126,7 +1126,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                         self.wfile.write(payload)
                         self.wfile.flush()
                         return True
-                    except BrokenPipeError, ConnectionResetError, OSError:
+                    except (BrokenPipeError, ConnectionResetError, OSError):
                         return False
 
                 proc = None
