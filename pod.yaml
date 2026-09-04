@@ -188,7 +188,13 @@ spec:
       name: env-file
       subPath: effective.env
   # PostgreSQL — Langfuse + LiteLLM metadata store
-  - env:
+  - args:
+    - postgres
+    - -c
+    - log_checkpoints=off
+    - -c
+    - log_min_messages=warning
+    env:
     - name: POSTGRES_USER
       value: postgres
     - name: POSTGRES_PASSWORD
