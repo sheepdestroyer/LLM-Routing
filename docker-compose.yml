@@ -13,8 +13,8 @@ services:
   valkey-lf:
     image: valkey/valkey:9.1.2
   langfuse-web:
-    image: langfuse/langfuse:4.27.0
+    image: langfuse/langfuse:4.28.1
   langfuse-worker:
-    image: langfuse/langfuse-worker:4.27.0
+    image: langfuse/langfuse-worker:4.28.1
   minio-s3:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
