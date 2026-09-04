@@ -288,6 +288,5 @@ def test_postgres_checkpoint_logging_suppressed():
     assert "Exec=postgres -c log_checkpoints=off -c log_min_messages=warning" in postgres
 
     script = (ROOT / "start-stack.sh").read_text()
-    assert 'ALTER SYSTEM SET log_checkpoints = \'off\'' in script
+    assert "ALTER SYSTEM SET log_checkpoints = 'off'" in script
     assert "SELECT pg_reload_conf()" in script
-
