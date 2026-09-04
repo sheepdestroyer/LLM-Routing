@@ -326,5 +326,3 @@ def test_single_line_formatter_correlation_context_before_traceback():
         result = formatter.format(rec)
         assert "[trace_id=trace-corr session_id=sess-corr] [Traceback:" in result
         assert "\n" not in result
-
-
