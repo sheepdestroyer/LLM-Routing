@@ -51,6 +51,8 @@ spec:
       value: INFO
     - name: LANGFUSE_HOST
       value: http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER
+    - name: LANGFUSE_MEDIA_UPLOAD_ENABLED
+      value: 'false'
     - name: LITELLM_MASTER_KEY
       value: LITELLM_MASTER_KEY_PLACEHOLDER
     - name: LITELLM_UI_USERNAME

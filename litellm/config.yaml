@@ -196,7 +196,9 @@ model_list:
 
 - model_name: agent-reasoning-core
   litellm_params:
-    model: agent-advanced-core
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
@@ -209,7 +211,9 @@ model_list:
 
 - model_name: agent-complex-core
   litellm_params:
-    model: agent-reasoning-core
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
@@ -222,7 +226,9 @@ model_list:
 
 - model_name: agent-medium-core
   litellm_params:
-    model: agent-complex-core
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
@@ -235,7 +241,9 @@ model_list:
 
 - model_name: agent-simple-core
   litellm_params:
-    model: agent-medium-core
+    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
