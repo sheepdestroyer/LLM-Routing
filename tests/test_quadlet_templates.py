@@ -277,7 +277,6 @@ def test_environment_isolation_guards_and_clean_zombie_ports():
     assert "Refusing to start production stack" in script
     assert "automatically applying .env.dev overlay" in script
     assert "8080" not in script.split("cleanup_zombie_ports()")[1].split('echo "🧹')[0]
-    assert 'ALTER SYSTEM SET log_checkpoints = \'off\'' in script
 
 
 def test_postgres_checkpoint_logging_suppressed():
@@ -287,4 +286,8 @@ def test_postgres_checkpoint_logging_suppressed():
 
     postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
     assert "Exec=postgres -c log_checkpoints=off -c log_min_messages=warning" in postgres
+
+    script = (ROOT / "start-stack.sh").read_text()
+    assert 'ALTER SYSTEM SET log_checkpoints = \'off\'' in script
+    assert "SELECT pg_reload_conf()" in script
 
