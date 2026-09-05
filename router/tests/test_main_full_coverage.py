@@ -842,6 +842,28 @@ async def test_memory_audio_models_proxy_branches():
     ):
         assert await _validate_litellm_virtual_key("sk-err") is None
 
+    # Virtual key lookup with 401 rejected master key
+    mock_client_vk.get.side_effect = None
+    mock_resp_401 = MagicMock()
+    mock_resp_401.status_code = 401
+    mock_client_vk.get.return_value = mock_resp_401
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "master"}),
+        patch("router.main.get_http_client", return_value=mock_client_vk),
+    ):
+        assert await _validate_litellm_virtual_key("sk-401") is None
+
+    # Virtual key lookup with 500 unexpected status
+    mock_resp_500 = MagicMock()
+    mock_resp_500.status_code = 500
+    mock_resp_500.text = "Internal Server Error"
+    mock_client_vk.get.return_value = mock_resp_500
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "master"}),
+        patch("router.main.get_http_client", return_value=mock_client_vk),
+    ):
+        assert await _validate_litellm_virtual_key("sk-500") is None
+
     # _authenticate_client_request with empty token
     req_empty_tok = MagicMock()
     req_empty_tok.headers = {"Authorization": "Bearer   "}

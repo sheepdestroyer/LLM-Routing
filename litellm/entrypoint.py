@@ -258,6 +258,74 @@ class MaxLevelFilter(logging.Filter):
         return record.levelno <= self.max_level
 
 
+class MinLevelFilter(logging.Filter):
+    """Filter that only passes log records with at least a minimum severity level."""
+
+    def __init__(self, min_level: int):
+        super().__init__()
+        self.min_level = min_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= self.min_level
+
+
+CLIENT_AUTH_ERROR_PATTERNS = (
+    "Key not found in database",
+    "KeyNotFoundError",
+    "Invalid proxy server token passed",
+    "user_api_key_auth(): Exception occured - Authentication Error",
+    "LiteLLM Virtual Key expected",
+    "ProxyException: Key not found in database",
+    "ProxyException: Key not found",
+    "Key not found.",
+    "Key not found:",
+    "Key not found in team",
+)
+
+
+def is_client_auth_error(record: logging.LogRecord) -> bool:
+    """Determine if a log record represents a client authentication or key lookup error."""
+    try:
+        msg = record.getMessage()
+    except Exception:
+        msg = str(record.msg)
+
+    exc_text = ""
+    if isinstance(record.exc_info, tuple) and len(record.exc_info) >= 2:
+        exc_type, exc_val = record.exc_info[0], record.exc_info[1]
+        type_name = getattr(exc_type, "__name__", "") if exc_type else ""
+        exc_text = f"{type_name} {exc_val}"
+
+    rec_exc_text = getattr(record, "exc_text", "") or ""
+    full_text = f"{msg} {exc_text} {rec_exc_text}"
+    return any(pattern in full_text for pattern in CLIENT_AUTH_ERROR_PATTERNS)
+
+
+class ClientAuthLogFilter(logging.Filter):
+    """Filter that intercepts client authentication and key lookup errors.
+
+    Downgrades log severity from ERROR (40) to WARNING (30) so they are stamped
+    with [WARNING] and routed to stdout instead of stderr. Also strips the redundant
+    Python traceback (record.exc_info = None) to eliminate stack trace noise.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR and is_client_auth_error(record):
+            record.levelno = logging.WARNING
+            record.levelname = "WARNING"
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+            try:
+                msg_text = record.getMessage()
+            except Exception:
+                msg_text = str(record.msg)
+            if "Traceback (most recent call last):" in msg_text:
+                record.msg = msg_text.split("Traceback (most recent call last):")[0].rstrip(" \t\n\r|")
+                record.args = None
+        return True
+
+
 # Configure uvicorn default logging before LiteLLM proxy starts
 try:
     import uvicorn.config
@@ -277,9 +345,11 @@ try:
     _ll_level_str = os.environ.get("LITELLM_LOG", "INFO").upper()
     _ll_level = getattr(logging, _ll_level_str, logging.INFO)
     _single_line_fmt = SingleLineFormatter()
+    _client_auth_filter = ClientAuthLogFilter()
 
     _stdout_h = logging.StreamHandler(sys.stdout)
     _stdout_h.setLevel(_ll_level)
+    _stdout_h.addFilter(_client_auth_filter)
     _stdout_h.addFilter(MaxLevelFilter(logging.WARNING))
     for _f in getattr(ll_log.handler, "filters", []):
         _stdout_h.addFilter(_f)
@@ -287,6 +357,8 @@ try:
 
     _stderr_h = logging.StreamHandler(sys.stderr)
     _stderr_h.setLevel(logging.ERROR)
+    _stderr_h.addFilter(_client_auth_filter)
+    _stderr_h.addFilter(MinLevelFilter(logging.ERROR))
     for _f in getattr(ll_log.handler, "filters", []):
         _stderr_h.addFilter(_f)
     _stderr_h.setFormatter(_single_line_fmt)
@@ -294,12 +366,16 @@ try:
     # Set underlying stream of default handler to stdout and apply single line formatter
     ll_log.handler.setStream(sys.stdout)
     ll_log.handler.setFormatter(_single_line_fmt)
+    ll_log.handler.addFilter(_client_auth_filter)
 
     for _lg in [
         getattr(ll_log, "verbose_logger", None),
         getattr(ll_log, "verbose_proxy_logger", None),
         getattr(ll_log, "verbose_router_logger", None),
         logging.getLogger(),
+        logging.getLogger("LiteLLM Proxy"),
+        logging.getLogger("LiteLLM"),
+        logging.getLogger("LiteLLM Router"),
         logging.getLogger("uvicorn"),
         logging.getLogger("uvicorn.error"),
         logging.getLogger("uvicorn.access"),
@@ -308,6 +384,7 @@ try:
         logging.getLogger("apscheduler"),
     ]:
         if _lg is not None:
+            _lg.addFilter(_client_auth_filter)
             _lg.handlers = [_stdout_h, _stderr_h]
             _lg.setLevel(_ll_level)
             _lg.propagate = False

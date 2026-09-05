@@ -2779,12 +2779,28 @@ async def proxy_models():
 
 _VIRTUAL_KEY_CACHE: dict[str, tuple[float, dict]] = {}
 _VIRTUAL_KEY_TTL = 300.0  # 5 minutes cache TTL
+_INVALID_VIRTUAL_KEY_CACHE: dict[str, float] = {}
+_INVALID_VIRTUAL_KEY_TTL = 60.0  # 1 minute negative cache TTL
+_MAX_INVALID_VIRTUAL_KEY_CACHE_SIZE = 5000
+
+
+def _record_invalid_virtual_key(token: str, now: float) -> None:
+    """Record an invalid virtual key in the negative cache with FIFO eviction when full."""
+    if (
+        token not in _INVALID_VIRTUAL_KEY_CACHE
+        and len(_INVALID_VIRTUAL_KEY_CACHE) >= _MAX_INVALID_VIRTUAL_KEY_CACHE_SIZE
+    ):
+        oldest = next(iter(_INVALID_VIRTUAL_KEY_CACHE))
+        _INVALID_VIRTUAL_KEY_CACHE.pop(oldest, None)
+    _INVALID_VIRTUAL_KEY_CACHE[token] = now
 
 
 async def _validate_litellm_virtual_key(token: str) -> dict | None:
     """Validate a LiteLLM virtual key (sk-...) against LiteLLM /key/info endpoint.
 
     Caches valid tokens in-memory for _VIRTUAL_KEY_TTL seconds to minimize overhead.
+    Negative-caches invalid tokens for _INVALID_VIRTUAL_KEY_TTL seconds to prevent
+    repeated lookup failures and noisy error logs.
     Returns:
         dict: The key info dict if valid (containing user_id, key_alias, metadata, etc.).
         None: If the token is invalid, expired, or rejected.
@@ -2793,11 +2809,21 @@ async def _validate_litellm_virtual_key(token: str) -> dict | None:
         return None
 
     now = time.time()
+
+    # Fast-path: negative cache check for known invalid/expired keys
+    cached_invalid_at = _INVALID_VIRTUAL_KEY_CACHE.get(token)
+    if cached_invalid_at is not None:
+        if now - cached_invalid_at < _INVALID_VIRTUAL_KEY_TTL:
+            return None
+        _INVALID_VIRTUAL_KEY_CACHE.pop(token, None)
+
+    # Positive cache check
     cached = _VIRTUAL_KEY_CACHE.get(token)
     if cached:
         cached_at, info = cached
         if now - cached_at < _VIRTUAL_KEY_TTL:
             return info
+        _VIRTUAL_KEY_CACHE.pop(token, None)
 
     master_key = os.getenv("LITELLM_MASTER_KEY")
     if not master_key:
@@ -2815,8 +2841,24 @@ async def _validate_litellm_virtual_key(token: str) -> dict | None:
             data = r.json()
             info = data.get("info")
             if isinstance(info, dict) and not info.get("blocked", False):
+                _INVALID_VIRTUAL_KEY_CACHE.pop(token, None)
                 _VIRTUAL_KEY_CACHE[token] = (now, info)
                 return info
+            # 200 returned but key is blocked or invalid structure -> negative cache
+            _record_invalid_virtual_key(token, now)
+            _VIRTUAL_KEY_CACHE.pop(token, None)
+            return None
+        elif r.status_code in (400, 404):
+            _record_invalid_virtual_key(token, now)
+            _VIRTUAL_KEY_CACHE.pop(token, None)
+            return None
+        elif r.status_code in (401, 403):
+            logger.error("LiteLLM /key/info rejected master key with status %s", r.status_code)
+            return None
+        else:
+            resp_text = getattr(r, "text", "")
+            logger.warning("LiteLLM /key/info returned unexpected status %s: %s", r.status_code, resp_text[:200])
+            return None
     except Exception as e:
         logger.warning(f"LiteLLM virtual key lookup failed (non-fatal check): {e}")
 
