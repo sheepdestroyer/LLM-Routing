@@ -267,6 +267,7 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
 | `local-qwen` (aliases: `local-qwen-hass`, `gpt-4o-mini`, `gpt-4o`) | ❌ | Local GPU llama.cpp (`Qwen3.8-27B`) | Direct local llama-server | 240K (240,896 tok) |
+| `local-qwen-vl` (alias: `locallama-qwen-vl`) | ❌ | Local GPU llama.cpp (`Qwen3-VL-32B`) | Direct local multimodal vision | 64K (65,536 tok) |
 | `local-qwen-routing` | ❌ | Local CPU llama.cpp (`Qwen3.5-4B`) | Direct local classifier | 8K (8,192 tok) |
 | `openrouter-gpt-5.6-luna` (aliases: `openrouter-gpt-5.6-luna-max`, `gpt-5.6-luna`) | ❌ | OpenRouter (`openai/gpt-5.6-luna`, max reasoning) | Direct OpenRouter | 1.05M |
 | `ollama/GPT-5.6 Luna (max)` (aliases: `ollama-gpt-5.6-luna-max`, `ollama/gpt-5.6-luna`, `ollama-gpt-5.6-luna`) | ❌ | Ollama (`gpt-5.6-luna`, max reasoning) | Direct Ollama | 1.05M |
