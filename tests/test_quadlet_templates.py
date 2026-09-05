@@ -33,9 +33,14 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     )
 
     worker = (QUADLETS / "llm-routing-langfuse-worker.container").read_text()
-    assert 'HealthCmd=node -e "process.exit(0)"' in worker
+    assert "HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WORKER_PORT_PLACEHOLDER/api/health" in worker
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
+    assert (
+        "HealthCmd=python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness', timeout=3)\""
+        in litellm
+    )
+    assert "HealthTimeout=10s" in litellm
     assert "Image=LITELLM_IMAGE_PLACEHOLDER" in litellm
     assert "Label=wud.tag.include=^v[0-9]+[.][0-9]+[.][0-9]+$" in litellm
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in litellm
@@ -58,6 +63,11 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     )
 
     router = (QUADLETS / "llm-routing-router.container").read_text()
+    assert (
+        "HealthCmd=python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics', timeout=3)\""
+        in router
+    )
+    assert "HealthTimeout=10s" in router
     assert "Label=wud.tag.include=^v[0-9]+[.][0-9]+[.][0-9]+$" in router
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in router
 

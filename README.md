@@ -77,13 +77,13 @@ All core containers are configured with health checks in the Quadlet templates u
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
 | **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
-| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
+| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000, 3s timeout) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000, 3s timeout) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
 | **langfuse-web** | `wget` GET `/api/public/health` (port 3001) every 15s | Same, every 10s |
-| **langfuse-worker** | `pgrep node` every 15s | — |
+| **langfuse-worker** | `wget` GET `/api/health` (port 3030) every 15s | — |
 | **minio-s3** | `httpGet` `/minio/health/live` (port 9002) every 15s | `httpGet` `/minio/health/ready` (port 9002) every 10s |
 
 The pod-level `restartPolicy: Always` combined with these probes means Podman will restart any container that fails its health check or exits unexpectedly, enabling true self-healing for the entire stack.

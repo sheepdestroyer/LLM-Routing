@@ -35,9 +35,9 @@ Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/config.yaml:/app/config.yaml
 Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/entrypoint.py:/app/entrypoint.py
 Volume=EFFECTIVE_ENV_FILE_PLACEHOLDER:/config/.env
 Volume=HOME_PLACEHOLDER/.gemini:/config/gemini_auth
-HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness')"
+HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness', timeout=3)"
 HealthInterval=15s
-HealthTimeout=5s
+HealthTimeout=10s
 HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=240s
