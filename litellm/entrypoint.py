@@ -273,7 +273,7 @@ CLIENT_AUTH_ERROR_PATTERNS = (
     "Key not found in database",
     "KeyNotFoundError",
     "Invalid proxy server token passed",
-    "Authentication Error",
+    "user_api_key_auth(): Exception occured - Authentication Error",
     "LiteLLM Virtual Key expected",
     "ProxyException: Key not found in database",
     "ProxyException: Key not found",
@@ -291,7 +291,7 @@ def is_client_auth_error(record: logging.LogRecord) -> bool:
         msg = str(record.msg)
 
     exc_text = ""
-    if record.exc_info and len(record.exc_info) >= 2:
+    if isinstance(record.exc_info, tuple) and len(record.exc_info) >= 2:
         exc_type, exc_val = record.exc_info[0], record.exc_info[1]
         type_name = getattr(exc_type, "__name__", "") if exc_type else ""
         exc_text = f"{type_name} {exc_val}"
@@ -316,8 +316,13 @@ class ClientAuthLogFilter(logging.Filter):
             record.exc_info = None
             record.exc_text = None
             record.stack_info = None
-            if isinstance(record.msg, str) and "Traceback (most recent call last):" in record.msg:
-                record.msg = record.msg.split("Traceback (most recent call last):")[0].rstrip(" \t\n\r|")
+            try:
+                msg_text = record.getMessage()
+            except Exception:
+                msg_text = str(record.msg)
+            if "Traceback (most recent call last):" in msg_text:
+                record.msg = msg_text.split("Traceback (most recent call last):")[0].rstrip(" \t\n\r|")
+                record.args = None
         return True
 
 

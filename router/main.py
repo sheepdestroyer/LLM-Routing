@@ -2781,6 +2781,18 @@ _VIRTUAL_KEY_CACHE: dict[str, tuple[float, dict]] = {}
 _VIRTUAL_KEY_TTL = 300.0  # 5 minutes cache TTL
 _INVALID_VIRTUAL_KEY_CACHE: dict[str, float] = {}
 _INVALID_VIRTUAL_KEY_TTL = 60.0  # 1 minute negative cache TTL
+_MAX_INVALID_VIRTUAL_KEY_CACHE_SIZE = 5000
+
+
+def _record_invalid_virtual_key(token: str, now: float) -> None:
+    """Record an invalid virtual key in the negative cache with FIFO eviction when full."""
+    if (
+        token not in _INVALID_VIRTUAL_KEY_CACHE
+        and len(_INVALID_VIRTUAL_KEY_CACHE) >= _MAX_INVALID_VIRTUAL_KEY_CACHE_SIZE
+    ):
+        oldest = next(iter(_INVALID_VIRTUAL_KEY_CACHE))
+        _INVALID_VIRTUAL_KEY_CACHE.pop(oldest, None)
+    _INVALID_VIRTUAL_KEY_CACHE[token] = now
 
 
 async def _validate_litellm_virtual_key(token: str) -> dict | None:
@@ -2833,12 +2845,19 @@ async def _validate_litellm_virtual_key(token: str) -> dict | None:
                 _VIRTUAL_KEY_CACHE[token] = (now, info)
                 return info
             # 200 returned but key is blocked or invalid structure -> negative cache
-            _INVALID_VIRTUAL_KEY_CACHE[token] = now
+            _record_invalid_virtual_key(token, now)
             _VIRTUAL_KEY_CACHE.pop(token, None)
             return None
-        elif r.status_code in (400, 401, 403, 404):
-            _INVALID_VIRTUAL_KEY_CACHE[token] = now
+        elif r.status_code in (400, 404):
+            _record_invalid_virtual_key(token, now)
             _VIRTUAL_KEY_CACHE.pop(token, None)
+            return None
+        elif r.status_code in (401, 403):
+            logger.error("LiteLLM /key/info rejected master key with status %s", r.status_code)
+            return None
+        else:
+            resp_text = getattr(r, "text", "")
+            logger.warning("LiteLLM /key/info returned unexpected status %s: %s", r.status_code, resp_text[:200])
             return None
     except Exception as e:
         logger.warning(f"LiteLLM virtual key lookup failed (non-fatal check): {e}")

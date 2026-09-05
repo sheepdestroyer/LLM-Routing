@@ -348,6 +348,10 @@ def test_min_level_filter():
     [
         ("Exception: Key not found in database", None),
         ("Authentication Error, Invalid proxy server token passed. key=abc123", None),
+        (
+            "litellm.proxy.proxy_server.user_api_key_auth(): Exception occured - Authentication Error",
+            None,
+        ),
         ("litellm.proxy.proxy_server.user_api_key_auth(): Exception occured", "KeyNotFoundError: not found"),
         ("Request failed: LiteLLM Virtual Key expected", None),
         ("ProxyException: Key not found in database", None),
@@ -384,6 +388,57 @@ def test_client_auth_log_filter_downgrades_to_warning(msg, exc_msg):
     assert rec.exc_info is None
     assert rec.exc_text is None
     assert rec.stack_info is None
+
+
+def test_client_auth_log_filter_handles_boolean_or_invalid_exc_info():
+    """Verify that non-tuple exc_info (like exc_info=True or True) does not crash is_client_auth_error."""
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="auth_exception_handler.py",
+        lineno=112,
+        msg="Invalid proxy server token passed",
+        args=(),
+        exc_info=True,
+    )
+    res = auth_filter.filter(rec)
+    assert res is True
+    assert rec.levelno == logging.WARNING
+    assert rec.exc_info is None
+
+
+def test_client_auth_log_filter_preserves_upstream_provider_auth_errors():
+    """Upstream LLM provider auth errors (e.g. invalid OpenAI/Anthropic keys) must NOT be downgraded."""
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    formatter = entrypoint.SingleLineFormatter()
+
+    try:
+        raise ValueError("openai.AuthenticationError: Incorrect API key provided or token expired")
+    except ValueError:
+        exc_info = sys.exc_info()
+
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="llm_http_handler.py",
+        lineno=200,
+        msg="Authentication Error: Provider rejected upstream credentials for model gpt-4o",
+        args=(),
+        exc_info=exc_info,
+    )
+
+    res = auth_filter.filter(rec)
+    assert res is True
+    # Must stay ERROR
+    assert rec.levelno == logging.ERROR
+    assert rec.levelname == "ERROR"
+    assert rec.exc_info is not None
+
+    formatted = formatter.format(rec)
+    assert "[ERROR]" in formatted
+    assert "[Traceback:" in formatted
+    assert "openai.AuthenticationError: Incorrect API key provided" in formatted
 
 
 def test_client_auth_log_filter_strips_traceback_and_formats_cleanly():
@@ -429,8 +484,8 @@ def test_client_auth_log_filter_strips_embedded_traceback_string():
         level=logging.ERROR,
         pathname="utils.py",
         lineno=6825,
-        msg="Exception: Key not found in database | Traceback (most recent call last): | File 'foo.py', line 10",
-        args=(),
+        msg="Exception: Key not found in database: %s | Traceback (most recent call last): | File 'foo.py', line 10",
+        args=("some_key",),
         exc_info=None,
     )
 
@@ -439,7 +494,8 @@ def test_client_auth_log_filter_strips_embedded_traceback_string():
     assert rec.levelno == logging.WARNING
     assert rec.levelname == "WARNING"
     assert "Traceback (most recent call last)" not in rec.msg
-    assert "Exception: Key not found in database" in rec.msg
+    assert "Exception: Key not found in database: some_key" in rec.msg
+    assert rec.args is None
 
 
 def test_client_auth_log_filter_preserves_non_auth_server_errors():
