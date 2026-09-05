@@ -2290,11 +2290,10 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
         if r2.status_code == 200:
             props = r2.json()
             result["build"] = props.get("build_info", "unknown")
-        # Fetch slots for the loaded model, falling back to the first available model if all are unloaded
+        # Fetch slots only for a loaded model to avoid triggering automatic model loading
         loaded = [m["id"] for m in result["models"] if m["status"] == "loaded"]
-        slot_model = loaded[0] if loaded else (result["models"][0]["id"] if result["models"] else None)
-        if slot_model:
-            r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={slot_model}", timeout=3.0)
+        if loaded:
+            r3 = await client.get(f"{LLAMA_SERVER_URL}/slots?model={loaded[0]}", timeout=3.0)
             if r3.status_code == 200:
                 slots_data = r3.json()
                 for s in slots_data:
