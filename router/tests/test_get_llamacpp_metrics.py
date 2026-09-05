@@ -93,11 +93,9 @@ async def test_get_llamacpp_metrics_success(mock_http_client):
 
 @pytest.mark.asyncio
 async def test_get_llamacpp_metrics_partial(mock_http_client):
-    # Test when only models endpoint works, others fail
-
-    # 1. /v1/models response
+    # Test when models endpoint works with loaded model, but props and slots fail
     models_response = MagicMock(status_code=200)
-    models_response.json.return_value = {"data": [{"id": "model-1", "status": {"value": "unloaded"}}]}
+    models_response.json.return_value = {"data": [{"id": "model-1", "status": {"value": "loaded"}}]}
 
     def mock_get(url, *args, **kwargs):
         if url.endswith("/v1/models"):
@@ -112,9 +110,37 @@ async def test_get_llamacpp_metrics_partial(mock_http_client):
     assert result["build"] == "unknown"
     assert len(result["models"]) == 1
     assert result["models"][0]["id"] == "model-1"
-    assert result["models"][0]["status"] == "unloaded"
-
+    assert result["models"][0]["status"] == "loaded"
     assert len(result["slots"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_llamacpp_metrics_unloaded_model_skips_slots(mock_http_client):
+    # Verify that when models are unloaded, /slots is never queried to prevent triggering model load
+    models_response = MagicMock(status_code=200)
+    models_response.json.return_value = {"data": [{"id": "model-1", "status": {"value": "unloaded"}}]}
+    props_response = MagicMock(status_code=200)
+    props_response.json.return_value = {"build_info": "1.0.0"}
+
+    def mock_get(url, *args, **kwargs):
+        if url.endswith("/v1/models"):
+            return models_response
+        elif url.endswith("/props"):
+            return props_response
+        else:
+            return MagicMock(status_code=500)
+
+    mock_http_client.get.side_effect = mock_get
+
+    result = await get_llamacpp_metrics()
+
+    assert result["build"] == "1.0.0"
+    assert len(result["models"]) == 1
+    assert result["models"][0]["status"] == "unloaded"
+    assert len(result["slots"]) == 0
+    # Should only call /v1/models and /props, never /slots
+    called_urls = [call[0][0] for call in mock_http_client.get.call_args_list]
+    assert not any("/slots" in u for u in called_urls)
 
 
 @pytest.mark.asyncio
