@@ -128,3 +128,28 @@ def test_litellm_config_local_model_context_limits():
 
     assert "locallama-qwen-routing" in models_by_name
     assert models_by_name["locallama-qwen-routing"]["model_info"]["max_tokens"] == 8192
+
+    assert "locallama-qwen-vl" in models_by_name
+    assert models_by_name["locallama-qwen-vl"]["model_info"]["max_tokens"] == 65536
+    assert models_by_name["locallama-qwen-vl"]["model_info"]["supports_vision"] is True
+
+    assert "local-qwen" in models_by_name
+    assert models_by_name["local-qwen"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["local-qwen"]["model_info"]["max_input_tokens"] == 240896
+
+    assert "local-qwen-hass" in models_by_name
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
+
+    assert "local-qwen-routing" in models_by_name
+    assert models_by_name["local-qwen-routing"]["model_info"]["max_tokens"] == 8192
+
+    assert "locallama-nomic-embed" in models_by_name
+    assert models_by_name["locallama-nomic-embed"]["model_info"]["mode"] == "embedding"
+
+    assert "local-nomic-embed" in models_by_name
+    assert models_by_name["local-nomic-embed"]["model_info"]["mode"] == "embedding"
+
+    assert "local-qwen-vl" in models_by_name
+    assert models_by_name["local-qwen-vl"]["model_info"]["max_tokens"] == 65536
+    assert models_by_name["local-qwen-vl"]["model_info"]["supports_vision"] is True
