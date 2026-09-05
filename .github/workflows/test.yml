@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install httpx==0.28.1 pytest pytest-asyncio anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright ruff mypy pytest-cov coverage
+          pip install httpx==0.28.1 pytest pytest-asyncio pytest-xdist anyio pyyaml fastapi "pydantic>=2.0,<3.0" uvicorn python-multipart asyncpg langfuse redis aiofiles==25.1.0 jinja2 orjson playwright ruff mypy pytest-cov coverage
           playwright install --with-deps chromium
 
       - name: Run Ruff Lint & Format Check
@@ -38,7 +38,7 @@ jobs:
 
       - name: Run Unit Tests with 100% Coverage Gate
         run: |
-          CONFIG_PATH=router/config.yaml PYTHONPATH=".:scripts" pytest --cov=router --cov=host_agy_daemon --cov-branch --cov-report=term-missing --cov-fail-under=100
+          CONFIG_PATH=router/config.yaml PYTHONPATH=".:scripts" pytest -n auto --cov=router --cov=host_agy_daemon --cov-branch --cov-report=term-missing --cov-fail-under=100
 
       - name: Run Breaker Verification
         run: PYTHONPATH=. python3 scripts/verification/verify_breaker.py
