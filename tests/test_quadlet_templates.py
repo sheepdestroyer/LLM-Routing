@@ -37,7 +37,7 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
 
     litellm = (QUADLETS / "llm-routing-litellm.container").read_text()
     assert (
-        'HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen(\'http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness\', timeout=3)"'
+        "HealthCmd=python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:LITELLM_PORT_PLACEHOLDER/health/liveness', timeout=3)\""
         in litellm
     )
     assert "HealthTimeout=10s" in litellm
@@ -64,7 +64,7 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
 
     router = (QUADLETS / "llm-routing-router.container").read_text()
     assert (
-        'HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen(\'http://localhost:ROUTER_PORT_PLACEHOLDER/metrics\', timeout=3)"'
+        "HealthCmd=python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:ROUTER_PORT_PLACEHOLDER/metrics', timeout=3)\""
         in router
     )
     assert "HealthTimeout=10s" in router
