@@ -326,3 +326,212 @@ def test_single_line_formatter_correlation_context_before_traceback():
         result = formatter.format(rec)
         assert "[trace_id=trace-corr session_id=sess-corr] [Traceback:" in result
         assert "\n" not in result
+
+
+def test_min_level_filter():
+    filter_obj = entrypoint.MinLevelFilter(logging.ERROR)
+    rec_debug = logging.LogRecord("test", logging.DEBUG, "", 0, "debug msg", (), None)
+    rec_info = logging.LogRecord("test", logging.INFO, "", 0, "info msg", (), None)
+    rec_warn = logging.LogRecord("test", logging.WARNING, "", 0, "warn msg", (), None)
+    rec_err = logging.LogRecord("test", logging.ERROR, "", 0, "err msg", (), None)
+    rec_crit = logging.LogRecord("test", logging.CRITICAL, "", 0, "crit msg", (), None)
+
+    assert filter_obj.filter(rec_debug) is False
+    assert filter_obj.filter(rec_info) is False
+    assert filter_obj.filter(rec_warn) is False
+    assert filter_obj.filter(rec_err) is True
+    assert filter_obj.filter(rec_crit) is True
+
+
+@pytest.mark.parametrize(
+    "msg,exc_msg",
+    [
+        ("Exception: Key not found in database", None),
+        ("Authentication Error, Invalid proxy server token passed. key=abc123", None),
+        ("litellm.proxy.proxy_server.user_api_key_auth(): Exception occured", "KeyNotFoundError: not found"),
+        ("Request failed: LiteLLM Virtual Key expected", None),
+        ("ProxyException: Key not found in database", None),
+        ("Key not found.", None),
+        ("Key not found: hashed_token_123", None),
+        ("Key not found in team team-456", None),
+    ],
+)
+def test_client_auth_log_filter_downgrades_to_warning(msg, exc_msg):
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    exc_info = None
+    if exc_msg:
+        try:
+            raise RuntimeError(exc_msg)
+        except RuntimeError:
+            exc_info = sys.exc_info()
+
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="utils.py",
+        lineno=100,
+        msg=msg,
+        args=(),
+        exc_info=exc_info,
+    )
+    assert rec.levelno == logging.ERROR
+    assert rec.levelname == "ERROR"
+
+    res = auth_filter.filter(rec)
+    assert res is True
+    assert rec.levelno == logging.WARNING
+    assert rec.levelname == "WARNING"
+    assert rec.exc_info is None
+    assert rec.exc_text is None
+    assert rec.stack_info is None
+
+
+def test_client_auth_log_filter_strips_traceback_and_formats_cleanly():
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    formatter = entrypoint.SingleLineFormatter()
+
+    try:
+        raise ValueError("Invalid proxy server token passed. valid_token=None.")
+    except ValueError:
+        exc_info = sys.exc_info()
+
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="auth_exception_handler.py",
+        lineno=112,
+        msg="litellm.proxy.proxy_server.user_api_key_auth(): Exception occured - Authentication Error\nRequester IP Address:127.0.0.1",
+        args=(),
+        exc_info=exc_info,
+    )
+    rec.exc_text = "Traceback (most recent call last):\n  File 'test.py', line 1, in <module>"
+
+    auth_filter.filter(rec)
+
+    assert rec.levelno == logging.WARNING
+    assert rec.levelname == "WARNING"
+    assert rec.exc_info is None
+    assert rec.exc_text is None
+    assert rec.stack_info is None
+
+    formatted = formatter.format(rec)
+    assert "[WARNING]" in formatted
+    assert "[Traceback:" not in formatted
+    assert "Traceback (most recent call last)" not in formatted
+    assert "Requester IP Address:127.0.0.1" in formatted
+    assert "\n" not in formatted
+
+
+def test_client_auth_log_filter_strips_embedded_traceback_string():
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="utils.py",
+        lineno=6825,
+        msg="Exception: Key not found in database | Traceback (most recent call last): | File 'foo.py', line 10",
+        args=(),
+        exc_info=None,
+    )
+
+    auth_filter.filter(rec)
+
+    assert rec.levelno == logging.WARNING
+    assert rec.levelname == "WARNING"
+    assert "Traceback (most recent call last)" not in rec.msg
+    assert "Exception: Key not found in database" in rec.msg
+
+
+def test_client_auth_log_filter_preserves_non_auth_server_errors():
+    auth_filter = entrypoint.ClientAuthLogFilter()
+    formatter = entrypoint.SingleLineFormatter()
+
+    try:
+        raise ConnectionRefusedError("Could not connect to PostgreSQL on :5432")
+    except ConnectionRefusedError:
+        exc_info = sys.exc_info()
+
+    rec = logging.LogRecord(
+        name="LiteLLM Proxy",
+        level=logging.ERROR,
+        pathname="prisma.py",
+        lineno=50,
+        msg="Database query execution failed: %s",
+        args=("Connection refused",),
+        exc_info=exc_info,
+    )
+
+    res = auth_filter.filter(rec)
+    assert res is True
+    # Server errors must NOT be downgraded
+    assert rec.levelno == logging.ERROR
+    assert rec.levelname == "ERROR"
+    # Traceback must NOT be stripped
+    assert rec.exc_info is not None
+
+    formatted = formatter.format(rec)
+    assert "[ERROR]" in formatted
+    assert "[Traceback:" in formatted
+    assert "ConnectionRefusedError: Could not connect to PostgreSQL on :5432" in formatted
+
+
+def test_client_auth_log_routing_stdout_vs_stderr():
+    import io
+
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+
+    formatter = entrypoint.SingleLineFormatter()
+    auth_filter = entrypoint.ClientAuthLogFilter()
+
+    stdout_h = logging.StreamHandler(stdout_buf)
+    stdout_h.setLevel(logging.INFO)
+    stdout_h.addFilter(auth_filter)
+    stdout_h.addFilter(entrypoint.MaxLevelFilter(logging.WARNING))
+    stdout_h.setFormatter(formatter)
+
+    stderr_h = logging.StreamHandler(stderr_buf)
+    stderr_h.setLevel(logging.ERROR)
+    stderr_h.addFilter(auth_filter)
+    stderr_h.addFilter(entrypoint.MinLevelFilter(logging.ERROR))
+    stderr_h.setFormatter(formatter)
+
+    test_logger = logging.getLogger("test_router_logger")
+    test_logger.setLevel(logging.INFO)
+    test_logger.handlers = [stdout_h, stderr_h]
+    test_logger.addFilter(auth_filter)
+
+    # 1. Log client auth error -> should route to stdout as WARNING, not stderr
+    try:
+        raise ValueError("Invalid proxy server token passed")
+    except ValueError:
+        test_logger.exception("Auth failed: Invalid proxy server token passed")
+
+    stdout_output = stdout_buf.getvalue()
+    stderr_output = stderr_buf.getvalue()
+
+    assert "[WARNING]" in stdout_output
+    assert "Invalid proxy server token passed" in stdout_output
+    assert "[Traceback:" not in stdout_output
+    assert stderr_output == ""
+
+    # Clear buffers
+    stdout_buf.seek(0)
+    stdout_buf.truncate(0)
+    stderr_buf.seek(0)
+    stderr_buf.truncate(0)
+
+    # 2. Log real server error -> should route to stderr as ERROR, not stdout
+    try:
+        raise RuntimeError("Prisma engine query failed fatally")
+    except RuntimeError:
+        test_logger.exception("Prisma failure")
+
+    stdout_output = stdout_buf.getvalue()
+    stderr_output = stderr_buf.getvalue()
+
+    assert stdout_output == ""
+    assert "[ERROR]" in stderr_output
+    assert "Prisma failure" in stderr_output
+    assert "[Traceback:" in stderr_output
+    assert "Prisma engine query failed fatally" in stderr_output
