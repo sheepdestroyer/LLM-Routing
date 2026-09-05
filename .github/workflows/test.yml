@@ -38,7 +38,7 @@ jobs:
 
       - name: Run Unit Tests with 100% Coverage Gate
         run: |
-          CONFIG_PATH=router/config.yaml PYTHONPATH=".:scripts" pytest -n auto --cov=router --cov=host_agy_daemon --cov-branch --cov-report=term-missing --cov-fail-under=100
+          CONFIG_PATH=router/config.yaml PYTHONPATH=".:scripts" pytest --cov=router --cov=host_agy_daemon --cov-branch --cov-report=term-missing --cov-fail-under=100
 
       - name: Run Breaker Verification
         run: PYTHONPATH=. python3 scripts/verification/verify_breaker.py
