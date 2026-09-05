@@ -36,10 +36,17 @@
       "has_tools": true
     },
     {
-      "id": "nvidia/nemotron-3-nano-30b-a3b:free",
-      "name": "NVIDIA: Nemotron 3 Nano 30B A3B (free)",
-      "score": 28.0,
-      "context_length": 256000,
+      "id": "inclusionai/ling-3.0-flash-sante:free",
+      "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
+      "score": 25.0,
+      "context_length": 262144,
+      "has_tools": true
+    },
+    {
+      "id": "inclusionai/ling-3.0-flash-fin:free",
+      "name": "inclusionAI: Ling 3.0 Flash Fin (free)",
+      "score": 25.0,
+      "context_length": 262144,
       "has_tools": true
     },
     {
@@ -53,7 +60,7 @@
       "id": "liquid/lfm-2.5-2.6b:free",
       "name": "LiquidAI: LFM2.5-2.6B (free)",
       "score": 25.0,
-      "context_length": 128000,
+      "context_length": 65536,
       "has_tools": true
     },
     {
@@ -64,10 +71,24 @@
       "has_tools": true
     },
     {
+      "id": "thinkingmachines/inkling-small:free",
+      "name": "Thinking Machines: Inkling Small (free)",
+      "score": 25.0,
+      "context_length": 1048576,
+      "has_tools": true
+    },
+    {
       "id": "poolside/laguna-s-2.1:free",
       "name": "Poolside: Laguna S 2.1 (free)",
       "score": 25.0,
       "context_length": 262144,
+      "has_tools": true
+    },
+    {
+      "id": "thinkingmachines/inkling:free",
+      "name": "Thinking Machines: Inkling (free)",
+      "score": 25.0,
+      "context_length": 1048576,
       "has_tools": true
     },
     {
@@ -85,11 +106,25 @@
       "has_tools": true
     },
     {
+      "id": "z-ai/glm-5.2:free",
+      "name": "Z.ai: GLM 5.2 (free)",
+      "score": 25.0,
+      "context_length": 256000,
+      "has_tools": true
+    },
+    {
       "id": "nvidia/nemotron-3.5-content-safety:free",
       "name": "NVIDIA: Nemotron 3.5 Content Safety (free)",
       "score": 25.0,
       "context_length": 128000,
       "has_tools": false
+    },
+    {
+      "id": "minimax/minimax-m3:free",
+      "name": "MiniMax: MiniMax M3 (free)",
+      "score": 25.0,
+      "context_length": 1048576,
+      "has_tools": true
     },
     {
       "id": "google/lyria-3-pro-preview",
@@ -106,34 +141,20 @@
       "has_tools": false
     },
     {
+      "id": "minimax/minimax-m2.7:free",
+      "name": "MiniMax: MiniMax M2.7 (free)",
+      "score": 25.0,
+      "context_length": 196608,
+      "has_tools": true
+    },
+    {
       "id": "openrouter/free",
       "name": "Free Models Router",
       "score": 25.0,
       "context_length": 200000,
       "has_tools": true
-    },
-    {
-      "id": "nvidia/nemotron-nano-12b-v2-vl:free",
-      "name": "NVIDIA: Nemotron Nano 12B 2 VL (free)",
-      "score": 25.0,
-      "context_length": 128000,
-      "has_tools": true
-    },
-    {
-      "id": "nvidia/nemotron-nano-9b-v2:free",
-      "name": "NVIDIA: Nemotron Nano 9B V2 (free)",
-      "score": 25.0,
-      "context_length": 128000,
-      "has_tools": true
-    },
-    {
-      "id": "openai/gpt-oss-20b:free",
-      "name": "OpenAI: gpt-oss-20b (free)",
-      "score": 25.0,
-      "context_length": 131072,
-      "has_tools": true
     }
   ],
-  "updated_at": "2026-08-15T06:26:11.451676Z",
-  "count": 19
+  "updated_at": "2026-09-05T11:50:02.204917Z",
+  "count": 22
 }
