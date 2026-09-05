@@ -29,9 +29,9 @@ Environment=LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://127.0.0.1:MINIO_S3_PORT_PLA
 Environment=S3_FORCE_PATH_STYLE=true
 Environment=LANGFUSE_LOG_LEVEL=warn
 Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual
-HealthCmd=node -e "process.exit(0)"
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WORKER_PORT_PLACEHOLDER/api/health
 HealthInterval=15s
-HealthTimeout=5s
+HealthTimeout=10s
 HealthOnFailure=kill
 HealthRetries=5
 HealthStartPeriod=240s
