@@ -77,8 +77,8 @@ All core containers are configured with health checks in the Quadlet templates u
 | Container | Liveness Probe | Readiness Probe |
 |:---|---:|---:|
 | **valkey-cache** | `valkey-cli -p <port> ping` every 10s | Same, every 5s |
-| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
-| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000) every 15s | Same, every 10s |
+| **litellm-gateway** | Python `urllib` GET `/health/liveness` (port 4000, 3s timeout) every 15s | Python `urllib` GET `/health/readiness` (port 4000) every 10s |
+| **llm-triage-router** | Python `urllib` GET `/metrics` (port 5000, 3s timeout) every 15s | Same, every 10s |
 | **postgres-db** | `pg_isready -U postgres -p <port>` every 10s | Same, every 5s |
 | **clickhouse-db** | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 15s | `clickhouse-client --user clickhouse --password <generated> --query "SELECT 1"` every 10s |
 | **valkey-lf** | `valkey-cli -p <port> -a <auth> ping` every 10s | Same, every 5s |
