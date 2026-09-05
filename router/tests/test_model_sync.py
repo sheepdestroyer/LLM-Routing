@@ -188,6 +188,8 @@ async def test_discover_agy_latest_flash_fallback(sync_engine, mock_client):
 def test_build_model_suites(sync_engine):
     locallama = sync_engine.build_locallama_models()
     assert any(m["model_name"] == "locallama-qwen" for m in locallama)
+    assert any(m["model_name"] == "locallama-qwen-vl" for m in locallama)
+    assert any(m["model_name"] == "local-qwen-vl" for m in locallama)
     assert any(m["model_name"] == "locallama-whisper" for m in locallama)
 
     agy = sync_engine.build_agy_models(latest_flash="gemini-3.8-flash")

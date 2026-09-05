@@ -305,6 +305,42 @@ class ModelRegistrySync:
                 },
             },
             {
+                "model_name": "locallama-qwen-vl",
+                "litellm_params": {
+                    "model": "openai/locallama-qwen-vl",
+                    "api_base": llama_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 65536,
+                    "max_input_tokens": 65536,
+                    "supports_vision": True,
+                    "supports_reasoning": False,
+                    "supports_function_calling": True,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "local-qwen-vl",
+                "litellm_params": {
+                    "model": "openai/local-qwen-vl",
+                    "api_base": llama_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 65536,
+                    "max_input_tokens": 65536,
+                    "supports_vision": True,
+                    "supports_reasoning": False,
+                    "supports_function_calling": True,
+                    "is_public_model_group": True,
+                },
+            },
+            {
                 "model_name": "locallama-whisper",
                 "litellm_params": {
                     "model": "openai/locallama-whisper",

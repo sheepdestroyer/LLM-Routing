@@ -128,3 +128,12 @@ def test_litellm_config_local_model_context_limits():
 
     assert "locallama-qwen-routing" in models_by_name
     assert models_by_name["locallama-qwen-routing"]["model_info"]["max_tokens"] == 8192
+
+    assert "locallama-qwen-vl" in models_by_name
+    assert models_by_name["locallama-qwen-vl"]["model_info"]["max_tokens"] == 65536
+    assert models_by_name["locallama-qwen-vl"]["model_info"]["supports_vision"] is True
+
+    assert "local-qwen-vl" in models_by_name
+    assert models_by_name["local-qwen-vl"]["model_info"]["max_tokens"] == 65536
+    assert models_by_name["local-qwen-vl"]["model_info"]["supports_vision"] is True
+
