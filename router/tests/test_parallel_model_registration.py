@@ -179,6 +179,7 @@ async def test_register_models_individual_failures_handled_gracefully(mock_env, 
             {"model_name": "openrouter-ok", "litellm_params": {"model": "openrouter/ok"}},
             {"model_name": "openrouter-fail-http", "litellm_params": {"model": "openrouter/fail"}},
             {"model_name": "openrouter-fail-exc", "litellm_params": {"model": "openrouter/exc"}},
+            {"litellm_params": {"model": "openrouter/no-name"}},  # Missing model_name key
         ]
     }
 
@@ -192,8 +193,10 @@ async def test_register_models_individual_failures_handled_gracefully(mock_env, 
             return resp_200
         elif name == "openrouter-fail-http":
             return resp_500
-        else:
+        elif name == "openrouter-fail-exc":
             raise RuntimeError("Simulated network timeout")
+        else:
+            return resp_500
 
     mock_client = AsyncMock()
     mock_client.post.side_effect = mock_post
@@ -206,8 +209,8 @@ async def test_register_models_individual_failures_handled_gracefully(mock_env, 
         # Should complete without error
         await _register_openrouter_models_in_db("test_master_key")
 
-    assert mock_client.post.call_count == 3
-    assert "OpenRouter DB registration: 1 registered, 2 failed" in caplog.text
+    assert mock_client.post.call_count == 4
+    assert "OpenRouter DB registration: 1 registered, 3 failed" in caplog.text
     assert "HTTP 500" in caplog.text
     assert "Simulated network timeout" in caplog.text
 
