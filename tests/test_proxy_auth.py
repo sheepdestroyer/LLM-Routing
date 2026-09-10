@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
@@ -194,3 +195,103 @@ def test_proxy_audio_authenticated_virtual_key(client):
         )
         assert resp.status_code == 200
         assert resp.json() == {"text": "transcribed"}
+
+
+def test_proxy_audio_multipart_upload(client):
+    """Test that audio proxy forwards multipart/form-data preserving content-type and boundary."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.content = b'{"text": "transcribed audio"}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_http_client):
+        files = {"file": ("test.wav", b"RIFF....WAVEfmt", "audio/wav")}
+        data = {"model": "whisper-1"}
+        resp = client.post(
+            "/v1/audio/transcriptions",
+            headers={"Authorization": "Bearer test-key"},
+            files=files,
+            data=data,
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"text": "transcribed audio"}
+        call_kwargs = mock_http_client.request.call_args.kwargs
+        assert "multipart/form-data" in call_kwargs["headers"]["Content-Type"]
+
+
+def test_proxy_memory_master_key_unconfigured_returns_500(client):
+    """Test that proxy_memory returns 500 when LITELLM_MASTER_KEY is unconfigured."""
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "PLACEHOLDER_KEY"}):
+        resp = client.get("/v1/memory", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 500
+        assert "LiteLLM master key is missing" in resp.json()["detail"]
+
+
+def test_proxy_audio_master_key_unconfigured_returns_500(client):
+    """Test that proxy_audio returns 500 when LITELLM_MASTER_KEY is unconfigured."""
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "sk-1234"}):
+        resp = client.get("/v1/audio/transcriptions", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 500
+        assert "LiteLLM master key is missing" in resp.json()["detail"]
+
+
+def test_proxy_memory_bodyless_no_content_type(client):
+    """Test that bodyless GET request does not inject spurious application/json Content-Type."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.content = b'{"memories": []}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_http_client):
+        resp = client.get("/v1/memory", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 200
+        call_kwargs = mock_http_client.request.call_args.kwargs
+        assert "Content-Type" not in call_kwargs["headers"]
+
+
+def test_proxy_memory_body_without_content_type_defaults_to_json(client):
+    """Test that proxy_memory defaults to application/json when body is provided without Content-Type."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.content = b'{"success": true}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_http_client):
+        resp = client.post(
+            "/v1/memory",
+            content=b'{"key": "value"}',
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        call_kwargs = mock_http_client.request.call_args.kwargs
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
+
+
+def test_proxy_audio_body_without_content_type_defaults_to_json(client):
+    """Test that proxy_audio defaults to application/json when body is provided without Content-Type."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.content = b'{"text": "transcription"}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_http_client):
+        resp = client.post(
+            "/v1/audio/transcriptions",
+            content=b'{"audio": "rawdata"}',
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        call_kwargs = mock_http_client.request.call_args.kwargs
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"

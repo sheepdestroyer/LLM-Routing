@@ -21,10 +21,11 @@ def make_mock_aiofiles_open(content: bytes | str):
     return MagicMock(return_value=mock_context_manager)
 
 
-def make_mock_stat(mtime: float = 100.0, size: int = 25):
+def make_mock_stat(mtime_ns: int = 100_000_000_000, size: int = 25, ino: int = 12345):
     stat = MagicMock()
-    stat.st_mtime = mtime
+    stat.st_mtime_ns = mtime_ns
     stat.st_size = size
+    stat.st_ino = ino
     return stat
 
 
@@ -40,7 +41,7 @@ async def test_read_annotations_async_initial_read():
     fake_data = {"annotation1": "data1"}
 
     mock_aiofiles_open = make_mock_aiofiles_open(b'{"annotation1": "data1"}')
-    mock_stat = make_mock_stat(mtime=100.0, size=25)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=25, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat) as mock_stat_fn,
@@ -54,8 +55,9 @@ async def test_read_annotations_async_initial_read():
 
         # Verify cache is populated with raw bytes and stats
         assert fake_path in router.main._annotations_cache
-        assert router.main._annotations_cache[fake_path]["mtime"] == 100.0
+        assert router.main._annotations_cache[fake_path]["mtime_ns"] == 100_000_000_000
         assert router.main._annotations_cache[fake_path]["size"] == 25
+        assert router.main._annotations_cache[fake_path]["ino"] == 12345
         assert router.main._annotations_cache[fake_path]["bytes"] == b'{"annotation1": "data1"}'
 
 
@@ -66,13 +68,14 @@ async def test_read_annotations_async_cache_hit():
 
     # Pre-populate cache with raw bytes
     router.main._annotations_cache[fake_path] = {
-        "mtime": 100.0,
+        "mtime_ns": 100_000_000_000,
         "size": 25,
+        "ino": 12345,
         "bytes": b'{"annotation1": "data1"}',
     }
 
     mock_aiofiles_open = MagicMock()
-    mock_stat = make_mock_stat(mtime=100.0, size=25)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=25, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat) as mock_stat_fn,
@@ -90,15 +93,16 @@ async def test_read_annotations_async_cache_invalidation_mtime():
     fake_path = "/tmp/annotations.json"
     fake_data_new = {"annotation2": "data2"}
 
-    # Pre-populate cache with old mtime
+    # Pre-populate cache with old mtime_ns
     router.main._annotations_cache[fake_path] = {
-        "mtime": 100.0,
+        "mtime_ns": 100_000_000_000,
         "size": 25,
+        "ino": 12345,
         "bytes": b'{"annotation1": "data1"}',
     }
 
     mock_aiofiles_open = make_mock_aiofiles_open(b'{"annotation2": "data2"}')
-    mock_stat = make_mock_stat(mtime=200.0, size=25)
+    mock_stat = make_mock_stat(mtime_ns=200_000_000_000, size=25, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat) as mock_stat_fn,
@@ -111,8 +115,9 @@ async def test_read_annotations_async_cache_invalidation_mtime():
         assert result == fake_data_new
 
         # Verify cache is updated
-        assert router.main._annotations_cache[fake_path]["mtime"] == 200.0
+        assert router.main._annotations_cache[fake_path]["mtime_ns"] == 200_000_000_000
         assert router.main._annotations_cache[fake_path]["size"] == 25
+        assert router.main._annotations_cache[fake_path]["ino"] == 12345
         assert router.main._annotations_cache[fake_path]["bytes"] == b'{"annotation2": "data2"}'
 
 
@@ -123,13 +128,14 @@ async def test_read_annotations_async_cache_invalidation_size():
 
     # Pre-populate cache with same mtime but different size
     router.main._annotations_cache[fake_path] = {
-        "mtime": 100.0,
+        "mtime_ns": 100_000_000_000,
         "size": 25,
+        "ino": 12345,
         "bytes": b'{"annotation1": "data1"}',
     }
 
     mock_aiofiles_open = make_mock_aiofiles_open(b'{"annotation2": "data2"}')
-    mock_stat = make_mock_stat(mtime=100.0, size=50)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=50, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat) as mock_stat_fn,
@@ -142,9 +148,38 @@ async def test_read_annotations_async_cache_invalidation_size():
         assert result == fake_data_new
 
         # Verify cache is updated
-        assert router.main._annotations_cache[fake_path]["mtime"] == 100.0
+        assert router.main._annotations_cache[fake_path]["mtime_ns"] == 100_000_000_000
         assert router.main._annotations_cache[fake_path]["size"] == 50
         assert router.main._annotations_cache[fake_path]["bytes"] == b'{"annotation2": "data2"}'
+
+
+@pytest.mark.asyncio
+async def test_read_annotations_async_cache_invalidation_ino():
+    fake_path = "/tmp/annotations.json"
+    fake_data_new = {"annotation3": "data3"}
+
+    # Pre-populate cache with old inode
+    router.main._annotations_cache[fake_path] = {
+        "mtime_ns": 100_000_000_000,
+        "size": 25,
+        "ino": 12345,
+        "bytes": b'{"annotation1": "data1"}',
+    }
+
+    mock_aiofiles_open = make_mock_aiofiles_open(b'{"annotation3": "data3"}')
+    # Same mtime and size, but different inode (from atomic replace)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=25, ino=99999)
+
+    with (
+        patch("os.stat", return_value=mock_stat) as mock_stat_fn,
+        patch("aiofiles.open", mock_aiofiles_open) as mock_open,
+    ):
+        result = await _read_annotations_async(fake_path)
+
+        mock_stat_fn.assert_called_once_with(fake_path)
+        mock_open.assert_called_once_with(fake_path, "rb")
+        assert result == fake_data_new
+        assert router.main._annotations_cache[fake_path]["ino"] == 99999
 
 
 @pytest.mark.asyncio
@@ -152,12 +187,13 @@ async def test_read_annotations_async_independent_objects_mutation():
     fake_path = "/tmp/annotations.json"
     # Pre-populate cache with raw bytes
     router.main._annotations_cache[fake_path] = {
-        "mtime": 100.0,
+        "mtime_ns": 100_000_000_000,
         "size": 35,
+        "ino": 12345,
         "bytes": b'{"annotation1": {"nested": "value"}}',
     }
 
-    mock_stat = make_mock_stat(mtime=100.0, size=35)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=35, ino=12345)
     with patch("os.stat", return_value=mock_stat):
         # First read
         result1 = await _read_annotations_async(fake_path)
@@ -183,10 +219,10 @@ async def test_read_annotations_async_file_not_found():
 
 
 @pytest.mark.asyncio
-async def test_read_annotations_async_corrupt_json(caplog):
+async def test_read_annotations_async_corrupt_json_no_poisoning(caplog):
     fake_path = "/tmp/annotations.json"
     mock_aiofiles_open = make_mock_aiofiles_open(b"invalid-json-content")
-    mock_stat = make_mock_stat(mtime=100.0, size=20)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=20, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat),
@@ -195,13 +231,15 @@ async def test_read_annotations_async_corrupt_json(caplog):
         result = await _read_annotations_async(fake_path)
         assert result == {}
         assert "Failed to parse annotations JSON" in caplog.text
+        # CRITICAL: Verify corrupt content is NOT in cache (no poisoning)
+        assert fake_path not in router.main._annotations_cache
 
 
 @pytest.mark.asyncio
-async def test_read_annotations_async_non_dict_json(caplog):
+async def test_read_annotations_async_non_dict_json_no_poisoning(caplog):
     fake_path = "/tmp/annotations.json"
     mock_aiofiles_open = make_mock_aiofiles_open(b'["item1", "item2"]')
-    mock_stat = make_mock_stat(mtime=100.0, size=18)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=18, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat),
@@ -210,6 +248,46 @@ async def test_read_annotations_async_non_dict_json(caplog):
         result = await _read_annotations_async(fake_path)
         assert result == {}
         assert "does not contain a JSON object" in caplog.text
+        # CRITICAL: Verify non-dict content is NOT in cache (no poisoning)
+        assert fake_path not in router.main._annotations_cache
+
+
+@pytest.mark.asyncio
+async def test_read_annotations_async_cache_hit_corrupted_eviction():
+    fake_path = "/tmp/annotations.json"
+    # Artificially insert corrupt bytes in cache hit position
+    router.main._annotations_cache[fake_path] = {
+        "mtime_ns": 100_000_000_000,
+        "size": 10,
+        "ino": 12345,
+        "bytes": b"corrupt!",
+    }
+
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=10, ino=12345)
+    with patch("os.stat", return_value=mock_stat):
+        result = await _read_annotations_async(fake_path)
+        assert result == {}
+        # Verify it gets evicted on parse failure
+        assert fake_path not in router.main._annotations_cache
+
+
+@pytest.mark.asyncio
+async def test_read_annotations_async_cache_hit_non_dict_eviction():
+    fake_path = "/tmp/annotations.json"
+    # Artificially insert non-dict bytes in cache hit position
+    router.main._annotations_cache[fake_path] = {
+        "mtime_ns": 100_000_000_000,
+        "size": 4,
+        "ino": 12345,
+        "bytes": b"null",
+    }
+
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=4, ino=12345)
+    with patch("os.stat", return_value=mock_stat):
+        result = await _read_annotations_async(fake_path)
+        assert result == {}
+        # Verify it gets evicted
+        assert fake_path not in router.main._annotations_cache
 
 
 @pytest.mark.asyncio
@@ -217,7 +295,7 @@ async def test_read_annotations_async_str_content_handling():
     fake_path = "/tmp/annotations.json"
     # Mock returning str to test str -> bytes encoding branch
     mock_aiofiles_open = make_mock_aiofiles_open('{"annotation1": "data1"}')
-    mock_stat = make_mock_stat(mtime=100.0, size=25)
+    mock_stat = make_mock_stat(mtime_ns=100_000_000_000, size=25, ino=12345)
 
     with (
         patch("os.stat", return_value=mock_stat),

@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import HTTPException, Request
@@ -60,7 +61,10 @@ async def test_proxy_audio_valid_request():
     mock_http_client = AsyncMock()
     mock_http_client.request.return_value = mock_response
 
-    with patch("router.main.get_http_client", return_value=mock_http_client):
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "sk-litellm-testkey"}),
+        patch("router.main.get_http_client", return_value=mock_http_client),
+    ):
         client = TestClient(app)
         response = client.get("/v1/audio/transcriptions", headers={"Authorization": "Bearer test-key"})
         assert response.status_code == 200

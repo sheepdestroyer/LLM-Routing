@@ -40,8 +40,11 @@ def test_visualizer_html_clear_button_accessibility():
     assert vis_path.exists(), f"File not found: {vis_path}"
     content = vis_path.read_text(encoding="utf-8")
 
-    # Verify semantic button element
-    assert '<button type="button" onclick="clearAnnotation(${idx})" class="clear-btn"' in content
+    # Verify semantic button element with aria-label
+    assert (
+        '<button type="button" onclick="clearAnnotation(${idx})" class="clear-btn" aria-label="Clear annotation">clear</button>'
+        in content
+    )
     # Verify legacy anchor tag with hash navigation is removed
     assert '<a href="#" onclick="clearAnnotation' not in content
     # Verify CSS styling for .clear-btn with focus-visible accessibility
