@@ -28,21 +28,38 @@ class TestNormalizeChatContent:
 
     def test_list_of_strings(self):
         data = ["Hello ", "beautiful ", "world! "]
-        assert _normalize_chat_content(data) == "Hellobeautifulworld!"
+        assert _normalize_chat_content(data) == "Hello beautiful world!"
+
+    def test_list_whitespace_boundaries_and_subwords(self):
+        # Leading space on later chunks
+        assert _normalize_chat_content(["foo", " bar"]) == "foo bar"
+        # Pure whitespace chunks between words
+        assert _normalize_chat_content(["foo", " ", "bar"]) == "foo bar"
+        # Code indentation tokens preserved
+        assert _normalize_chat_content(["def foo():\n", "    return True\n"]) == "def foo():\n    return True"
+        # Sub-word tokens without spaces are not separated
+        assert _normalize_chat_content(["un", "break", "able"]) == "unbreakable"
+
+    def test_nested_content_whitespace_preservation(self):
+        data = [
+            {"content": [{"text": "foo "}]},
+            {"content": [{"text": "bar"}]},
+        ]
+        assert _normalize_chat_content(data) == "foo bar"
 
     def test_list_of_dicts_with_text(self):
         data = [
             {"type": "text", "text": "Step 1: "},
             {"type": "text", "text": " Do this. "},
         ]
-        assert _normalize_chat_content(data) == "Step 1:Do this."
+        assert _normalize_chat_content(data) == "Step 1:  Do this."
 
     def test_list_of_dicts_with_content(self):
         data = [
             {"content": "First part. "},
             {"content": [{"text": "Nested part."}]},
         ]
-        assert _normalize_chat_content(data) == "First part.Nested part."
+        assert _normalize_chat_content(data) == "First part. Nested part."
 
     def test_list_of_dicts_with_empty_or_none_content(self):
         # Covers the False branch of `if nested:` in list processing
@@ -64,10 +81,10 @@ class TestNormalizeChatContent:
             123,  # non-string, non-dict item ignored
             None,  # ignored
         ]
-        assert _normalize_chat_content(data) == "Plain prefix:Dict text.Nested content."
+        assert _normalize_chat_content(data) == "Plain prefix: Dict text. Nested content."
 
-    def test_list_with_thinking_blocks(self):
-        # OpenAI / Anthropic-style thinking blocks
+    def test_list_with_unrecognized_dict_blocks(self):
+        # Blocks without "text" or "content" keys are cleanly ignored
         data = [
             {"type": "thinking", "thinking": "Let me ponder this."},  # No text or content -> ignored
             {"type": "text", "text": "Here is the final answer."},
@@ -139,6 +156,7 @@ class TestParseChatResponse:
             {"choices": "not a list"},
             {"choices": 123},
             {"choices": {}},
+            {"error": {"message": "Rate limit exceeded", "type": "rate_limit_error", "code": 429}},
         ],
     )
     def test_invalid_or_missing_choices_returns_empty_tuple(self, invalid_choices: dict[str, Any]):
@@ -164,6 +182,8 @@ class TestParseChatResponse:
             {"choices": [{"message": "string"}]},
             {"choices": [{"message": 123}]},
             {"choices": [{"message": []}]},
+            {"choices": [{"message": {}}]},
+            {"choices": [{"message": {"role": "assistant"}}]},
         ],
     )
     def test_invalid_or_missing_message_returns_empty_tuple(self, invalid_message: dict[str, Any]):
@@ -185,6 +205,15 @@ class TestParseChatResponse:
         }
         assert parse_chat_response(data) == ("Hello! How can I help you today?", "")
 
+    def test_multi_choice_response_extracts_first_choice_only(self):
+        data = {
+            "choices": [
+                {"message": {"role": "assistant", "content": "First candidate"}},
+                {"message": {"role": "assistant", "content": "Second candidate"}},
+            ]
+        }
+        assert parse_chat_response(data) == ("First candidate", "")
+
     def test_response_with_reasoning_content(self):
         data = {
             "choices": [
@@ -198,6 +227,48 @@ class TestParseChatResponse:
             ]
         }
         assert parse_chat_response(data) == ("The answer is 42.", "Calculating deep thought...")
+
+    def test_response_with_reasoning_only_and_none_content(self):
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "reasoning_content": "Evaluating prompt with zero token budget left...",
+                    }
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "Evaluating prompt with zero token budget left...")
+
+    def test_response_with_reasoning_only_and_empty_content(self):
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "Thinking steps only...",
+                    }
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "Thinking steps only...")
+
+    def test_response_with_explicit_none_reasoning(self):
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Standard answer",
+                        "reasoning_content": None,
+                    }
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("Standard answer", "")
 
     def test_response_with_structured_content(self):
         data = {
@@ -217,7 +288,7 @@ class TestParseChatResponse:
                 }
             ]
         }
-        assert parse_chat_response(data) == ("Structuredoutput", "Thought step 1.Thought step 2.")
+        assert parse_chat_response(data) == ("Structured output", "Thought step 1. Thought step 2.")
 
     def test_response_with_tool_calls_and_none_content(self):
         data = {
@@ -278,3 +349,66 @@ class TestParseChatResponse:
             ]
         }
         assert parse_chat_response(data) == ("Answer with whitespace", "Reason with whitespace")
+
+    def test_streaming_delta_content(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "Hello streaming world",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("Hello streaming world", "")
+
+    def test_streaming_delta_reasoning(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "reasoning_content": "Thinking step...",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "Thinking step...")
+
+    def test_streaming_delta_content_and_reasoning(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "content": "Streamed answer",
+                        "reasoning_content": "Streamed reason",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("Streamed answer", "Streamed reason")
+
+    def test_streaming_empty_delta(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "")
+
+    def test_choice_without_message_or_delta(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "")

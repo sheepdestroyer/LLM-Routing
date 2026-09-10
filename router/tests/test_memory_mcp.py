@@ -474,6 +474,15 @@ async def test_list_all_memories_error():
 
 
 @pytest.mark.asyncio
+async def test_list_all_memories_exception():
+    mock_client = AsyncMock()
+    mock_client.get.side_effect = Exception("network failure")
+
+    result = await _list_all_memories(mock_client)
+    assert result == []
+
+
+@pytest.mark.asyncio
 async def test_handle_remember_memory_success():
     mock_client = AsyncMock()
     mock_response = MagicMock()
@@ -888,3 +897,21 @@ def test_parse_memory_value_no_tags_field():
     val = json.dumps({"data": "test_data"})
     res = _parse_memory_value(val)
     assert res == {"data": "test_data", "tags": []}
+
+
+def test_get_auth_headers():
+    import os
+    from router.memory_mcp import _get_auth_headers, _make_http_client
+
+    with patch.dict(os.environ, {}, clear=True):
+        assert _get_auth_headers() == {}
+        client = _make_http_client()
+        assert "authorization" not in client.headers
+
+    with patch.dict(os.environ, {"ROUTER_API_KEY": "test-router-key"}, clear=True):
+        assert _get_auth_headers() == {"Authorization": "Bearer test-router-key"}
+        client = _make_http_client()
+        assert client.headers["authorization"] == "Bearer test-router-key"
+
+    with patch.dict(os.environ, {"MEMORY_API_KEY": "test-mem-key"}, clear=True):
+        assert _get_auth_headers() == {"Authorization": "Bearer test-mem-key"}

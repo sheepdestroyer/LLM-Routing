@@ -16,6 +16,7 @@ Tool names match the built-in Memory MCP exactly:
 import asyncio
 import hashlib
 import json
+import os
 import sys
 import time
 import urllib.parse
@@ -27,6 +28,32 @@ API_URL = "http://127.0.0.1:5000/v1/memory"
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "litellm-memory-bridge"
 SERVER_VERSION = "2.0.0"
+
+
+def _get_auth_headers() -> dict[str, str]:
+    """Get Authorization header for router memory requests."""
+    key = (
+        os.getenv("MEMORY_API_KEY")
+        or os.getenv("ROUTER_API_KEY")
+        or os.getenv("GATEWAY_KEY")
+        or os.getenv("LITELLM_MASTER_KEY")
+        or ""
+    ).strip()
+    if key:
+        return {"Authorization": f"Bearer {key}"}
+    return {}
+
+
+def _make_http_client(timeout: float = 10.0) -> httpx.AsyncClient:
+    """Create an httpx.AsyncClient with auth headers."""
+    return httpx.AsyncClient(timeout=timeout, headers=_get_auth_headers())
+
+
+def log(msg: str):
+    """Log a message to stderr for MCP diagnostics."""
+    sys.stderr.write(f"[memory-mcp] {msg}\n")
+    sys.stderr.flush()
+
 
 # ---------------------------------------------------------------------------
 # Key helpers — encode memory attributes into a single LiteLLM key
@@ -116,11 +143,16 @@ def _parse_memory_value(raw: str) -> dict:
 
 async def _list_all_memories(client: httpx.AsyncClient) -> list[dict]:
     """Fetch all memories from LiteLLM."""
-    r = await client.get(API_URL, timeout=10.0)
-    if r.status_code != 200:
+    try:
+        r = await client.get(API_URL, timeout=10.0)
+        if r.status_code != 200:
+            log(f"Failed to list memories: HTTP {r.status_code} — {r.text[:200]}")
+            return []
+        data = r.json()
+        return data.get("memories", [])
+    except Exception as e:
+        log(f"Exception listing memories: {e}")
         return []
-    data = r.json()
-    return data.get("memories", [])
 
 
 def _memory_entry(lmem: dict) -> dict | None:
@@ -156,7 +188,7 @@ async def handle_remember_memory(args: dict) -> str:
     key = _make_key(category, is_global, data)
     value = _memory_value(data, tags)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _make_http_client(timeout=10.0) as client:
         r = await client.post(API_URL, json={"key": key, "value": value})
         if r.status_code == 200:
             scope_label = "global" if is_global else "local"
@@ -179,7 +211,7 @@ async def handle_retrieve_memories(args: dict) -> str:
     category = args.get("category", "*")
     is_global = args.get("is_global", False)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _make_http_client(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
 
     # Filter
@@ -224,7 +256,7 @@ async def handle_remove_memory_category(args: dict) -> str:
     category = args.get("category", "*")
     is_global = args.get("is_global", False)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _make_http_client(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
 
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
@@ -261,7 +293,7 @@ async def handle_remove_memory_category(args: dict) -> str:
                 return str(e)
 
     sem = asyncio.Semaphore(10)
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with _make_http_client(timeout=30.0) as client:
         tasks = [delete_item(client, entry, sem) for entry in to_delete]
         results = await asyncio.gather(*tasks)
         for res in results:
@@ -281,7 +313,7 @@ async def handle_remove_specific_memory(args: dict) -> str:
     memory_content = args.get("memory_content", "")
     is_global = args.get("is_global", False)
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _make_http_client(timeout=10.0) as client:
         all_memories = await _list_all_memories(client)
 
     scope = SCOPE_GLOBAL if is_global else SCOPE_LOCAL
@@ -306,7 +338,7 @@ async def handle_remove_specific_memory(args: dict) -> str:
             f"with content matching '{memory_content[:50]}...'."
         )
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _make_http_client(timeout=10.0) as client:
         quoted_key = urllib.parse.quote(target["key"], safe="")
         r = await client.delete(f"{API_URL}/{quoted_key}", timeout=5.0)
         if r.status_code == 200:
@@ -318,12 +350,6 @@ async def handle_remove_specific_memory(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # JSON-RPC dispatcher
 # ---------------------------------------------------------------------------
-
-
-def log(msg: str):
-    """Log a message to stderr for MCP diagnostics."""
-    sys.stderr.write(f"[memory-mcp] {msg}\n")
-    sys.stderr.flush()
 
 
 async def handle_request(req: dict) -> dict | None:
