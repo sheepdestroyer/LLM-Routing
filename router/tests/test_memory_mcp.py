@@ -474,6 +474,15 @@ async def test_list_all_memories_error():
 
 
 @pytest.mark.asyncio
+async def test_list_all_memories_exception():
+    mock_client = AsyncMock()
+    mock_client.get.side_effect = Exception("network failure")
+
+    result = await _list_all_memories(mock_client)
+    assert result == []
+
+
+@pytest.mark.asyncio
 async def test_handle_remember_memory_success():
     mock_client = AsyncMock()
     mock_response = MagicMock()

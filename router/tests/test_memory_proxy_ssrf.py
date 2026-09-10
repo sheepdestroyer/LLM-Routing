@@ -1,8 +1,26 @@
+import os
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from router.main import app, proxy_memory
+
+
+@pytest.fixture(autouse=True)
+def isolate_env():
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "sk-litellm-testkey"}):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_proxy_memory_ssrf_double_encoded_path_traversal():
+    """Test that double-encoded path traversal (%252e%252e%252f) triggers 400 Bad Request."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
+    with pytest.raises(HTTPException) as exc:
+        await proxy_memory(mock_request, path="%252e%252e%252f%252e%252e%252fkey/generate")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Invalid path"
 
 
 @pytest.mark.asyncio

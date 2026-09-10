@@ -30,6 +30,23 @@ class TestNormalizeChatContent:
         data = ["Hello ", "beautiful ", "world! "]
         assert _normalize_chat_content(data) == "Hello beautiful world!"
 
+    def test_list_whitespace_boundaries_and_subwords(self):
+        # Leading space on later chunks
+        assert _normalize_chat_content(["foo", " bar"]) == "foo bar"
+        # Pure whitespace chunks between words
+        assert _normalize_chat_content(["foo", " ", "bar"]) == "foo bar"
+        # Code indentation tokens preserved
+        assert _normalize_chat_content(["def foo():\n", "    return True\n"]) == "def foo():\n    return True"
+        # Sub-word tokens without spaces are not separated
+        assert _normalize_chat_content(["un", "break", "able"]) == "unbreakable"
+
+    def test_nested_content_whitespace_preservation(self):
+        data = [
+            {"content": [{"text": "foo "}]},
+            {"content": [{"text": "bar"}]},
+        ]
+        assert _normalize_chat_content(data) == "foo bar"
+
     def test_list_of_dicts_with_text(self):
         data = [
             {"type": "text", "text": "Step 1: "},
@@ -332,3 +349,66 @@ class TestParseChatResponse:
             ]
         }
         assert parse_chat_response(data) == ("Answer with whitespace", "Reason with whitespace")
+
+    def test_streaming_delta_content(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "Hello streaming world",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("Hello streaming world", "")
+
+    def test_streaming_delta_reasoning(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "reasoning_content": "Thinking step...",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "Thinking step...")
+
+    def test_streaming_delta_content_and_reasoning(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "content": "Streamed answer",
+                        "reasoning_content": "Streamed reason",
+                    },
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("Streamed answer", "Streamed reason")
+
+    def test_streaming_empty_delta(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "")
+
+    def test_choice_without_message_or_delta(self):
+        data = {
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        assert parse_chat_response(data) == ("", "")

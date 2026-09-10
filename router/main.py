@@ -15,7 +15,7 @@ import uuid
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import aiofiles
 import httpx
@@ -1499,9 +1499,9 @@ async def _register_ollama_models_in_db(master_key: str):
                 r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
                 if r.status_code in (200, 201):
                     return True
-                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
+                logger.warning(f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}")
             except Exception as e:
-                logger.warning(f"Failed to register {payload['model_name']}: {e}")
+                logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
             return False
 
     tasks = [_register_single_ollama_model(payload) for payload in ollama_models]
@@ -2579,6 +2579,40 @@ def get_pie_chart_gradient() -> str:
     return f"background: conic-gradient({', '.join(gradient_parts)});"
 
 
+def _sanitize_proxy_path(path: str, base_prefix: str) -> str:
+    """Sanitize and validate subpaths for proxying to prevent SSRF and path traversal."""
+    unquoted = path
+    for _ in range(3):
+        decoded = unquote(unquoted)
+        if decoded == unquoted:
+            break
+        unquoted = decoded
+
+    if (
+        ".." in path
+        or ".." in unquoted
+        or "/." in unquoted
+        or unquoted.startswith(".")
+        or "@" in path
+        or "@" in unquoted
+        or "://" in path
+        or "://" in unquoted
+        or "\x00" in path
+        or "\x00" in unquoted
+        or any(c in unquoted or c in path for c in ["\r", "\n", "\\"])
+    ):
+        logger.warning(f"Blocking potentially malicious proxy path: {path}")
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    clean_subpath = posixpath.normpath("/" + unquoted.lstrip("/")) if unquoted.strip("/") else ""
+    full_normalized = posixpath.normpath(base_prefix + clean_subpath)
+    if not (full_normalized == base_prefix or full_normalized.startswith(base_prefix + "/")):  # pragma: no cover
+        logger.warning(f"Normalized proxy path escaped prefix: {full_normalized}")
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    return clean_subpath
+
+
 @app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
@@ -2587,30 +2621,9 @@ async def proxy_memory(request: Request, path: str = ""):
     litellm_port = os.getenv("LITELLM_PORT") or "4000"
     expected_netloc = f"127.0.0.1:{litellm_port}"
 
-    clean_path = posixpath.normpath("/" + path.lstrip("/"))
-
-    # SSRF & Directory Traversal Protection: check for path traversal (..), authority override (@), scheme injection (://), and null bytes (\x00)
-    if (
-        ".." in path
-        or ".." in clean_path
-        or "@" in path
-        or "@" in clean_path
-        or "://" in path
-        or "://" in clean_path
-        or "\x00" in path
-        or "\x00" in clean_path
-        or "\r" in path
-        or "\n" in path
-        or "\r" in clean_path
-        or "\n" in clean_path
-    ):
-        logger.warning(f"Blocking potentially malicious memory proxy path: {path}")
-        raise HTTPException(status_code=400, detail="Invalid path")
-
+    clean_subpath = _sanitize_proxy_path(path, "/v1/memory")
     litellm_base = f"http://{expected_netloc}/v1/memory"
-
-    # Resolve the destination URL
-    url = f"{litellm_base}{clean_path}"
+    url = f"{litellm_base}{clean_subpath}"
 
     parsed_url = urlparse(url)
     if parsed_url.netloc != expected_netloc:
@@ -2672,27 +2685,9 @@ async def proxy_audio(request: Request, path: str = ""):
     litellm_port = os.getenv("LITELLM_PORT") or "4000"
     expected_netloc = f"127.0.0.1:{litellm_port}"
 
-    clean_path = posixpath.normpath("/" + path.lstrip("/"))
-
-    if (
-        ".." in path
-        or ".." in clean_path
-        or "@" in path
-        or "@" in clean_path
-        or "://" in path
-        or "://" in clean_path
-        or "\x00" in path
-        or "\x00" in clean_path
-        or "\r" in path
-        or "\n" in path
-        or "\r" in clean_path
-        or "\n" in clean_path
-    ):
-        logger.warning(f"Blocking potentially malicious audio proxy path: {path}")
-        raise HTTPException(status_code=400, detail="Invalid path")
-
+    clean_subpath = _sanitize_proxy_path(path, "/v1/audio")
     litellm_base = f"http://{expected_netloc}/v1/audio"
-    url = f"{litellm_base}{clean_path}"
+    url = f"{litellm_base}{clean_subpath}"
 
     parsed_url = urlparse(url)
     if parsed_url.netloc != expected_netloc:
@@ -2949,6 +2944,7 @@ async def _authenticate_client_request(request: Request) -> str:
             os.getenv("ROUTER_API_KEY"),
             os.getenv("LITELLM_MASTER_KEY"),
             os.getenv("GATEWAY_KEY"),
+            os.getenv("MEMORY_API_KEY"),
             *hardcoded_test_keys,
         ]
         if k and str(k).strip() not in _INVALID_MASTER_KEYS and "PLACEHOLDER" not in str(k).upper()

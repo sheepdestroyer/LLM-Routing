@@ -7,7 +7,7 @@ to safely extract content and reasoning_content from OpenAI-compatible API respo
 from typing import Any
 
 
-def _normalize_chat_content(value: Any) -> str:
+def _normalize_chat_content(value: Any, _strip: bool = True) -> str:
     """Normalize structured content payloads into a plain string.
 
     Handles plain strings, lists of strings, lists of dicts with
@@ -17,7 +17,7 @@ def _normalize_chat_content(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        return value.strip() if _strip else value
     if isinstance(value, list):
         parts: list[str] = []
         for item in value:
@@ -32,21 +32,25 @@ def _normalize_chat_content(value: Any) -> str:
                     if isinstance(content_val, str):
                         parts.append(content_val)
                     else:
-                        nested = _normalize_chat_content(content_val)
+                        nested = _normalize_chat_content(content_val, _strip=False)
                         if nested:
                             parts.append(nested)
-        return "".join(parts).strip()
+        joined = "".join(parts)
+        return joined.strip() if _strip else joined
     if isinstance(value, dict):
         text = value.get("text")
         if isinstance(text, str):
-            return text.strip()
+            return text.strip() if _strip else text
         if "content" in value:
-            return _normalize_chat_content(value.get("content"))
+            return _normalize_chat_content(value.get("content"), _strip=_strip)
     return ""
 
 
 def parse_chat_response(data: Any) -> tuple[str, str]:
     """Safely extract content and reasoning_content from a chat completion response.
+
+    Supports standard chat completion responses (with ``message``) and
+    streaming SSE chunks (with ``delta``).
 
     Args:
         data: Parsed JSON response from a chat completion endpoint (expected to be a dict).
@@ -63,6 +67,8 @@ def parse_chat_response(data: Any) -> tuple[str, str]:
     if not isinstance(first_choice, dict):
         return "", ""
     message = first_choice.get("message")
+    if not isinstance(message, dict):
+        message = first_choice.get("delta")
     if not isinstance(message, dict):
         return "", ""
     content = _normalize_chat_content(message.get("content"))

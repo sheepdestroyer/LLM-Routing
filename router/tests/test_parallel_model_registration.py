@@ -158,11 +158,16 @@ async def test_sync_adaptive_router_roster_concurrency_and_semaphore():
         patch("router.main._load_aa_scores"),
         patch("router.main._purge_stale_deployments", new_callable=AsyncMock),
         patch.dict(os.environ, {"DATABASE_URL": "postgresql://test:test@localhost:5432/testdb"}),
+        patch("router.main._registered_free_models", {}),
     ):
         await sync_adaptive_router_roster("test_key")
 
-    assert mock_client_instance.post.call_count > 0
-    assert 1 < max_active <= 10
+        import router.main as r_main
+
+        assert mock_client_instance.post.call_count > 0
+        assert 1 < max_active <= 10
+        # Verify atomic swap populated the roster with registered models across tiers
+        assert any(len(models) > 0 for models in r_main._registered_free_models.values())
 
 
 @pytest.mark.asyncio
@@ -205,3 +210,48 @@ async def test_register_models_individual_failures_handled_gracefully(mock_env, 
     assert "OpenRouter DB registration: 1 registered, 2 failed" in caplog.text
     assert "HTTP 500" in caplog.text
     assert "Simulated network timeout" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_register_ollama_models_individual_failures_handled_gracefully(mock_env, caplog):
+    """Verify that ollama registration handles HTTP errors, network exceptions, and missing model_name."""
+    caplog.set_level(logging.INFO)
+    mock_config = {
+        "model_list": [
+            {"model_name": "ollama-ok", "litellm_params": {"model": "ollama_chat/ok"}},
+            {"model_name": "ollama-fail-http", "litellm_params": {"model": "ollama_chat/fail"}},
+            {"model_name": "ollama-fail-exc", "litellm_params": {"model": "ollama_chat/exc"}},
+            {"litellm_params": {"model": "ollama_chat/no-name"}},  # Missing model_name key
+        ]
+    }
+
+    resp_200 = MagicMock(status_code=200)
+    resp_500 = MagicMock(status_code=500, text="Internal Server Error")
+
+    async def mock_post(url, **kwargs):
+        payload = kwargs.get("json", {})
+        name = payload.get("model_name")
+        if name == "ollama-ok":
+            return resp_200
+        elif name == "ollama-fail-http":
+            return resp_500
+        elif name == "ollama-fail-exc":
+            raise RuntimeError("Simulated connection reset")
+        else:
+            return resp_500
+
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = mock_post
+
+    with (
+        patch("router.main.get_http_client", return_value=mock_client),
+        patch("router.main.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+    ):
+        mock_to_thread.return_value = mock_config
+        # Should complete without error or KeyError
+        await _register_ollama_models_in_db("test_master_key")
+
+    assert mock_client.post.call_count == 4
+    assert "Ollama DB registration: 1 registered, 3 failed" in caplog.text
+    assert "HTTP 500" in caplog.text
+    assert "Simulated connection reset" in caplog.text

@@ -49,6 +49,12 @@ def _make_http_client(timeout: float = 10.0) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, headers=_get_auth_headers())
 
 
+def log(msg: str):
+    """Log a message to stderr for MCP diagnostics."""
+    sys.stderr.write(f"[memory-mcp] {msg}\n")
+    sys.stderr.flush()
+
+
 # ---------------------------------------------------------------------------
 # Key helpers — encode memory attributes into a single LiteLLM key
 # ---------------------------------------------------------------------------
@@ -137,11 +143,16 @@ def _parse_memory_value(raw: str) -> dict:
 
 async def _list_all_memories(client: httpx.AsyncClient) -> list[dict]:
     """Fetch all memories from LiteLLM."""
-    r = await client.get(API_URL, timeout=10.0)
-    if r.status_code != 200:
+    try:
+        r = await client.get(API_URL, timeout=10.0)
+        if r.status_code != 200:
+            log(f"Failed to list memories: HTTP {r.status_code} — {r.text[:200]}")
+            return []
+        data = r.json()
+        return data.get("memories", [])
+    except Exception as e:
+        log(f"Exception listing memories: {e}")
         return []
-    data = r.json()
-    return data.get("memories", [])
 
 
 def _memory_entry(lmem: dict) -> dict | None:
@@ -339,12 +350,6 @@ async def handle_remove_specific_memory(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # JSON-RPC dispatcher
 # ---------------------------------------------------------------------------
-
-
-def log(msg: str):
-    """Log a message to stderr for MCP diagnostics."""
-    sys.stderr.write(f"[memory-mcp] {msg}\n")
-    sys.stderr.flush()
 
 
 async def handle_request(req: dict) -> dict | None:

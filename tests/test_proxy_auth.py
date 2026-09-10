@@ -10,6 +10,12 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def isolate_master_key():
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "sk-litellm-testkey"}):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # /v1/memory Authentication Tests
 # ---------------------------------------------------------------------------
@@ -295,3 +301,67 @@ def test_proxy_audio_body_without_content_type_defaults_to_json(client):
         assert resp.status_code == 200
         call_kwargs = mock_http_client.request.call_args.kwargs
         assert call_kwargs["headers"]["Content-Type"] == "application/json"
+
+
+def test_proxy_memory_authenticated_with_memory_api_key(client):
+    """Test that requests authenticated with MEMORY_API_KEY succeed."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.content = b'{"status": "success"}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with (
+        patch.dict(os.environ, {"MEMORY_API_KEY": "custom-memory-key-123"}),
+        patch("router.main.get_http_client", return_value=mock_http_client),
+    ):
+        resp = client.get("/v1/memory", headers={"Authorization": "Bearer custom-memory-key-123"})
+        assert resp.status_code == 200
+
+
+def test_proxy_memory_double_encoded_traversal_blocked(client):
+    """Test that double-encoded path traversal on /v1/memory returns 400."""
+    resp = client.get(
+        "/v1/memory/%252e%252e%252f%252e%252e%252fkey/generate",
+        headers={"Authorization": "Bearer test-key"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid path"
+
+
+def test_proxy_audio_double_encoded_traversal_blocked(client):
+    """Test that double-encoded path traversal on /v1/audio returns 400."""
+    resp = client.get(
+        "/v1/audio/%252e%252e%252f%252e%252e%252fkey/generate",
+        headers={"Authorization": "Bearer test-key"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid path"
+
+
+def test_proxy_memory_root_url_no_trailing_slash(client):
+    """Test that root /v1/memory proxies without an unintended trailing slash."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.headers = {}
+    mock_response.content = b'{"memories": []}'
+
+    mock_http_client = AsyncMock()
+    mock_http_client.request.return_value = mock_response
+
+    with patch("router.main.get_http_client", return_value=mock_http_client):
+        resp = client.get("/v1/memory", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 200
+        call_kwargs = mock_http_client.request.call_args.kwargs
+        assert call_kwargs["url"] == "http://127.0.0.1:4000/v1/memory"
+
+
+def test_sanitize_proxy_path_multi_unquote():
+    """Test that deeply encoded paths decode properly through the loop."""
+    from router.main import _sanitize_proxy_path
+
+    # %252561 -> %2561 -> %61 -> a (exhausts the 3 iterations of decoding)
+    res = _sanitize_proxy_path("%252561", "/v1/test")
+    assert res == "/a"
