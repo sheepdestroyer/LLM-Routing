@@ -1095,40 +1095,51 @@ async def sync_adaptive_router_roster(master_key: str):
     global _registered_free_models
     _registered_free_models = {k: set() for k in tier_assignments}
 
-    registered = 0
-    failed = 0
     headers = {"Authorization": f"Bearer {master_key}", "Content-Type": "application/json"}
     admin_url = LITELLM_URL
     client = get_http_client()
+    sem = asyncio.Semaphore(10)
 
-    for tier_name, model_ids in tier_assignments.items():
-        for mid in model_ids:
-            ctx_len = model_contexts.get(mid, 262144)
-            sp = model_supported_params.get(mid, [])
-            payload = {
-                "model_name": tier_name,
-                "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
-                "model_info": {
-                    "supports_vision": "vision" in sp,
-                    "supports_reasoning": True,
-                    "supports_function_calling": "tools" in sp,
-                    "mode": "chat",
-                    "max_tokens": ctx_len,
-                    "max_input_tokens": ctx_len,
-                    "is_public_model_group": True,
-                },
-            }
+    async def _register_tier_deployment(tier_name: str, mid: str) -> bool:
+        ctx_len = model_contexts.get(mid, 262144)
+        sp = model_supported_params.get(mid, [])
+        payload = {
+            "model_name": tier_name,
+            "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
+            "model_info": {
+                "supports_vision": "vision" in sp,
+                "supports_reasoning": True,
+                "supports_function_calling": "tools" in sp,
+                "mode": "chat",
+                "max_tokens": ctx_len,
+                "max_input_tokens": ctx_len,
+                "is_public_model_group": True,
+            },
+        }
+        async with sem:
             try:
                 r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
                 if r.status_code in (200, 201):
-                    registered += 1
                     _registered_free_models[tier_name].add(mid)
-                else:
-                    failed += 1
-                    logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
+                    return True
+                logger.warning(f"model/new {mid} → {tier_name}: HTTP {r.status_code} — {r.text[:200]}")
             except Exception as e:
-                failed += 1
                 logger.warning(f"Failed to register {mid} under {tier_name}: {e}")
+            return False
+
+    tasks = [
+        _register_tier_deployment(tier_name, mid)
+        for tier_name, model_ids in tier_assignments.items()
+        for mid in model_ids
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    registered = 0
+    failed = 0
+    for res in results:
+        if res is True:
+            registered += 1
+        else:
+            failed += 1
     logger.info(f"📊 Roster sync: registered {registered} deployments ({failed} failed) across 5 tiers")
 
 
@@ -1262,19 +1273,28 @@ async def _register_openrouter_models_in_db(master_key: str):
         ]
 
     client = get_http_client()
+    sem = asyncio.Semaphore(10)
+
+    async def _register_single_openrouter_model(payload: dict[str, Any]) -> bool:
+        async with sem:
+            try:
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
+                if r.status_code in (200, 201):
+                    return True
+                logger.warning(f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
+            return False
+
+    tasks = [_register_single_openrouter_model(payload) for payload in openrouter_models]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     registered = 0
     failed = 0
-    for payload in openrouter_models:
-        try:
-            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
-            if r.status_code in (200, 201):
-                registered += 1
-            else:
-                failed += 1
-                logger.warning(f"model/new {payload.get('model_name')}: HTTP {r.status_code} — {r.text[:200]}")
-        except Exception as e:
+    for res in results:
+        if res is True:
+            registered += 1
+        else:
             failed += 1
-            logger.warning(f"Failed to register {payload.get('model_name')}: {e}")
     logger.info(f"📊 OpenRouter DB registration: {registered} registered, {failed} failed")
 
 
@@ -1466,19 +1486,28 @@ async def _register_ollama_models_in_db(master_key: str):
         ]
 
     client = get_http_client()
+    sem = asyncio.Semaphore(10)
+
+    async def _register_single_ollama_model(payload: dict[str, Any]) -> bool:
+        async with sem:
+            try:
+                r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
+                if r.status_code in (200, 201):
+                    return True
+                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
+            except Exception as e:
+                logger.warning(f"Failed to register {payload['model_name']}: {e}")
+            return False
+
+    tasks = [_register_single_ollama_model(payload) for payload in ollama_models]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     registered = 0
     failed = 0
-    for payload in ollama_models:
-        try:
-            r = await client.post(f"{admin_url}/model/new", headers=headers, json=payload, timeout=10.0)
-            if r.status_code in (200, 201):
-                registered += 1
-            else:
-                failed += 1
-                logger.warning(f"model/new {payload['model_name']}: HTTP {r.status_code} — {r.text[:200]}")
-        except Exception as e:
+    for res in results:
+        if res is True:
+            registered += 1
+        else:
             failed += 1
-            logger.warning(f"Failed to register {payload['model_name']}: {e}")
     logger.info(f"📊 Ollama DB registration: {registered} registered, {failed} failed")
 
 

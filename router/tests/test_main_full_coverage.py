@@ -445,6 +445,9 @@ async def test_lifespan_error_branches():
     mock_classifier = AsyncMock()
     mock_classifier.aclose.side_effect = RuntimeError("classifier aclose error")
 
+    mock_llama = AsyncMock()
+    mock_llama.aclose.side_effect = RuntimeError("llama aclose error")
+
     mock_redis = AsyncMock()
     mock_redis.aclose.side_effect = RuntimeError("redis aclose error")
 
@@ -465,6 +468,7 @@ async def test_lifespan_error_branches():
         patch("router.main._register_langfuse_models_in_db", side_effect=RuntimeError("langfuse fail")),
         patch("router.main._atomic_write_json_async", side_effect=RuntimeError("timeline fail")),
         patch("router.main._classifier_client", mock_classifier),
+        patch("router.main._llama_client", mock_llama),
         patch("router.main._redis_client", mock_redis),
     ):
         async with lifespan(app):
@@ -1562,6 +1566,7 @@ async def test_coverage_final_gaps():
         patch("router.main._register_langfuse_models_in_db", new=AsyncMock()),
     ):
         rm._http_client = mock_http_ls
+        rm._llama_client = AsyncMock()
         async with lifespan(app):
             pass
 
