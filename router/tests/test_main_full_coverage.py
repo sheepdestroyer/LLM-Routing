@@ -756,7 +756,7 @@ async def test_memory_audio_models_proxy_branches():
 
     # Memory proxy netloc mismatch
     req_bad_netloc = MagicMock()
-    req_bad_netloc.headers = {}
+    req_bad_netloc.headers = {"Authorization": "Bearer test-key"}
     req_bad_netloc.body = AsyncMock(return_value=b"")
     with patch("router.main.urlparse", return_value=MagicMock(netloc="attacker.com")):
         with pytest.raises(HTTPException) as exc:

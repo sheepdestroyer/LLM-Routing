@@ -2543,9 +2543,11 @@ def get_pie_chart_gradient() -> str:
     return f"background: conic-gradient({', '.join(gradient_parts)});"
 
 
-@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
 async def proxy_memory(request: Request, path: str = ""):
     """Proxies memory API calls to the LiteLLM gateway on port 4000."""
+    await _authenticate_client_request(request)
+
     litellm_port = os.getenv("LITELLM_PORT") or "4000"
     expected_netloc = f"127.0.0.1:{litellm_port}"
 
@@ -2622,10 +2624,12 @@ async def proxy_memory(request: Request, path: str = ""):
         raise HTTPException(status_code=502, detail="Memory proxy failed") from e
 
 
-@app.api_route("/v1/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
-@app.api_route("/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+@app.api_route("/v1/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
+@app.api_route("/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])
 async def proxy_audio(request: Request, path: str = ""):
     """Proxies audio API calls (speech-to-text / text-to-speech) to LiteLLM."""
+    await _authenticate_client_request(request)
+
     litellm_port = os.getenv("LITELLM_PORT") or "4000"
     expected_netloc = f"127.0.0.1:{litellm_port}"
 
@@ -2660,12 +2664,8 @@ async def proxy_audio(request: Request, path: str = ""):
     body = await request.body()
 
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        auth_header = f"Bearer {litellm_key}"
-
     headers = {
-        "Authorization": auth_header,
+        "Authorization": f"Bearer {litellm_key}",
         "Content-Type": request.headers.get("content-type", "application/json"),
     }
 
@@ -2896,7 +2896,7 @@ async def _authenticate_client_request(request: Request) -> str:
 
     # In test environments (pytest), allow test credentials; in production, strictly exclude them.
     hardcoded_test_keys = (
-        ["gateway-pass", "local-token", "test-key", "test-token", "test-master-key", "sk-router-testkey"]
+        ["gateway-pass", "local-token", "test-key", "test-token", "test-master-key", "sk-router-testkey", "valid-token"]
         if "pytest" in sys.modules
         else []
     )

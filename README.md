@@ -776,7 +776,7 @@ To maximize throughput under concurrent queries, `llama-server` is configured wi
 
 #### 3. Custom Memory Endpoint Proxy & MCP Server
 To allow Goose (and other agents) to store, list, and delete persistent preference/factual memories, we implemented a custom memory stack:
-* **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT"])` in `router/main.py` that intercepts memory calls and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
+* **Triage Router Memory Proxy**: Exposes a catch-all route `@app.api_route("/v1/memory{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])` in `router/main.py` that intercepts memory calls, enforces client authentication, and proxies them to the LiteLLM gateway (port 4000) using the securely-loaded `LITELLM_MASTER_KEY` authorization.
 * **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](https://github.com/sheepdestroyer/LLM-Routing/blob/main/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
 
