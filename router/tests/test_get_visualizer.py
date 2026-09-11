@@ -62,3 +62,4 @@ def test_visualizer_html_save_annotations_authorization():
     assert "localStorage.getItem('gateway_api_key')" in content
     assert "localStorage.getItem('api_key')" in content
     assert "headers['Authorization'] = 'Bearer ' + token;" in content
+    assert "Failed to sync annotations: HTTP" in content

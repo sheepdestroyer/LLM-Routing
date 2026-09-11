@@ -364,33 +364,61 @@ function clearAnnotation(idx) {
 }
 
 function getAuthToken() {
-  const token = localStorage.getItem('gateway_api_key') || localStorage.getItem('api_key');
-  if (token) return token;
-  if (typeof window !== 'undefined' && window.location) {
-    const urlParams = new URLSearchParams(window.location.search);
-    const qToken = urlParams.get('api_key') || urlParams.get('token');
-    if (qToken) {
-      localStorage.setItem('gateway_api_key', qToken);
-      return qToken;
-    }
+  // 1. Attempt reading from localStorage safely
+  try {
+    const gatewayKey = localStorage.getItem('gateway_api_key');
+    if (gatewayKey && gatewayKey.trim()) return gatewayKey.trim();
+    const apiKey = localStorage.getItem('api_key');
+    if (apiKey && apiKey.trim()) return apiKey.trim();
+  } catch (e) {
+    console.warn('Could not read auth token from localStorage:', e);
   }
+
+  // 2. Fallback cleanly to URL parameters
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const qToken = urlParams.get('api_key') || urlParams.get('token');
+      if (qToken && qToken.trim()) {
+        const trimmed = qToken.trim();
+        // Best effort caching to localStorage
+        try {
+          localStorage.setItem('gateway_api_key', trimmed);
+        } catch (ignore) {}
+        return trimmed;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not read auth token from URL parameters:', e);
+  }
+
   return '';
 }
 
 function saveAnnotations() {
-  // Save to localStorage
-  localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
-  // Auto-sync by posting to dashboard save endpoint
+  try {
+    localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
+  } catch (e) {
+    console.warn('Failed to cache annotations locally:', e);
+  }
+
   const headers = {'Content-Type': 'application/json'};
   const token = getAuthToken();
   if (token) {
     headers['Authorization'] = 'Bearer ' + token;
   }
+
   fetch(apiBase + 'dashboard/save-annotations', {
     method: 'POST',
     headers: headers,
     body: JSON.stringify(annotations),
-  }).catch((err) => console.error('Failed to auto-sync annotations:', err));
+  })
+    .then((res) => {
+      if (!res.ok) {
+        console.error('Failed to sync annotations: HTTP ' + res.status);
+      }
+    })
+    .catch((err) => console.error('Failed to auto-sync annotations:', err));
 }
 
 function exportAnnotations() {
