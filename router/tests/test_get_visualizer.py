@@ -50,3 +50,16 @@ def test_visualizer_html_clear_button_accessibility():
     # Verify CSS styling for .clear-btn with focus-visible accessibility
     assert ".clear-btn {" in content
     assert ".clear-btn:focus-visible {" in content
+
+
+def test_visualizer_html_save_annotations_authorization():
+    """Verify visualizer.html sends Authorization header using configured API key."""
+    vis_path = Path(__file__).resolve().parent.parent / "static" / "visualizer.html"
+    assert vis_path.exists(), f"File not found: {vis_path}"
+    content = vis_path.read_text(encoding="utf-8")
+
+    assert "function getAuthToken()" in content
+    assert "localStorage.getItem('gateway_api_key')" in content
+    assert "localStorage.getItem('api_key')" in content
+    assert "headers['Authorization'] = 'Bearer ' + token;" in content
+    assert "Failed to sync annotations: HTTP" in content

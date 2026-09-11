@@ -1,12 +1,27 @@
-import pytest
-from unittest.mock import patch, AsyncMock
-from fastapi.responses import JSONResponse
-from fastapi import HTTPException
 import json
+import os
 from pathlib import Path
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
+from starlette.testclient import TestClient
 
 from router import main
-from router.main import AnnotationPayload, AnnotationItem
+from router.main import AnnotationItem, AnnotationPayload, app
+
+
+def make_mock_request(auth_header: str | None = "Bearer test-key") -> Request:
+    mock_req = MagicMock(spec=Request)
+    headers = {}
+    if auth_header is not None:
+        headers["Authorization"] = auth_header
+    mock_req.headers = headers
+    mock_req.state = MagicMock()
+    return mock_req
 
 
 @pytest.fixture(autouse=True)
@@ -37,8 +52,9 @@ async def test_save_annotations_success(mock_exists, mock_write, mock_read, mock
     item_data = {"tier": 2, "note": "new note", "ts": "456"}
     payload = AnnotationPayload(root={"123": AnnotationItem(**item_data), "h456": AnnotationItem(tier=3)})
 
-    # Run function
-    response = await main.save_annotations(payload)
+    # Run function with authenticated request
+    req = make_mock_request("Bearer test-key")
+    response = await main.save_annotations(payload, req)
 
     # Check assertions
     assert isinstance(response, JSONResponse)
@@ -80,7 +96,8 @@ async def test_save_annotations_partial_update(mock_exists, mock_write, mock_rea
     payload = AnnotationPayload(root={"123": AnnotationItem(tier=2)})
 
     # Run function
-    response = await main.save_annotations(payload)
+    req = make_mock_request("Bearer test-key")
+    response = await main.save_annotations(payload, req)
 
     # Check assertions
     assert isinstance(response, JSONResponse)
@@ -107,7 +124,8 @@ async def test_save_annotations_no_existing(mock_exists, mock_write, mock_read, 
     payload = AnnotationPayload(root={"123": AnnotationItem(tier=1)})
 
     # Run function
-    response = await main.save_annotations(payload)
+    req = make_mock_request("Bearer test-key")
+    response = await main.save_annotations(payload, req)
 
     # Check assertions
     assert isinstance(response, JSONResponse)
@@ -138,7 +156,8 @@ async def test_save_annotations_read_error(mock_exists, mock_write, mock_read, m
     payload = AnnotationPayload(root={"123": AnnotationItem(tier=1)})
 
     # Run function
-    response = await main.save_annotations(payload)
+    req = make_mock_request("Bearer test-key")
+    response = await main.save_annotations(payload, req)
 
     # Check assertions
     assert isinstance(response, JSONResponse)
@@ -161,8 +180,98 @@ async def test_save_annotations_exception(mock_exists, mock_data_dir):
     payload = AnnotationPayload(root={"123": AnnotationItem(tier=1)})
 
     # Run function and verify exception
+    req = make_mock_request("Bearer test-key")
     with pytest.raises(HTTPException) as exc_info:
-        await main.save_annotations(payload)
+        await main.save_annotations(payload, req)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Failed to save annotations"
+
+
+@pytest.mark.asyncio
+async def test_save_annotations_unit_missing_auth():
+    payload = AnnotationPayload(root={"123": AnnotationItem(tier=1)})
+    req = make_mock_request(auth_header=None)
+    with pytest.raises(HTTPException) as exc_info:
+        await main.save_annotations(payload, req)
+    assert exc_info.value.status_code == 401
+    assert "Authorization header" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_save_annotations_unit_invalid_bearer_token():
+    payload = AnnotationPayload(root={"123": AnnotationItem(tier=1)})
+    req = make_mock_request(auth_header="Bearer totally-invalid-token")
+    with pytest.raises(HTTPException) as exc_info:
+        await main.save_annotations(payload, req)
+    assert exc_info.value.status_code == 401
+    assert "Invalid Authorization token" in exc_info.value.detail
+
+
+def test_save_annotations_integration_missing_auth(tmp_path):
+    client = TestClient(app)
+    with patch("router.main.DATA_DIR", tmp_path):
+        resp = client.post("/dashboard/save-annotations", json={"123": {"tier": 1}})
+        assert resp.status_code == 401
+        assert "Authorization header" in resp.json()["detail"]
+
+
+def test_save_annotations_integration_invalid_bearer(tmp_path):
+    client = TestClient(app)
+    with patch("router.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/dashboard/save-annotations",
+            json={"123": {"tier": 1}},
+            headers={"Authorization": "Bearer non-existent-token-abc"},
+        )
+        assert resp.status_code == 401
+        assert "Invalid Authorization token" in resp.json()["detail"]
+
+
+def test_save_annotations_integration_valid_router_api_key(tmp_path):
+    client = TestClient(app)
+    secret_key = "test-custom-router-api-key-99"
+    with (
+        patch.dict(os.environ, {"ROUTER_API_KEY": secret_key}),
+        patch("router.main.DATA_DIR", tmp_path),
+    ):
+        resp = client.post(
+            "/dashboard/save-annotations",
+            json={"123": {"tier": 2, "note": "verified", "ts": "2026-09-11T00:00:00Z"}},
+            headers={"Authorization": f"Bearer {secret_key}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["saved"] == 1
+
+        saved_file = tmp_path / "annotations.json"
+        assert saved_file.exists()
+        saved_content = json.loads(saved_file.read_text(encoding="utf-8"))
+        assert "123" in saved_content
+        assert saved_content["123"]["tier"] == 2
+        assert saved_content["123"]["note"] == "verified"
+
+
+def test_save_annotations_integration_valid_litellm_master_key(tmp_path):
+    client = TestClient(app)
+    master_key = "test-custom-litellm-master-key-77"
+    with (
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": master_key}),
+        patch("router.main.DATA_DIR", tmp_path),
+    ):
+        resp = client.post(
+            "/dashboard/save-annotations",
+            json={"h12345abc": {"tier": 1, "note": "master key save"}},
+            headers={"Authorization": f"Bearer {master_key}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["saved"] == 1
+
+        saved_file = tmp_path / "annotations.json"
+        assert saved_file.exists()
+        saved_content = json.loads(saved_file.read_text(encoding="utf-8"))
+        assert "h12345abc" in saved_content
+        assert saved_content["h12345abc"]["tier"] == 1

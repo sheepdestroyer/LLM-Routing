@@ -4568,8 +4568,9 @@ async def _read_annotations_async(path) -> dict:
 
 
 @app.post("/dashboard/save-annotations")
-async def save_annotations(payload: AnnotationPayload):
+async def save_annotations(payload: AnnotationPayload, request: Request):
     """Save human review annotations to disk."""
+    await _authenticate_client_request(request)
 
     try:
         data = payload.root
