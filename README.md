@@ -780,6 +780,15 @@ To allow Goose (and other agents) to store, list, and delete persistent preferen
 * **Memory MCP Bridge Server**: Created a custom stdio MCP server in [memory_mcp.py](https://github.com/sheepdestroyer/LLM-Routing/blob/main/router/memory_mcp.py) that exposes the `rememberMemory`, `retrieveMemories`, and `removeSpecificMemory` tools. The script proxies these commands directly to `http://localhost:5000/v1/memory`.
 * **Goose Integration**: The built-in memory extension is disabled in `~/.config/goose/config.yaml` and replaced with the `litellm-memory` custom command-line extension running our bridge server.
 
+#### 4. Custom Audio Endpoint Proxy
+To support speech-to-text (STT) and text-to-speech (TTS) pipelines across agent clients, the router proxies audio endpoints:
+* **Triage Router Audio Proxy**: Exposes `@app.api_route("/v1/audio{path:path}", methods=["GET", "POST", "DELETE", "PUT", "PATCH"])` and `@app.api_route("/audio{path:path}")` in `router/main.py`, requiring Bearer token client authentication, applying iterative path traversal sanitization, and forwarding audio payloads to upstream inference backends (such as `whisper-server` or LiteLLM).
+
+#### 5. Dataset Visualizer & Human Annotation Auth
+For dataset inspection and classification model fine-tuning:
+* **Visualizer UI**: Served at `/visualizer` (`router/static/visualizer.html`), allowing human reviewers to review prompts, inspect classifier predictions, and assign gold-standard tier labels with semantic, accessible buttons.
+* **Authenticated Annotation Saving**: `@app.post("/dashboard/save-annotations")` requires client authentication (`_authenticate_client_request`). The visualizer frontend extracts authentication tokens safely from `localStorage` or URL query parameters with decoupled `try...catch` blocks resilient to sandboxed `<iframe>` environments, asserting HTTP status codes to prevent silent save failures.
+
 ## 9c. Ollama Proxy Integration (via LiteLLM ollama_chat)
 
 The router supports paid Ollama.com models through LiteLLM's native `ollama_chat` provider.
@@ -878,7 +887,7 @@ Tests cover:
 
 | Section | Endpoints |
 |---------|-----------|
-| Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer` |
+| Router API | `/v1/models`, `/metrics`, `/dashboard`, `/api/dashboard-stats`, `/visualizer`, `/dashboard/save-annotations`, `/v1/memory/*`, `/v1/audio/*` |
 | LiteLLM | Local `/health/liveness`, `/health/readiness`, `/v1/models`; canonical `https://litellm.<host>/ui/` |
 | Langfuse | Local `/api/public/health`, `/`; canonical `https://langfuse.<host>/` |
 | llama.cpp | Canonical `https://llama.<host>/health` |
