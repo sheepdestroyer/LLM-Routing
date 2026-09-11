@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Response
 from fastapi.responses import JSONResponse
+import httpx
 
 from router.main import (
     get_http_client,
@@ -16,7 +17,6 @@ from router.main import (
 def test_http_client_limits():
     # Verify that get_http_client initializes with configured limits using public mocks
     from router import main
-    import httpx
 
     original_init = httpx.Limits.__init__
     calls = []
@@ -36,6 +36,65 @@ def test_http_client_limits():
             assert kwargs.get("max_keepalive_connections") == main.HTTP_MAX_KEEPALIVE_CONNECTIONS
             assert kwargs.get("keepalive_expiry") == main.HTTP_KEEPALIVE_EXPIRY
     finally:
+        main._http_client = original_client
+
+
+@pytest.mark.anyio
+async def test_get_http_client_singleton_identity():
+    """Verify that calling get_http_client() twice in succession returns the exact same object reference."""
+    from router import main
+
+    original_client = main._http_client
+    main._http_client = None
+    try:
+        client1 = main.get_http_client()
+        client2 = main.get_http_client()
+
+        assert client1 is client2
+        assert isinstance(client1, httpx.AsyncClient)
+    finally:
+        if main._http_client is not None and main._http_client is not original_client:
+            await main._http_client.aclose()
+        main._http_client = original_client
+
+
+@pytest.mark.anyio
+async def test_get_http_client_reset_reinitialization():
+    """Verify that when main._http_client is reset to None, calling get_http_client() creates and returns a fresh client instance with proper limits."""
+    from router import main
+
+    original_client = main._http_client
+    created_clients = []
+    try:
+        main._http_client = None
+        client1 = main.get_http_client()
+        created_clients.append(client1)
+
+        # Reset singleton to None
+        main._http_client = None
+
+        # Call get_http_client() again; must create and return a fresh client instance
+        client2 = main.get_http_client()
+        created_clients.append(client2)
+
+        # Assert fresh instance identity
+        assert client1 is not client2
+        assert isinstance(client2, httpx.AsyncClient)
+
+        # Assert consecutive calls return the new singleton instance
+        client3 = main.get_http_client()
+        assert client3 is client2
+
+        # Assert proper connection limits configured on the fresh instance
+        pool = client2._transport._pool
+        assert pool._max_connections == main.HTTP_MAX_CONNECTIONS
+        assert pool._max_keepalive_connections == main.HTTP_MAX_KEEPALIVE_CONNECTIONS
+        assert pool._keepalive_expiry == main.HTTP_KEEPALIVE_EXPIRY
+        assert client2.timeout.read == 3600.0
+    finally:
+        for c in created_clients:
+            if c is not original_client:
+                await c.aclose()
         main._http_client = original_client
 
 
