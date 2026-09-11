@@ -5,7 +5,6 @@ import json
 import os
 import threading
 import time
-import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
 from pathlib import Path
