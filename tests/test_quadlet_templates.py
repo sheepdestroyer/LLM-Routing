@@ -300,3 +300,76 @@ def test_postgres_checkpoint_logging_suppressed():
     script = (ROOT / "start-stack.sh").read_text()
     assert "ALTER SYSTEM SET log_checkpoints = 'off'" in script
     assert "SELECT pg_reload_conf()" in script
+
+
+def test_dev_stack_disabled_by_default_and_stop_command_supported():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert "./start-stack.sh --stop | --down" in script
+    assert "STOP_MODE=true" in script
+    assert "if $STOP_MODE; then" in script
+
+    # Test that dev quadlet rendering strips default.target
+    embedded = script.split('python3 - "$src_dir" "$QUADLET_DIR" <<\'PY\'\n', 1)[1].split("\nPY\n", 1)[0]
+    env = os.environ.copy()
+    values = {
+        "POSTGRES_PASSWORD": "pg",
+        "WORKDIR": str(ROOT),
+        "HOME": str(ROOT),
+        "LITELLM_MASTER_KEY": "master",
+        "NEXTAUTH_SECRET": "next",
+        "SALT": "salt",
+        "ENCRYPTION_KEY": "encrypt",
+        "OLLAMA_API_KEY": "ollama",
+        "OPENROUTER_API_KEY": "openrouter",
+        "LANGFUSE_PUBLIC_KEY": "public",
+        "LANGFUSE_SECRET_KEY": "secret",
+        "MINIO_ROOT_USER": "minio",
+        "MINIO_ROOT_PASSWORD": "minio-pass",
+        "LANGFUSE_INIT_USER_PASSWORD": "lf-pass",
+        "REDIS_AUTH": "redis",
+        "CLICKHOUSE_PASSWORD": "click",
+        "PROXY_BASE_URL_DERIVED": "https://proxy",
+        "NEXTAUTH_URL_DERIVED": "https://next",
+        "PUBLIC_BASE_URL": "https://host/llm-routing",
+        "ROUTING_DOMAIN": "vendeuvre.lan",
+        "LLAMA_CLASSIFIER_URL": "http://127.0.0.1:8083/v1",
+        "LLAMA_SERVER_URL": "http://127.0.0.1:8083",
+        "POD_NAME": "dev-router-pod",
+        "DATA_ROOT": str(ROOT / "data-dev"),
+        "EFFECTIVE_ENV_FILE": str(ROOT / "data-dev" / "effective.env"),
+        "ROUTER_IMAGE": "registry/llm-routing-router:latest",
+        "ROUTER_PORT": "5010",
+        "LITELLM_PORT": "4010",
+        "LANGFUSE_WEB_PORT": "3011",
+        "LANGFUSE_WORKER_PORT": "3030",
+        "POSTGRES_PORT": "5442",
+        "VALKEY_CACHE_PORT": "6389",
+        "VALKEY_LF_PORT": "6390",
+        "CLICKHOUSE_HTTP_PORT": "8123",
+        "CLICKHOUSE_TCP_PORT": "9003",
+        "MINIO_S3_PORT": "9002",
+        "MINIO_CONSOLE_PORT": "9001",
+        "QUADLET_NAMESPACE": "llm-routing-dev",
+    }
+    env.update(values)
+    with tempfile.TemporaryDirectory() as tmp:
+        src, out = Path(tmp) / "src", Path(tmp) / "out"
+        src.mkdir()
+        out.mkdir()
+        (src / "llm-routing.pod").write_text("[Pod]\nPodName=llm-routing.pod\n\n[Install]\nWantedBy=default.target\n")
+        (src / "llm-routing-router.container").write_text(
+            "[Unit]\nAfter=llm-routing-litellm.service\n[Container]\n"
+            "Image=registry/llm-routing-router:latest\n"
+            "Environment=PUBLIC_BASE_URL=https://host/llm-routing-router\nPod=llm-routing.pod\n\n"
+            "[Install]\nWantedBy=default.target llm-routing-pod.service\n"
+        )
+        subprocess.run(
+            ["python3", "-c", embedded, str(src), str(out)], env=env, check=True, capture_output=True, text=True
+        )
+        dev_pod = (out / "llm-routing-dev.pod").read_text()
+        dev_container = (out / "llm-routing-dev-router.container").read_text()
+        # In dev, default.target MUST NOT be present (disabled and down by default)
+        assert "default.target" not in dev_pod
+        assert "default.target" not in dev_container
+        # Container must still be tied to dev pod unit
+        assert "WantedBy=llm-routing-dev-pod.service" in dev_container

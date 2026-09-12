@@ -18,6 +18,7 @@ show_help() {
     echo "  ./start-stack.sh --replace         → Stop, clean up zombie ports, and recreate/redeploy pod"
     echo "  ./start-stack.sh --pull            → Pull triage router image from GHCR (auto-detecting .release_version tag or :latest) and redeploy pod"
     echo "  ./start-stack.sh --full-rebuild    → Rebuild custom router image locally and recreate/redeploy pod"
+    echo "  ./start-stack.sh --stop | --down   → Stop pod, tear down containers, and clean up ports"
     echo "  ./start-stack.sh --help | -h       → Show this help message and exit"
 }
 
@@ -40,12 +41,15 @@ fi
 PULL_MODE=false
 FULL_REBUILD=false
 REPLACE_MODE=false
+STOP_MODE=false
 if [ "${1:-}" = "--pull" ]; then
     PULL_MODE=true
 elif [ "${1:-}" = "--full-rebuild" ]; then
     FULL_REBUILD=true
 elif [ "${1:-}" = "--replace" ]; then
     REPLACE_MODE=true
+elif [ "${1:-}" = "--stop" ] || [ "${1:-}" = "--down" ]; then
+    STOP_MODE=true
 elif [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     show_help
     exit 0
@@ -976,11 +980,19 @@ try:
         def namespace_identifier(match):
             field, value = match.group(1), match.group(2)
             if field in {"Pod", "After", "Wants", "BindsTo", "Requires", "PartOf", "WantedBy"}:
+                if field == "WantedBy" and namespace != "llm-routing-prod" and "default.target" in value:
+                    # Dev stack is down by default and on-demand only:
+                    # strip default.target so systemd does not enable it on boot
+                    value = re.sub(r"\bdefault\.target\b", "", value).strip()
+                    if not value:
+                        return ""
                 value = identifier_prefix.sub(namespace + "-", value)
                 value = value.replace("llm-routing.pod", namespace + ".pod")
                 value = value.replace("llm-routing-pod.service", namespace + "-pod.service")
             return f"{field}={value}"
         text = re.sub(r"(?m)^(Pod|After|Wants|BindsTo|Requires|PartOf|WantedBy)=(.*)$", namespace_identifier, text)
+        if namespace != "llm-routing-prod":
+            text = re.sub(r"(?m)^\s*\[Install\]\s*\n(?:\s*\n)*\Z", "", text)
         unresolved = sorted(set(re.findall(r"\b[A-Z0-9_]+_PLACEHOLDER\b", text)))
         if unresolved:
             sys.stderr.write(f"Error: Unresolved placeholders in {os.path.basename(tpl)}: {', '.join(unresolved)}\n")
@@ -1061,6 +1073,20 @@ if [[ "$STACK_OWNERSHIP" == conflict:* ]]; then
     echo "❌ Error: pod ${POD_NAME} is attached to an unrelated legacy unit ${conflict_unit}; refusing to stop, replace, or deploy it." >&2
     echo "   Inspect with: systemctl --user cat ${conflict_unit} --no-pager" >&2
     exit 1
+fi
+if $STOP_MODE; then
+    echo "🛑 Stopping ${POD_NAME}..."
+    safe_pod_teardown
+    if [ -d "$QUADLET_DIR" ]; then
+        echo "📋 Re-rendering quadlet units (ensuring on-demand/disabled state)..."
+        derive_external_service_urls || true
+        render_quadlets
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
+    echo "========================================================================="
+    echo "✓ SUCCESS: ${POD_NAME} stopped and ports cleaned."
+    echo "========================================================================="
+    exit 0
 fi
 if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
     if $FULL_REBUILD; then
