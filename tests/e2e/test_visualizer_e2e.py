@@ -192,10 +192,10 @@ async def test_visualizer_clear_annotation(page: Page, base_url: str):
     await page.locator(".tier-btn", has_text="medium-core").click()
     await expect(page.locator(".tag.human")).to_contain_text("REVIEWED")
 
-    # Click clear link
-    clear_link = page.locator(".human-review a", has_text="clear")
-    await expect(clear_link).to_be_visible()
-    await clear_link.click()
+    # Click clear button
+    clear_btn = page.locator(".human-review button.clear-btn", has_text="clear")
+    await expect(clear_btn).to_be_visible()
+    await clear_btn.click()
 
     # Verify annotation removed
     await expect(page.locator(".tag.human")).to_have_count(0)

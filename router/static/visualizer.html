@@ -69,6 +69,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .annotation-bar button { background: #e94560; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
 .annotation-bar button.save { background: #4caf50; }
 .annotation-bar button:focus-visible, .annotation-bar input:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); }
+.clear-btn { display: inline; vertical-align: baseline; background: transparent; border: none; color: #ef5350; cursor: pointer; font-size: inherit; font-family: inherit; padding: 0; text-decoration: underline; }
+.clear-btn:hover { color: #ff867c; }
+.clear-btn:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-offset); border-radius: 2px; }
 .progress-bar { height: 4px; background: #0f3460; border-radius: 2px; margin-top: 8px; }
 .progress-fill { height: 100%; background: #64b5f6; border-radius: 2px; transition: width 0.3s; }
 .filter-count { color: #e94560; font-weight: bold; }
@@ -325,7 +328,7 @@ function renderDetail(idx) {
         <input type="text" id="note-input" placeholder="Optional review note..." value="${ann ? escapeHtml(ann.note || '') : ''}">
         <button onclick="saveNote(${idx})">Save Note</button>
       </div>
-      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <a href="#" onclick="clearAnnotation(${idx})" style="color:#f44336">clear</a></div>` : ''}
+      ${ann ? `<div style="margin-top:8px;font-size:0.75em;color:#64b5f6">✓ Reviewed as <b>${escapeHtml(ann.tier)}</b> · <button type="button" onclick="clearAnnotation(${idx})" class="clear-btn" aria-label="Clear annotation">clear</button></div>` : ''}
     </div>
   `;
 }
@@ -360,15 +363,62 @@ function clearAnnotation(idx) {
   render();
 }
 
+function getAuthToken() {
+  // 1. Attempt reading from localStorage safely
+  try {
+    const gatewayKey = localStorage.getItem('gateway_api_key');
+    if (gatewayKey && gatewayKey.trim()) return gatewayKey.trim();
+    const apiKey = localStorage.getItem('api_key');
+    if (apiKey && apiKey.trim()) return apiKey.trim();
+  } catch (e) {
+    console.warn('Could not read auth token from localStorage:', e);
+  }
+
+  // 2. Fallback cleanly to URL parameters
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const qToken = urlParams.get('api_key') || urlParams.get('token');
+      if (qToken && qToken.trim()) {
+        const trimmed = qToken.trim();
+        // Best effort caching to localStorage
+        try {
+          localStorage.setItem('gateway_api_key', trimmed);
+        } catch (ignore) {}
+        return trimmed;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not read auth token from URL parameters:', e);
+  }
+
+  return '';
+}
+
 function saveAnnotations() {
-  // Save to localStorage
-  localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
-  // Auto-sync by posting to dashboard save endpoint
+  try {
+    localStorage.setItem('classifier-annotations', JSON.stringify(annotations));
+  } catch (e) {
+    console.warn('Failed to cache annotations locally:', e);
+  }
+
+  const headers = {'Content-Type': 'application/json'};
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token;
+  }
+
   fetch(apiBase + 'dashboard/save-annotations', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: headers,
     body: JSON.stringify(annotations),
-  }).catch((err) => console.error('Failed to auto-sync annotations:', err));
+  })
+    .then((res) => {
+      if (!res.ok) {
+        console.error('Failed to sync annotations: HTTP ' + res.status);
+      }
+    })
+    .catch((err) => console.error('Failed to auto-sync annotations:', err));
 }
 
 function exportAnnotations() {

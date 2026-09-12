@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import HTTPException, Request
@@ -5,10 +6,28 @@ from fastapi.testclient import TestClient
 from router.main import app, proxy_memory
 
 
+@pytest.fixture(autouse=True)
+def isolate_env():
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "sk-litellm-testkey"}):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_proxy_memory_ssrf_double_encoded_path_traversal():
+    """Test that double-encoded path traversal (%252e%252e%252f) triggers 400 Bad Request."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
+    with pytest.raises(HTTPException) as exc:
+        await proxy_memory(mock_request, path="%252e%252e%252f%252e%252e%252fkey/generate")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Invalid path"
+
+
 @pytest.mark.asyncio
 async def test_proxy_memory_ssrf_path_traversal():
     """Test that path traversal attempts (..) trigger 400 Bad Request."""
     mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
     with pytest.raises(HTTPException) as exc:
         await proxy_memory(mock_request, path="../etc/passwd")
     assert exc.value.status_code == 400
@@ -19,6 +38,7 @@ async def test_proxy_memory_ssrf_path_traversal():
 async def test_proxy_memory_ssrf_authority_override():
     """Test that authority override attempts (@) trigger 400 Bad Request."""
     mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
     with pytest.raises(HTTPException) as exc:
         await proxy_memory(mock_request, path="@evil.com/data")
     assert exc.value.status_code == 400
@@ -29,6 +49,7 @@ async def test_proxy_memory_ssrf_authority_override():
 async def test_proxy_memory_ssrf_scheme_injection():
     """Test that scheme injection attempts (://) trigger 400 Bad Request."""
     mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
     with pytest.raises(HTTPException) as exc:
         await proxy_memory(mock_request, path="/http://evil.com")
     assert exc.value.status_code == 400
@@ -39,6 +60,7 @@ async def test_proxy_memory_ssrf_scheme_injection():
 async def test_proxy_memory_ssrf_null_byte_injection():
     """Test that null byte injection attempts (\x00) trigger 400 Bad Request."""
     mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"Authorization": "Bearer test-key"}
     with pytest.raises(HTTPException) as exc:
         await proxy_memory(mock_request, path="secret\x00.py")
     assert exc.value.status_code == 400
@@ -58,7 +80,7 @@ async def test_proxy_memory_valid_request():
 
     with patch("router.main.get_http_client", return_value=mock_http_client):
         client = TestClient(app)
-        response = client.get("/v1/memory/user/preferences")
+        response = client.get("/v1/memory/user/preferences", headers={"Authorization": "Bearer test-key"})
         assert response.status_code == 200
         assert mock_http_client.request.called
         call_kwargs = mock_http_client.request.call_args.kwargs

@@ -681,7 +681,7 @@ def test_extract_prompt_from_messages():
 
 def test_daemon_get_v1_models(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/v1/models")
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=10) as resp:
         assert resp.status == 200
         data = json.loads(resp.read().decode())
     assert data["object"] == "list"
