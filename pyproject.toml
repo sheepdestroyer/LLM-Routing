@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-routing"
-version = "0.1.63"
+version = "0.1.74"
 description = "FastAPI LLM Triage Gateway & Multi-Model Proxy"
 requires-python = ">=3.11"
 dependencies = [
