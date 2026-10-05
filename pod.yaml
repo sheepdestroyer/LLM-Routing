@@ -240,7 +240,7 @@ spec:
       value: clickhouse
     - name: CLICKHOUSE_PASSWORD
       value: CLICKHOUSE_PASSWORD_PLACEHOLDER
-    image: clickhouse/clickhouse-server:26.8.2.7-distroless
+    image: clickhouse/clickhouse-server:26.8.6.5-distroless
     livenessProbe:
       exec:
         command:
