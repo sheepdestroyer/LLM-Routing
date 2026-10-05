@@ -753,6 +753,7 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
 
 
 LLAMA_SERVER_URL, LLAMA_CLASSIFIER_URL = _resolve_llama_endpoints()
+STRATA_SERVER_URL = os.getenv("STRATA_SERVER_URL", "http://127.0.0.1:8087").rstrip("/")
 router_api_base = LLAMA_CLASSIFIER_URL
 
 router_api_key = router_model_conf.get("api_key")
@@ -1556,6 +1557,15 @@ LANGFUSE_MANAGED_MODELS = [
         0.0,
     ),
     (
+        "strata-qwen-model-def",
+        "strata-qwen",
+        "(?i)^(openai/)?(strata-qwen|locallama-strata|gb10-strata|qwen3.8-flash-next)$",
+        "TOKENS",
+        0.0,
+        0.0,
+        0.0,
+    ),
+    (
         "ollama-deepseek-v4-pro-def",
         "ollama-deepseek-v4-pro",
         "(?i)^(ollama_chat/)?(deepseek-v4-pro|ollama-deepseek-v4-pro)$",
@@ -1665,6 +1675,7 @@ async def _periodic_model_sync():
                     llama_server_url=LLAMA_SERVER_URL,
                     whisper_server_url=whisper_url,
                     classifier_url=classifier_url,
+                    strata_server_url=STRATA_SERVER_URL,
                     client=get_http_client(),
                 )
                 await sync_engine.sync_all_models()
@@ -1722,6 +1733,7 @@ async def lifespan(app: FastAPI):
                 llama_server_url=LLAMA_SERVER_URL,
                 whisper_server_url=whisper_url,
                 classifier_url=classifier_url,
+                strata_server_url=STRATA_SERVER_URL,
                 client=get_http_client(),
             )
             sync_stats = await sync_engine.sync_all_models()
@@ -3514,6 +3526,9 @@ async def chat_completions(request: Request):
                         "local-qwen-routing": 8192,
                         "locallama-qwen-vl": 65536,
                         "local-qwen-vl": 65536,
+                        "strata-qwen": 262144,
+                        "locallama-strata": 262144,
+                        "gb10-strata": 262144,
                         "locallama-whisper": 32768,
                         "whisper-1": 32768,
                         "locallama-nomic-embed": 8192,
@@ -4621,6 +4636,7 @@ async def admin_sync_models(request: Request):
         llama_server_url=LLAMA_SERVER_URL,
         whisper_server_url=whisper_url,
         classifier_url=classifier_url,
+        strata_server_url=STRATA_SERVER_URL,
         client=get_http_client(),
     )
     res = await sync_engine.sync_all_models()
