@@ -200,6 +200,14 @@ def test_build_model_suites(sync_engine):
     assert any(m["model_name"] == "locallama-nomic-embed" for m in locallama)
     assert any(m["model_name"] == "local-nomic-embed" for m in locallama)
 
+    strata = sync_engine.build_strata_models()
+    assert any(m["model_name"] == "strata-qwen" for m in strata)
+    assert any(m["model_name"] == "locallama-strata" for m in strata)
+    assert any(m["model_name"] == "gb10-strata" for m in strata)
+    sync_engine.strata_server_url = "http://127.0.0.1:8087/v1"
+    strata2 = sync_engine.build_strata_models()
+    assert strata2[0]["litellm_params"]["api_base"] == "http://127.0.0.1:8087/v1"
+
     agy = sync_engine.build_agy_models(latest_flash="gemini-3.8-flash")
     assert any(m["model_name"] == "agy-gemini" for m in agy)
     assert any(m["model_name"] == "agy-gemini-sse" for m in agy)
