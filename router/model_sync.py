@@ -50,6 +50,7 @@ class ModelRegistrySync:
         llama_server_url: str = "http://127.0.0.1:8083",
         whisper_server_url: str = "http://127.0.0.1:8084",
         classifier_url: str = "http://127.0.0.1:8086",
+        strata_server_url: str = "http://127.0.0.1:8087",
         ollama_api_base: str = "https://api.ollama.com",
         openrouter_api_key: str | None = None,
         client: httpx.AsyncClient | None = None,
@@ -60,6 +61,7 @@ class ModelRegistrySync:
         self.llama_server_url = llama_server_url.rstrip("/")
         self.whisper_server_url = whisper_server_url.rstrip("/")
         self.classifier_url = classifier_url.rstrip("/")
+        self.strata_server_url = strata_server_url.rstrip("/")
         self.ollama_api_base = ollama_api_base.rstrip("/")
         self.openrouter_api_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY", "")
         self.ollama_api_key = os.getenv("OLLAMA_API_KEY", "")
@@ -437,6 +439,68 @@ class ModelRegistrySync:
                 },
                 "model_info": {
                     "mode": "embedding",
+                    "is_public_model_group": True,
+                },
+            },
+        ]
+
+    def build_strata_models(self) -> list[dict[str, Any]]:
+        """Build model definitions for Strata inference server on Asus Ascend GX10 (GB10)."""
+        strata_base = (
+            self.strata_server_url if self.strata_server_url.endswith("/v1") else f"{self.strata_server_url}/v1"
+        )
+        return [
+            {
+                "model_name": "strata-qwen",
+                "litellm_params": {
+                    "model": "openai/strata-qwen",
+                    "api_base": strata_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
+                    "supports_vision": False,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "locallama-strata",
+                "litellm_params": {
+                    "model": "openai/locallama-strata",
+                    "api_base": strata_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
+                    "supports_vision": False,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
+                    "is_public_model_group": True,
+                },
+            },
+            {
+                "model_name": "gb10-strata",
+                "litellm_params": {
+                    "model": "openai/gb10-strata",
+                    "api_base": strata_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
+                    "supports_vision": False,
+                    "supports_reasoning": True,
+                    "supports_function_calling": True,
                     "is_public_model_group": True,
                 },
             },
@@ -863,6 +927,7 @@ class ModelRegistrySync:
         latest_flash = await self.discover_agy_latest_flash()
         all_targets: list[dict[str, Any]] = []
         all_targets.extend(self.build_locallama_models())
+        all_targets.extend(self.build_strata_models())
         all_targets.extend(self.build_agy_models(latest_flash=latest_flash))
         all_targets.extend(self.build_ollama_models())
         all_targets.extend(self.build_openrouter_models())
