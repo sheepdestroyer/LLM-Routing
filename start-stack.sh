@@ -801,13 +801,18 @@ render_litellm_config() {
     classifier_url="${classifier_url%/}"
     [[ "$classifier_url" != */v1 ]] && classifier_url="${classifier_url}/v1"
 
+    local strata_url="${STRATA_SERVER_URL:-http://127.0.0.1:8087}"
+    strata_url="${strata_url%/}"
+    [[ "$strata_url" != */v1 ]] && strata_url="${strata_url}/v1"
+
     sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
         -e "s|LLAMA_SERVER_URL_PLACEHOLDER|${server_url}|g" \
         -e "s|LLAMA_CLASSIFIER_URL_PLACEHOLDER|${classifier_url}|g" \
+        -e "s|STRATA_SERVER_URL_PLACEHOLDER|${strata_url}|g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
     # Validate no unresolved placeholders remain
-    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_SERVER_URL_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_SERVER_URL_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER|STRATA_SERVER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
         echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
         exit 1
     fi
@@ -878,6 +883,7 @@ proxy_base_url = os.environ.get("PROXY_BASE_URL_DERIVED") or os.environ.get("PRO
 nextauth_url = os.environ.get("NEXTAUTH_URL_DERIVED") or os.environ.get("NEXTAUTH_URL", "https://langfuse.vendeuvre.lan")
 llama_server_url = os.environ.get("LLAMA_SERVER_URL_DERIVED") or os.environ.get("LLAMA_SERVER_URL", "https://llama.vendeuvre.lan")
 llama_classifier_url = os.environ.get("LLAMA_CLASSIFIER_URL_DERIVED") or os.environ.get("LLAMA_CLASSIFIER_URL", "https://llama-classifier.vendeuvre.lan/v1")
+strata_server_url = os.environ.get("STRATA_SERVER_URL", "http://127.0.0.1:8087")
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
@@ -907,6 +913,7 @@ repl = {
     "ROUTING_DOMAIN_PLACEHOLDER": os.environ["ROUTING_DOMAIN"],
     "LLAMA_CLASSIFIER_URL_PLACEHOLDER": llama_classifier_url,
     "LLAMA_SERVER_URL_PLACEHOLDER": llama_server_url,
+    "STRATA_SERVER_URL_PLACEHOLDER": strata_server_url,
     "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
     "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
     "EFFECTIVE_ENV_FILE_PLACEHOLDER": os.environ["EFFECTIVE_ENV_FILE"],
