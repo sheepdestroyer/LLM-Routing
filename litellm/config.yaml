@@ -54,6 +54,9 @@ litellm_settings:
     - agent-simple-core
     - gpt-4o-mini
     - gpt-4o
+    - strata-qwen
+    - locallama-strata
+    - gb10-strata
   fallbacks:
   - llm-routing-agy:
     - agy-opus
@@ -382,6 +385,51 @@ model_list:
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
+    is_public_model_group: true
+
+- litellm_params:
+    api_base: STRATA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/strata-qwen
+    request_timeout: 600
+  model_name: strata-qwen
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
+
+- litellm_params:
+    api_base: STRATA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/locallama-strata
+    request_timeout: 600
+  model_name: locallama-strata
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
+
+- litellm_params:
+    api_base: STRATA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/gb10-strata
+    request_timeout: 600
+  model_name: gb10-strata
+  model_info:
+    supports_vision: false
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 redis_settings:
