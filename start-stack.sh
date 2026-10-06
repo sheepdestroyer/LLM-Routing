@@ -598,7 +598,16 @@ verify_stack_health() {
     while [ "$waited" -lt "$MAX_WAIT" ]; do
         if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" -q 2>/dev/null; then
             echo "   ✓ PostgreSQL ready after ${waited}s"
-            podman exec "${POD_NAME}-postgres-db" psql -U postgres -p "${POSTGRES_PORT}" -d postgres -c "ALTER SYSTEM SET log_checkpoints = 'off'; SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+            # ALTER SYSTEM cannot run inside a transaction block, and psql -c "a; b"
+            # wraps both statements in ONE implicit transaction — so each statement
+            # needs its own -c. Failure is surfaced as a warning instead of being
+            # swallowed; the Quadlet Exec= flags already set log_checkpoints=off, but
+            # ALTER SYSTEM keeps the tuning durable in postgresql.auto.conf.
+            if ! podman exec "${POD_NAME}-postgres-db" psql -U postgres -p "${POSTGRES_PORT}" -d postgres \
+                -c "ALTER SYSTEM SET log_checkpoints = 'off'" \
+                -c "SELECT pg_reload_conf()" >/dev/null; then
+                echo "   ⚠️  Failed to apply log_checkpoints=off via ALTER SYSTEM (Exec= flag still covers it)" >&2
+            fi
             break
         fi
         sleep 5
