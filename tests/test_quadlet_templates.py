@@ -72,6 +72,30 @@ def test_quadlet_container_healthcmds_and_aligned_versions():
     assert "Label=wud.tag.exclude=.*(dev|nightly|rc|beta).*" in router
 
 
+def test_router_graceful_shutdown_bounds_sigterm_stop():
+    # Issue #724: long-lived SSE streams kept uvicorn (PID 1) alive past podman's
+    # 10s default StopTimeout, so every planned stop ended in SIGKILL and the
+    # systemd unit reported exit-code failure. uvicorn must bound its graceful
+    # shutdown and the Quadlet must raise StopTimeout as belt-and-braces.
+    router = (QUADLETS / "llm-routing-router.container").read_text()
+    assert "--timeout-graceful-shutdown 10" in router
+    exec_line = next(line for line in router.splitlines() if line.startswith("Exec="))
+    assert (
+        exec_line.index("exec uvicorn") < exec_line.index("--timeout-graceful-shutdown 10") < exec_line.rindex('"')
+    ), "graceful-shutdown timeout must be inside the quoted exec uvicorn command"
+    assert "StopTimeout=30" in router
+
+    # pod.yaml (legacy play-kube manifest kept in lockstep) gets the same flag.
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    assert "--timeout-graceful-shutdown 10" in pod_yaml
+
+    # Langfuse web/worker drain longer than the 10s default and expose no
+    # shutdown-timeout knob; StopTimeout= is the template-side mitigation.
+    for name in ("llm-routing-langfuse-web.container", "llm-routing-langfuse-worker.container"):
+        text = (QUADLETS / name).read_text()
+        assert "StopTimeout=30" in text, name
+
+
 def test_liveness_healthchecks_restart_failed_containers():
     for container in sorted(QUADLETS.glob("*.container")):
         text = container.read_text()

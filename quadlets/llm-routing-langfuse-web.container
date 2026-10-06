@@ -40,6 +40,12 @@ Environment=LANGFUSE_INIT_USER_EMAIL=admin@local.dev
 Environment=LANGFUSE_INIT_USER_PASSWORD=LANGFUSE_INIT_USER_PASSWORD_PLACEHOLDER
 Environment=LANGFUSE_LOG_LEVEL=warn
 Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual
+# Issue #724: langfuse-web runs node under dumb-init with --keepAliveTimeout
+# 110000; its graceful drain of in-flight/keep-alive connections exceeds podman's
+# 10s default StopTimeout, so SIGTERM always ended in SIGKILL and the unit
+# reported exit-code failure on planned stops. The image exposes no shutdown-timeout
+# knob we can set from our templates, so StopTimeout= is the mitigation.
+StopTimeout=30
 HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WEB_PORT_PLACEHOLDER/api/public/health
 HealthInterval=15s
 HealthTimeout=5s

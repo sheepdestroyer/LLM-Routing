@@ -2057,7 +2057,15 @@ async def test_coverage_final_gaps():
 
     # 14. get_dashboard_data total_routed == 0 (line 4052->4073)
     rm.stats["routing_paths"] = {"google_oauth_direct": 0, "litellm_fallback": 0}
-    with patch("router.main.get_best_free_model", new=AsyncMock(return_value={"id": "m1"})):
+    # sync_stats_from_valkey must be stubbed (same convention as the other
+    # get_dashboard_data tests): a fire-and-forget save_persisted_stats() from an
+    # earlier step in this test writes routing_paths to a real Valkey when one is
+    # listening on 127.0.0.1, and the read-back max()-merge would non-deterministically
+    # flip total_routed > 0 (conic-gradient) under xdist.
+    with (
+        patch("router.main.get_best_free_model", new=AsyncMock(return_value={"id": "m1"})),
+        patch("router.main.sync_stats_from_valkey", new=AsyncMock()),
+    ):
         d_data = await get_dashboard_data()
         assert d_data["routing_pie_gradient"] == "background: rgba(255, 255, 255, 0.05);"
 

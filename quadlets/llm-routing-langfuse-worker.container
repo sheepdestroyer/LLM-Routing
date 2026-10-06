@@ -29,6 +29,11 @@ Environment=LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://127.0.0.1:MINIO_S3_PORT_PLA
 Environment=S3_FORCE_PATH_STYLE=true
 Environment=LANGFUSE_LOG_LEVEL=warn
 Environment=LANGFUSE_MIGRATION_V4_WRITE_MODE=dual
+# Issue #724: langfuse-worker's SIGTERM handler (BullMQ worker.close(), ClickHouse
+# write flush, connection teardown) can exceed podman's 10s default StopTimeout,
+# so planned stops resorted to SIGKILL and the unit reported exit-code failure.
+# No shutdown-timeout env knob exists in the image; StopTimeout= is the mitigation.
+StopTimeout=30
 HealthCmd=wget -q -O /dev/null http://127.0.0.1:LANGFUSE_WORKER_PORT_PLACEHOLDER/api/health
 HealthInterval=15s
 HealthTimeout=10s
