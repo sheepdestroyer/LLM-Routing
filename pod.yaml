@@ -105,7 +105,7 @@ spec:
       name: gemini-secrets
   # LLM Triage Router — classification + routing gateway
   - args:
-    - set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level ${LOG_LEVEL:-warning}
+    - set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level ${LOG_LEVEL:-warning} --timeout-graceful-shutdown 10
     command:
     - /bin/sh
     - -c
