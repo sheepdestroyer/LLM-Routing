@@ -9,7 +9,7 @@ os.environ.setdefault("ROUTER_API_BASE", "http://localhost:8080/v1")
 os.environ.setdefault("ROUTER_MODEL_NAME", "qwen-test")
 os.environ.setdefault("LITELLM_MASTER_KEY", "test-master-key")
 
-from router.main import app, classify_request
+from router.main import app, classify_request, extract_model_context_length
 
 
 @pytest.mark.asyncio
@@ -476,7 +476,7 @@ def test_chat_completions_agy_dual_mode_routing():
 
 
 def test_models_endpoint_includes_routing_models():
-    """Verify that /v1/models lists injected llm-routing-* auto-routing entrypoints."""
+    """Verify that /v1/models lists injected llm-routing-* auto-routing entrypoints with dynamic defaults."""
     client = TestClient(app)
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -490,7 +490,89 @@ def test_models_endpoint_includes_routing_models():
     ):
         resp = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
         assert resp.status_code == 200
-        model_ids = [m["id"] for m in resp.json()["data"]]
-        assert "llm-routing-auto-free" in model_ids
-        assert "llm-routing-auto-agy" in model_ids
-        assert "llm-routing-ollama" in model_ids
+        models_by_id = {m["id"]: m for m in resp.json()["data"]}
+        assert "llm-routing-auto-free" in models_by_id
+        assert "llm-routing-auto-agy" in models_by_id
+        assert "llm-routing-ollama" in models_by_id
+        assert models_by_id["llm-routing-auto-free"]["context_length"] == 262144
+        assert models_by_id["llm-routing-auto-free"]["max_tokens"] == 262144
+        assert models_by_id["llm-routing-auto-free"]["max_input_tokens"] == 262144
+
+
+def test_extract_model_context_length_branches():
+    """Verify extract_model_context_length handles all fields, model_info, and invalid values."""
+    # Direct fields
+    assert extract_model_context_length({"context_length": 131072}) == 131072
+    assert extract_model_context_length({"max_input_tokens": 262144}) == 262144
+    assert extract_model_context_length({"max_tokens": 65536}) == 65536
+
+    # model_info nested dict
+    assert extract_model_context_length({"model_info": {"max_input_tokens": 524288}}) == 524288
+    assert extract_model_context_length({"model_info": {"max_tokens": 128000}}) == 128000
+    assert extract_model_context_length({"model_info": {"context_length": 1048576}}) == 1048576
+
+    # Invalid / empty / non-positive cases
+    assert extract_model_context_length({}) is None
+    assert extract_model_context_length({"context_length": 0}) is None
+    assert extract_model_context_length({"context_length": -100}) is None
+    assert extract_model_context_length({"context_length": "not-int"}) is None
+    assert extract_model_context_length({"model_info": None}) is None
+    assert extract_model_context_length({"model_info": {"max_tokens": -5}}) is None
+    assert extract_model_context_length({"model_info": {"max_tokens": "abc"}}) is None
+
+
+def test_models_endpoint_dynamic_context_normalization():
+    """Verify that downstream models and routing models dynamically adopt context lengths."""
+    client = TestClient(app)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "data": [
+            "not-a-dict",
+            {"id": "strata-qwen", "max_input_tokens": 262144},
+            {"id": "locallama-qwen", "max_input_tokens": 240896},
+            {"id": "ollama-deepseek-v4-pro", "max_input_tokens": 524288},
+            {"id": "local-qwen-vl", "context_length": 65536},
+            {"id": "custom-model", "max_tokens": 32768},
+            {"id": "embedding-model", "mode": "embedding"},
+            {"id": None, "max_input_tokens": 1000},
+            {"max_input_tokens": 2000},
+        ]
+    }
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with (
+        patch("router.main.get_http_client", return_value=mock_client),
+        patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
+    ):
+        resp = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
+        assert resp.status_code == 200
+        models_by_id = {m.get("id"): m for m in resp.json()["data"] if isinstance(m, dict)}
+
+        # Downstream models dynamically normalized
+        assert models_by_id["strata-qwen"]["context_length"] == 262144
+        assert models_by_id["strata-qwen"]["max_tokens"] == 262144
+        assert models_by_id["strata-qwen"]["max_input_tokens"] == 262144
+
+        assert models_by_id["locallama-qwen"]["context_length"] == 240896
+        assert models_by_id["locallama-qwen"]["max_tokens"] == 240896
+        assert models_by_id["locallama-qwen"]["max_input_tokens"] == 240896
+
+        assert models_by_id["ollama-deepseek-v4-pro"]["context_length"] == 524288
+        assert models_by_id["ollama-deepseek-v4-pro"]["max_tokens"] == 524288
+
+        assert models_by_id["local-qwen-vl"]["context_length"] == 65536
+        assert models_by_id["local-qwen-vl"]["max_tokens"] == 65536
+
+        assert models_by_id["custom-model"]["context_length"] == 32768
+        assert models_by_id["custom-model"]["max_tokens"] == 32768
+
+        # Embedding model with no context fields remains intact
+        assert "context_length" not in models_by_id["embedding-model"]
+
+        # Routing models inherit dynamically from strata and ollama
+        assert models_by_id["llm-routing-auto-free"]["context_length"] == 262144
+        assert models_by_id["llm-routing-auto-free"]["max_tokens"] == 262144
+        assert models_by_id["llm-routing-auto-agy"]["context_length"] == 262144
+        assert models_by_id["llm-routing-ollama"]["context_length"] == 524288

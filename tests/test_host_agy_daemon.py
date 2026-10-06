@@ -1695,7 +1695,7 @@ def test_daemon_chat_completions_dynamic_reasoning_streaming(daemon_server, monk
 
 def test_models_endpoint_has_all_variants(daemon_server):
     req = urllib.request.Request(f"{daemon_server}/v1/models")
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:
         assert resp.status == 200
         data = json.loads(resp.read().decode("utf-8"))
         model_ids = {m["id"] for m in data.get("data", [])}

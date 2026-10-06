@@ -2753,9 +2753,24 @@ async def health():
     return {"status": "ok"}
 
 
+def extract_model_context_length(entry: dict) -> int | None:
+    """Extract context length integer from a model entry or its model_info dictionary."""
+    for key in ("context_length", "max_input_tokens", "max_tokens"):
+        val = entry.get(key)
+        if isinstance(val, int) and val > 0:
+            return val
+    model_info = entry.get("model_info")
+    if isinstance(model_info, dict):
+        for key in ("max_input_tokens", "max_tokens", "context_length"):
+            val = model_info.get(key)
+            if isinstance(val, int) and val > 0:
+                return val
+    return None
+
+
 @app.get("/v1/models")
 async def proxy_models():
-    """Proxy /v1/models to LiteLLM, injecting llm-routing-auto-free as the first entry."""
+    """Proxy /v1/models to LiteLLM, dynamically normalizing model context lengths and injecting routing models."""
     litellm_key = os.getenv("LITELLM_MASTER_KEY")
     try:
         client = get_http_client()
@@ -2769,48 +2784,80 @@ async def proxy_models():
         if r.status_code == 200:
             try:
                 data = r.json()
-                if isinstance(data, dict) and "data" in data:
+                if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+                    model_contexts: dict[str, int] = {}
+                    for entry in data["data"]:
+                        if isinstance(entry, dict):
+                            ctx = extract_model_context_length(entry)
+                            if ctx is not None:
+                                entry["context_length"] = ctx
+                                entry["max_input_tokens"] = ctx
+                                entry.setdefault("max_tokens", ctx)
+                                m_id = entry.get("id")
+                                if isinstance(m_id, str):
+                                    model_contexts[m_id] = ctx
+
+                    # Dynamic context discovery for routing models based on backend roster targets:
+                    auto_free_ctx = (
+                        model_contexts.get("strata-qwen")
+                        or model_contexts.get("locallama-strata")
+                        or model_contexts.get("gb10-strata")
+                        or model_contexts.get("locallama-qwen")
+                        or model_contexts.get("local-qwen")
+                        or 262144
+                    )
+                    ollama_ctx = (
+                        model_contexts.get("ollama-deepseek-v4-pro")
+                        or model_contexts.get("ollama-deepseek-v4-flash")
+                        or 524288
+                    )
+
                     # Inject llm-routing-* models at the top of the list.
-                    # Auto models (classifier pipeline) first, then direct models.
-                    # Context lengths aligned with downstream model targets:
-                    # - auto-free / auto-agy: 262144 (262K)
-                    # - auto-ollama / auto-agy-ollama / llm-routing-ollama: 524288 (512K)
-                    # - llm-routing-agy: 1048576 (1M)
                     routing_models = [
                         {
                             "id": "llm-routing-auto-free",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
-                            "context_length": 262144,
+                            "context_length": auto_free_ctx,
+                            "max_input_tokens": auto_free_ctx,
+                            "max_tokens": auto_free_ctx,
                         },
                         {
                             "id": "llm-routing-auto-agy",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
-                            "context_length": 262144,
+                            "context_length": auto_free_ctx,
+                            "max_input_tokens": auto_free_ctx,
+                            "max_tokens": auto_free_ctx,
                         },
                         {
                             "id": "llm-routing-auto-ollama",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
-                            "context_length": 524288,
+                            "context_length": ollama_ctx,
+                            "max_input_tokens": ollama_ctx,
+                            "max_tokens": ollama_ctx,
                         },
                         {
                             "id": "llm-routing-auto-agy-ollama",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
-                            "context_length": 524288,
+                            "context_length": ollama_ctx,
+                            "max_input_tokens": ollama_ctx,
+                            "max_tokens": ollama_ctx,
                         },
                         {
                             "id": "llm-routing-ollama",
                             "object": "model",
                             "created": 0,
                             "owned_by": "llm-routing",
-                            "context_length": 524288,
+                            "context_length": ollama_ctx,
+                            "max_input_tokens": ollama_ctx,
+                            "max_tokens": ollama_ctx,
                         },
                     ]
                     for entry in reversed(routing_models):
