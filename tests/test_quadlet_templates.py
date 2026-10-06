@@ -301,6 +301,33 @@ def test_postgres_checkpoint_logging_suppressed():
     assert "ALTER SYSTEM SET log_checkpoints = 'off'" in script
     assert "SELECT pg_reload_conf()" in script
 
+    # Regression #723: psql -c "ALTER SYSTEM ...; SELECT pg_reload_conf()" runs both
+    # statements in ONE implicit transaction block, and ALTER SYSTEM cannot run inside
+    # a transaction — so the tuning silently never applied. Each statement must get its
+    # own -c flag (its own transaction).
+    alter_arg = "-c \"ALTER SYSTEM SET log_checkpoints = 'off'\""
+    reload_arg = '-c "SELECT pg_reload_conf()"'
+    assert script.count(alter_arg) == 1
+    assert script.count(reload_arg) == 1
+    alter_idx = script.index(alter_arg)
+    reload_idx = script.index(reload_arg)
+    assert alter_idx < reload_idx
+    # The two statements must be separate -c arguments, never joined by a semicolon.
+    assert alter_arg + ";" not in script
+    assert "; SELECT pg_reload_conf()" not in script
+
+    # Regression #723: the failure must not be swallowed by `|| true` + `2>&1`;
+    # it must be guarded and surfaced as a warning.
+    guard = 'if ! podman exec "${POD_NAME}-postgres-db" psql'
+    assert guard in script
+    block = script[script.index(guard) : script.index("fi", reload_idx)]
+    assert "|| true" not in block
+    assert "2>&1" not in block
+    assert "Failed to apply log_checkpoints=off" in block
+    # Both statements are -c arguments of that single psql invocation (line continuations).
+    assert block.count("-c ") == 2
+    assert block.count("\\\n") >= 2
+
 
 def test_dev_stack_disabled_by_default_and_stop_command_supported():
     script = (ROOT / "start-stack.sh").read_text()
