@@ -6,13 +6,16 @@ from unittest.mock import AsyncMock, patch, MagicMock
 async def test_get_dashboard_data_structure():
     from router import main
 
+    # Issue #722: dashboard must serve best_free_model from the background cache
+    main.free_model_cache["data"] = {"id": "test-model", "name": "Test Model", "score": 90.0}
+
     # Mocking all I/O and external calls
     with (
         patch("router.main.sync_cooldowns_from_valkey", new_callable=AsyncMock) as mock_sync,
         patch("router.main.check_tcp_port", new_callable=AsyncMock) as mock_tcp,
         patch("router.main.check_http_endpoint", new_callable=AsyncMock) as mock_http,
         patch("router.main.get_gemini_oauth_status", new_callable=AsyncMock) as mock_oauth,
-        patch("router.main.get_best_free_model", new_callable=AsyncMock) as mock_best_model,
+        patch("router.main._fetch_openrouter_free_models") as mock_best_model,
         patch("router.main.get_goose_sessions") as mock_goose,
         patch("router.main.get_llamacpp_metrics", new_callable=AsyncMock) as mock_llamacpp,
         patch("router.main.get_pie_chart_gradient") as mock_gradient,
@@ -23,7 +26,6 @@ async def test_get_dashboard_data_structure():
         mock_tcp.return_value = True
         mock_http.return_value = True
         mock_oauth.return_value = {"status": "valid", "detail": "Expires in 1h", "expiry_ms": 123456789}
-        mock_best_model.return_value = {"id": "test-model", "name": "Test Model", "score": 90.0}
         mock_goose.return_value = [
             {"id": 1, "name": "Session 1", "updated_at": "2023-01-01", "accumulated_total_tokens": 100}
         ]
@@ -65,12 +67,14 @@ async def test_get_dashboard_data_structure():
         assert "tier_data" in data
         assert "goose_sessions" in data
         assert "llamacpp" in data
+        assert data["best_free_model"]["id"] == "test-model"
 
         # Verify that expected mocks were called (at least once)
         assert mock_sync.called
         assert mock_tcp.called
         assert mock_http.called
         assert mock_oauth.called
-        assert mock_best_model.called
+        # Issue #722: the dashboard path must never hit OpenRouter
+        mock_best_model.assert_not_called()
         assert mock_goose.called
         assert mock_llamacpp.called

@@ -23,6 +23,7 @@ async def test_lifespan_happy_path():
         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models,
         patch("router.main.push_aggregate_scores", new_callable=AsyncMock) as mock_push_scores,
         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock) as mock_cleanup,
+        patch("router.main._periodic_best_free_model_refresh", new_callable=AsyncMock),
         patch("asyncio.sleep", new_callable=AsyncMock),
         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
     ):
@@ -50,6 +51,7 @@ async def test_lifespan_timeout_path():
         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models,
         patch("router.main.push_aggregate_scores", new_callable=AsyncMock),
         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock),
+        patch("router.main._periodic_best_free_model_refresh", new_callable=AsyncMock),
         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         patch("router.main.logger.warning") as mock_warning,
         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
@@ -78,6 +80,7 @@ async def test_lifespan_disabled_timeout_path():
         patch("router.main.ModelRegistrySync.sync_all_models", new_callable=AsyncMock) as mock_sync_models,
         patch("router.main.push_aggregate_scores", new_callable=AsyncMock),
         patch("router.main._periodic_triage_cache_cleanup", new_callable=AsyncMock),
+        patch("router.main._periodic_best_free_model_refresh", new_callable=AsyncMock),
         patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         patch("router.main.logger.info") as mock_info,
         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key", "LITELLM_READINESS_TIMEOUT": "0"}),

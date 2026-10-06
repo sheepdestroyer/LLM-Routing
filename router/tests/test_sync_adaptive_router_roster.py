@@ -68,7 +68,7 @@ async def test_sync_adaptive_router_roster_happy_path():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call
-        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
+        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=15.0)
 
         # Verify purge was called
         mock_purge.assert_called_once_with("postgresql://test:test@localhost:5432/testdb", "agent-%")
@@ -108,7 +108,7 @@ async def test_sync_adaptive_router_roster_openrouter_failure():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call was made
-        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
+        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=15.0)
 
         # Verify litellm post was not called
         assert mock_client_instance.post.call_count == 0
@@ -153,7 +153,7 @@ async def test_sync_adaptive_router_roster_no_free_models():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call
-        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
+        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=15.0)
 
         # Verify litellm post was not called
         assert mock_client_instance.post.call_count == 0
@@ -223,7 +223,7 @@ async def test_sync_adaptive_router_roster_denylist_and_internal_ids():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call
-        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
+        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=15.0)
 
         # Verify litellm post was not called
         assert mock_client_instance.post.call_count == 0
@@ -257,7 +257,7 @@ async def test_sync_adaptive_router_roster_exception():
         await main.sync_adaptive_router_roster("test_key")
 
         # Verify openrouter call
-        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=5.0)
+        mock_client_instance.get.assert_called_with("https://openrouter.ai/api/v1/models", timeout=15.0)
 
         # Verify warning was logged
         mock_warning.assert_called_with("Failed to fetch OpenRouter models: Test Exception")

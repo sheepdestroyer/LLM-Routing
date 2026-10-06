@@ -1751,10 +1751,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Langfuse model registration failed (non-fatal): {e}")
 
-    # Start background task before yield so it runs during app lifetime
+    # Start background tasks before yield so they run during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
     cache_cleanup_task = asyncio.create_task(_periodic_triage_cache_cleanup())
     model_sync_task = asyncio.create_task(_periodic_model_sync())
+    # Issue #722: refresh best free model off the request path (every 15 minutes)
+    best_free_task = asyncio.create_task(_periodic_best_free_model_refresh())
 
     try:
         yield
@@ -1763,6 +1765,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
         cache_cleanup_task.cancel()
         model_sync_task.cancel()
+        best_free_task.cancel()
         try:
             await task
         except asyncio.CancelledError:
@@ -1773,6 +1776,10 @@ async def lifespan(app: FastAPI):
             pass
         try:
             await model_sync_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await best_free_task
         except asyncio.CancelledError:
             pass
 
@@ -2382,9 +2389,21 @@ async def get_llamacpp_metrics(force_refresh: bool = False) -> dict:
     return result
 
 
-# In-Memory Cache for OpenRouter Free Model list to prevent slow page renders
+# In-Memory Cache for OpenRouter Free Model list, refreshed by a background task (issue #722).
+# The /dashboard path only ever reads this cache — it never blocks on OpenRouter.
 free_model_cache: dict[str, Any] = {"data": None, "last_fetched": 0.0}
-FREE_MODEL_CACHE_TTL = 3600  # Refresh cache every 1 hour
+FREE_MODEL_REFRESH_INTERVAL = 900  # Background refresh every 15 minutes
+OPENROUTER_MODELS_TIMEOUT = 15.0  # Realistic budget for the ~775 KB OpenRouter models payload
+
+# Hardcoded fallback used ONLY while the cache is empty (e.g. first run before the
+# background refresh task's first completion) — never while last-known-good data exists.
+_FALLBACK_BEST_FREE_MODEL: dict[str, Any] = {
+    "id": "moonshotai/kimi-k2.6:free",
+    "name": "MoonshotAI: Kimi K2.6 (free)",
+    "score": 82.5,
+    "context_length": 131072,
+    "is_fallback": True,
+}
 
 _registered_free_models: dict[str, set[str]] = {}
 _last_roster_sync: float = 0.0
@@ -2423,7 +2442,7 @@ async def _fetch_openrouter_free_models() -> list[dict]:
         await asyncio.to_thread(_load_aa_scores)
     try:
         client = get_http_client()
-        r = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
+        r = await client.get("https://openrouter.ai/api/v1/models", timeout=OPENROUTER_MODELS_TIMEOUT)
         if r.status_code != 200:
             logger.warning(f"OpenRouter models API returned {r.status_code}")
             return []
@@ -2516,56 +2535,79 @@ def _save_best_model_to_disk(best_model: dict) -> None:
 
 
 async def get_best_free_model() -> dict:
-    """Fetches currently free models from OpenRouter, matches against agentic scores, and returns the highest."""
-    global free_model_cache
-    now = time.time()
+    """Return the best free model from the background-refreshed cache (issue #722).
 
-    # Check if cache is still valid
-    if free_model_cache["data"] and (now - free_model_cache["last_fetched"] < FREE_MODEL_CACHE_TTL):
-        await asyncio.to_thread(_save_best_model_to_disk, free_model_cache["data"])
+    Pure cache read — never calls OpenRouter, so the /dashboard gather can never
+    block on it. Serves last-known-good data; the hardcoded fallback is returned
+    only while the cache is still empty (first run before the background refresh
+    task's first completion).
+    """
+    if free_model_cache["data"]:
+        return free_model_cache["data"]
+    return dict(_FALLBACK_BEST_FREE_MODEL)
+
+
+async def _refresh_best_free_model() -> dict:
+    """Fetch free models from OpenRouter and update the cache + disk files (issue #722).
+
+    On timeout/error the last-known-good cache is kept and only ONE warning is
+    logged for the whole cycle (no per-dashboard-poll spam). The hardcoded
+    fallback is persisted to disk only when the cache is empty (e.g. first run).
+    """
+    free_models_data = await _fetch_openrouter_free_models()
+    if free_models_data:
+        all_free = [
+            {
+                "id": m["id"],
+                "name": m["name"],
+                "score": m["score"],
+                "context_length": m["context_length"],
+                "has_tools": m["has_tools"],
+            }
+            for m in free_models_data
+        ]
+        await asyncio.to_thread(_save_free_models_roster, all_free)
+
+        top = free_models_data[0]
+        best_model = {
+            "id": top["id"],
+            "name": top["name"],
+            "score": top["score"],
+            "context_length": top["context_length"],
+            "is_fallback": False,
+        }
+        free_model_cache["data"] = best_model
+        free_model_cache["last_fetched"] = time.time()
+        logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
+        await asyncio.to_thread(_save_best_model_to_disk, best_model)
+        return best_model
+
+    if free_model_cache["data"]:
+        # The fetch failure itself was already logged once by _fetch_openrouter_free_models
+        logger.debug("Best free model refresh returned no models — serving last-known-good cache")
         return free_model_cache["data"]
 
-    fallback_best = {
-        "id": "moonshotai/kimi-k2.6:free",
-        "name": "MoonshotAI: Kimi K2.6 (free)",
-        "score": 82.5,
-        "context_length": 131072,
-        "is_fallback": True,
-    }
+    logger.warning("Best free model refresh returned no models and cache is empty — using hardcoded fallback")
+    await asyncio.to_thread(_save_best_model_to_disk, dict(_FALLBACK_BEST_FREE_MODEL))
+    return dict(_FALLBACK_BEST_FREE_MODEL)
 
-    try:
-        free_models_data = await _fetch_openrouter_free_models()
-        if free_models_data:
-            all_free = [
-                {
-                    "id": m["id"],
-                    "name": m["name"],
-                    "score": m["score"],
-                    "context_length": m["context_length"],
-                    "has_tools": m["has_tools"],
-                }
-                for m in free_models_data
-            ]
-            await asyncio.to_thread(_save_free_models_roster, all_free)
 
-            top = free_models_data[0]
-            best_model = {
-                "id": top["id"],
-                "name": top["name"],
-                "score": top["score"],
-                "context_length": top["context_length"],
-                "is_fallback": False,
-            }
-            free_model_cache["data"] = best_model
-            free_model_cache["last_fetched"] = now
-            logger.info(f"🏆 Top free agentic model resolved: {best_model['id']} with score {best_model['score']}")
-            await asyncio.to_thread(_save_best_model_to_disk, best_model)
-            return best_model
-    except Exception as e:
-        logger.warning(f"Failed to query live OpenRouter models API for Agentic Index: {e}")
+async def _periodic_best_free_model_refresh():
+    """Background task refreshing the best free model cache every 15 minutes (issue #722).
 
-    await asyncio.to_thread(_save_best_model_to_disk, fallback_best)
-    return fallback_best
+    Fetches immediately at startup so /dashboard and Ralph get real data as soon
+    as possible, then repeats on the interval. Failures are logged at most once
+    per cycle by _refresh_best_free_model — never per dashboard poll.
+    """
+    while True:
+        try:
+            await _refresh_best_free_model()
+            await asyncio.sleep(FREE_MODEL_REFRESH_INTERVAL)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Best free model refresh cycle error: {e}")
+            await asyncio.sleep(FREE_MODEL_REFRESH_INTERVAL)
 
 
 def get_pie_chart_gradient() -> str:
@@ -4103,7 +4145,6 @@ async def get_dashboard_data():
         llama_server_status,
         langfuse_status,
         oauth_status,
-        best_free_model,
         goose_sessions,
         llamacpp,
     ) = await asyncio.gather(
@@ -4114,11 +4155,14 @@ async def get_dashboard_data():
         asyncio.wait_for(_check_llama_health(), timeout=3.0),
         check_http_endpoint(f"http://127.0.0.1:{os.getenv('LANGFUSE_WEB_PORT') or '3001'}"),
         get_gemini_oauth_status(),
-        asyncio.wait_for(get_best_free_model(), timeout=5.0),
         asyncio.to_thread(get_goose_sessions),
         asyncio.wait_for(get_llamacpp_metrics(), timeout=5.0),
         return_exceptions=True,
     )
+
+    # Issue #722: serve the best free model from the background-refreshed cache —
+    # never fetched inline, so /dashboard can never block on OpenRouter.
+    best_free_model = await get_best_free_model()
 
     # Coerce exceptions to safe defaults if any task failed/timed out, and log failures
     if isinstance(valkey_status, Exception):
@@ -4140,10 +4184,6 @@ async def get_dashboard_data():
     if isinstance(oauth_status, Exception):
         logger.warning(f"Gemini OAuth status check failed: {oauth_status}")
         oauth_status = {"status": "error", "detail": "Check failed", "expiry_ms": 0}
-
-    if isinstance(best_free_model, Exception):
-        logger.warning(f"Best free model fetch failed: {best_free_model}")
-        best_free_model = {"id": "error", "name": "Error fetching model", "score": 0.0}
 
     if isinstance(goose_sessions, Exception):
         logger.error(f"Failed to query goose sessions asynchronously: {goose_sessions}")
