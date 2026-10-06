@@ -27,8 +27,10 @@ from router.main import (
     _get_router_output_dir,
     _make_prop_ctx,
     _parse_oauth_token_info,
+    _periodic_best_free_model_refresh,
     _periodic_model_sync,
     _periodic_triage_cache_cleanup,
+    _refresh_best_free_model,
     _read_annotations_async,
     _register_ollama_models_in_db,
     _resolve_llama_endpoints,
@@ -463,6 +465,7 @@ async def test_lifespan_error_branches():
         patch("router.main.push_aggregate_scores", new=AsyncMock()),
         patch("router.main._periodic_triage_cache_cleanup", new=AsyncMock()),
         patch("router.main._periodic_model_sync", new=AsyncMock()),
+        patch("router.main._periodic_best_free_model_refresh", new=AsyncMock()),
         patch("router.main.ModelRegistrySync.sync_all_models", side_effect=RuntimeError("sync fail")),
         patch("router.main.sync_adaptive_router_roster", side_effect=RuntimeError("roster fail")),
         patch("router.main._register_langfuse_models_in_db", side_effect=RuntimeError("langfuse fail")),
@@ -717,14 +720,21 @@ async def test_get_best_free_model_branches():
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
 
-    # get_best_free_model cache hit
+    # get_best_free_model serves last-known-good cache without any OpenRouter call (issue #722)
     rm.free_model_cache["data"] = {"id": "cached-model", "score": 90.0}
     rm.free_model_cache["last_fetched"] = time.time()
-    with patch("router.main._save_best_model_to_disk"):
+    with patch("router.main._fetch_openrouter_free_models") as mock_no_fetch:
         best = await get_best_free_model()
         assert best["id"] == "cached-model"
+        mock_no_fetch.assert_not_called()
 
-    # get_best_free_model fresh fetch success
+    # get_best_free_model returns hardcoded fallback only when cache is empty
+    rm.free_model_cache["data"] = None
+    best_empty = await get_best_free_model()
+    assert best_empty["is_fallback"] is True
+    assert best_empty["id"] == "moonshotai/kimi-k2.6:free"
+
+    # _refresh_best_free_model fresh fetch success populates cache
     rm.free_model_cache["data"] = None
     mock_models = [
         {"id": "fresh-1", "name": "Fresh 1", "score": 85.0, "context_length": 100000, "has_tools": True},
@@ -734,17 +744,29 @@ async def test_get_best_free_model_branches():
         patch("router.main._save_free_models_roster"),
         patch("router.main._save_best_model_to_disk"),
     ):
-        best_fresh = await get_best_free_model()
+        best_fresh = await _refresh_best_free_model()
         assert best_fresh["id"] == "fresh-1"
+        assert rm.free_model_cache["data"]["id"] == "fresh-1"
 
-    # get_best_free_model exception -> fallback
+    # _refresh_best_free_model empty fetch + empty cache -> hardcoded fallback
     rm.free_model_cache["data"] = None
     with (
-        patch("router.main._fetch_openrouter_free_models", side_effect=RuntimeError("openrouter down")),
-        patch("router.main._save_best_model_to_disk"),
+        patch("router.main._fetch_openrouter_free_models", return_value=[]),
+        patch("router.main._save_best_model_to_disk") as mock_disk_fb,
     ):
-        best_fallback = await get_best_free_model()
+        best_fallback = await _refresh_best_free_model()
         assert best_fallback["is_fallback"] is True
+        mock_disk_fb.assert_called_once()
+
+    # _refresh_best_free_model empty fetch + populated cache -> keep last-known-good, no disk write
+    rm.free_model_cache["data"] = {"id": "lkg-model", "score": 77.0, "is_fallback": False}
+    with (
+        patch("router.main._fetch_openrouter_free_models", return_value=[]),
+        patch("router.main._save_best_model_to_disk") as mock_disk_lkg,
+    ):
+        best_lkg = await _refresh_best_free_model()
+        assert best_lkg["id"] == "lkg-model"
+        mock_disk_lkg.assert_not_called()
 
     # get_pie_chart_gradient when gradient_parts is empty
     rm.stats["tool_tokens"] = {"tree": -5}
@@ -1372,17 +1394,20 @@ async def test_metrics_endpoint():
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_dashboard_and_resolve_external_urls_branches():
+    import router.main as rm
+
     mock_tasks = [
         RuntimeError("valkey down"),
         RuntimeError("litellm down"),
         RuntimeError("llama down"),
         RuntimeError("langfuse down"),
         RuntimeError("oauth down"),
-        RuntimeError("model down"),
         RuntimeError("goose down"),
         RuntimeError("llamacpp down"),
     ]
 
+    # Issue #722: dashboard serves best_free_model from the background cache
+    rm.free_model_cache["data"] = {"id": "bg-cached-model", "score": 91.0, "is_fallback": False}
     with (
         patch("router.main.sync_stats_from_valkey", new=AsyncMock()),
         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
@@ -1390,16 +1415,17 @@ async def test_dashboard_and_resolve_external_urls_branches():
         patch("router.main.check_http_endpoint", side_effect=mock_tasks[1:3]),
         patch("router.main._check_llama_health", side_effect=mock_tasks[2:3]),
         patch("router.main.get_gemini_oauth_status", side_effect=mock_tasks[4:5]),
-        patch("router.main.get_best_free_model", side_effect=mock_tasks[5:6]),
-        patch("router.main.get_goose_sessions", side_effect=mock_tasks[6:7]),
-        patch("router.main.get_llamacpp_metrics", side_effect=mock_tasks[7:8]),
+        patch("router.main._fetch_openrouter_free_models") as mock_no_or,
+        patch("router.main.get_goose_sessions", side_effect=mock_tasks[5:6]),
+        patch("router.main.get_llamacpp_metrics", side_effect=mock_tasks[6:7]),
         patch("os.path.exists", return_value=False),
     ):
         data = await get_dashboard_data()
         assert data["valkey_status"] is False
         assert data["litellm_status"] is False
         assert data["oauth_status"]["status"] == "error"
-        assert data["best_free_model"]["id"] == "error"
+        assert data["best_free_model"]["id"] == "bg-cached-model"
+        mock_no_or.assert_not_called()
 
     roster_json = json.dumps(
         {
@@ -1560,6 +1586,7 @@ async def test_coverage_final_gaps():
         patch("router.main.push_aggregate_scores", new=AsyncMock()),
         patch("router.main._periodic_triage_cache_cleanup", new=AsyncMock()),
         patch("router.main._periodic_model_sync", new=AsyncMock()),
+        patch("router.main._periodic_best_free_model_refresh", new=AsyncMock()),
         patch("asyncio.sleep", new=AsyncMock()),
         patch("router.main.ModelRegistrySync.sync_all_models", new=AsyncMock()),
         patch("router.main.sync_adaptive_router_roster", new=AsyncMock()),
@@ -1602,17 +1629,9 @@ async def test_coverage_final_gaps():
         # Call immediately again to hit throttle branch (2178->2185)
         record_tool_usage(u_rec)
 
-    # 9. _get_router_output_dir (2424->2426) & get_best_free_model empty models (2482->2511)
+    # 9. _get_router_output_dir (2424->2426)
     with patch("router.main.CONFIG_PATH", "config.yaml"):
         assert _get_router_output_dir() == "/config/router_dir"
-
-    rm.free_model_cache["data"] = None
-    with (
-        patch("router.main._fetch_openrouter_free_models", return_value=[]),
-        patch("router.main._save_best_model_to_disk"),
-    ):
-        best_empty = await get_best_free_model()
-        assert best_empty["is_fallback"] is True
 
     # 10. proxy_models non-200 (2712->2766) and 200 without data key (2715->2766)
     mock_m_client = AsyncMock()
@@ -2038,7 +2057,7 @@ async def test_coverage_final_gaps():
 
     # 14. get_dashboard_data total_routed == 0 (line 4052->4073)
     rm.stats["routing_paths"] = {"google_oauth_direct": 0, "litellm_fallback": 0}
-    with patch("router.main.get_best_free_model", return_value={"id": "m1"}):
+    with patch("router.main.get_best_free_model", new=AsyncMock(return_value={"id": "m1"})):
         d_data = await get_dashboard_data()
         assert d_data["routing_pie_gradient"] == "background: rgba(255, 255, 255, 0.05);"
 
