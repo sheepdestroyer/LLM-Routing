@@ -290,6 +290,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `store_type: "postgres"` — pgvector extension on the local PostgreSQL instance
   - `embedding_model: "local-nomic-embed"` — uses the local nomic-embed model (no API costs)
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
+- **Gemini delegation fallbacks**: `agy-gemini` → `strata-qwen` → `locallama-qwen` (canonical local Qwen model). This chain is local-only after Gemini: no Opus, free-tier groups, Ollama, or OpenRouter fallback. The `agy-gemini-sse` and other model chains remain unchanged.
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
   Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
