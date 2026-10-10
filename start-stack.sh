@@ -226,6 +226,8 @@ if [ -z "$ACTIVE_OAUTH" ]; then
 fi
 
 # Ensure host agy daemon systemd service is installed and updated
+# The single shared daemon belongs to production; dev must never retarget/restart it.
+if [ "$QUADLET_NAMESPACE" = "llm-routing-prod" ]; then
 AGY_SERVICE_FILE="${HOME}/.config/systemd/user/agy-daemon.service"
 AGY_DAEMON_SCRIPT="${WORKDIR}/scripts/host_agy_daemon.py"
 
@@ -269,6 +271,9 @@ if systemctl --user is-active --quiet agy-daemon.service 2>/dev/null; then
 else
     echo "⚠️  Warning: Host agy daemon is not running. Starting it..."
     systemctl --user start agy-daemon.service --no-pager 2>/dev/null || echo "⚠️  Failed to start agy daemon"
+fi
+else
+    echo "ℹ️  Dev uses the existing shared agy daemon; service management is production-only."
 fi
 
 # Verify daemon is responsive

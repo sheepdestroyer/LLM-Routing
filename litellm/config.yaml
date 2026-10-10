@@ -78,19 +78,17 @@ litellm_settings:
     - ollama-deepseek-v4-pro
     - openrouter-auto
   - agy-gemini:
-    - agy-opus
-    - agent-advanced-core
-    - ollama-deepseek-v4-pro
-    - openrouter-auto
+    - strata-qwen
+    - locallama-qwen
   - agy-gemini-sse:
     - agy-opus-sse
     - agent-advanced-core
     - ollama-deepseek-v4-pro
     - openrouter-auto
   - agy-opus:
-    - agent-advanced-core
-    - ollama-deepseek-v4-pro
-    - openrouter-auto
+    - agy-gemini
+    - strata-qwen
+    - locallama-qwen
   - agy-opus-sse:
     - agent-advanced-core
     - ollama-deepseek-v4-pro
