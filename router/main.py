@@ -33,8 +33,10 @@ try:
 except ImportError:  # pragma: no cover
     from circuit_breaker import get_breaker  # type: ignore[no-redef]
 try:
+    from router.model_metadata import OpenRouterMetadataSync
     from router.model_sync import ModelRegistrySync
 except ImportError:  # pragma: no cover
+    from model_metadata import OpenRouterMetadataSync  # type: ignore[no-redef]
     from model_sync import ModelRegistrySync  # type: ignore[no-redef]
 from typing import Any, Literal
 
@@ -1032,8 +1034,6 @@ async def sync_adaptive_router_roster(master_key: str):
         return
 
     free_models = [(m["score"], m["id"]) for m in tool_capable_models]
-    model_contexts = {m["id"]: m["context_length"] for m in tool_capable_models}
-    model_supported_params = {m["id"]: m["supported_parameters"] for m in tool_capable_models}
 
     tier_assignments: dict[str, Any] = {
         "agent-simple-core": [],
@@ -1102,20 +1102,10 @@ async def sync_adaptive_router_roster(master_key: str):
     sem = asyncio.Semaphore(10)
 
     async def _register_tier_deployment(tier_name: str, mid: str) -> bool:
-        ctx_len = model_contexts.get(mid, 262144)
-        sp = model_supported_params.get(mid, [])
         payload = {
             "model_name": tier_name,
             "litellm_params": {"model": f"openrouter/{mid}", "request_timeout": 20},
-            "model_info": {
-                "supports_vision": "vision" in sp,
-                "supports_reasoning": True,
-                "supports_function_calling": "tools" in sp,
-                "mode": "chat",
-                "max_tokens": ctx_len,
-                "max_input_tokens": ctx_len,
-                "is_public_model_group": True,
-            },
+            "model_info": {"is_public_model_group": True},
         }
         async with sem:
             try:
@@ -1204,15 +1194,7 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "model": "openrouter/openrouter/auto",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "mode": "chat",
-                    "max_tokens": 2000000,
-                    "max_input_tokens": 2000000,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
             {
                 "model_name": "openrouter-gpt-5.6-luna",
@@ -1222,17 +1204,7 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "reasoning_effort": "max",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
             {
                 "model_name": "openrouter-gpt-5.6-luna-max",
@@ -1242,17 +1214,7 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "reasoning_effort": "max",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
             {
                 "model_name": "gpt-5.6-luna",
@@ -1262,17 +1224,7 @@ async def _register_openrouter_models_in_db(master_key: str):
                     "reasoning_effort": "max",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
         ]
 
@@ -1658,6 +1610,52 @@ async def _register_langfuse_models_in_db(max_retries: int = 5, retry_delay: flo
     return False
 
 
+_metadata_sync: OpenRouterMetadataSync | None = None
+_metadata_sync_config: tuple[str, str] | None = None
+
+
+def _get_metadata_sync(master_key: str) -> OpenRouterMetadataSync:
+    """Reuse one lock/catalog per app lifetime; configuration changes require restart."""
+    global _metadata_sync, _metadata_sync_config
+    config = (LITELLM_URL.rstrip("/"), master_key)
+    if _metadata_sync is None:
+        _metadata_sync = OpenRouterMetadataSync(LITELLM_URL, master_key, client=get_http_client())
+        _metadata_sync_config = config
+    elif _metadata_sync_config != config:
+        raise RuntimeError("Metadata sync configuration changed; restart required")
+    return _metadata_sync
+
+
+async def _close_metadata_sync() -> None:
+    global _metadata_sync, _metadata_sync_config
+    if _metadata_sync is not None:
+        try:
+            await _metadata_sync.aclose()
+        except Exception as exc:
+            logger.warning("Metadata sync close failed (%s)", type(exc).__name__)
+        finally:
+            _metadata_sync = None
+            _metadata_sync_config = None
+
+
+async def _periodic_model_metadata_sync():
+    """Scan deployments every 60s; the reconciler caches the catalog for one hour.
+
+    This is eventual refresh, not an atomic Admin-UI save hook. Legacy non-null
+    fields remain overrides/adoption-needed; no implicit ownership migration.
+    """
+    while True:
+        try:
+            await asyncio.sleep(60)
+            master_key = os.getenv("LITELLM_MASTER_KEY", "")
+            if master_key:
+                await _get_metadata_sync(master_key).reconcile()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Periodic model metadata sync failed (%s)", type(exc).__name__)
+
+
 async def _periodic_model_sync():
     """Background task running every 3600s to auto-discover upstream model upgrades."""
     while True:
@@ -1751,10 +1749,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Langfuse model registration failed (non-fatal): {e}")
 
+    # Run after every startup registration, without delaying/involving completions.
+    if is_ready and litellm_master_key:
+        try:
+            await _get_metadata_sync(litellm_master_key).reconcile()
+        except Exception as exc:
+            logger.warning("Startup model metadata sync failed (%s)", type(exc).__name__)
+
     # Start background tasks before yield so they run during app lifetime
     task = asyncio.create_task(push_aggregate_scores())
     cache_cleanup_task = asyncio.create_task(_periodic_triage_cache_cleanup())
     model_sync_task = asyncio.create_task(_periodic_model_sync())
+    metadata_sync_task = asyncio.create_task(_periodic_model_metadata_sync())
     # Issue #722: refresh best free model off the request path (every 15 minutes)
     best_free_task = asyncio.create_task(_periodic_best_free_model_refresh())
 
@@ -1765,6 +1771,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
         cache_cleanup_task.cancel()
         model_sync_task.cancel()
+        metadata_sync_task.cancel()
         best_free_task.cancel()
         try:
             await task
@@ -1782,6 +1789,12 @@ async def lifespan(app: FastAPI):
             await best_free_task
         except asyncio.CancelledError:
             pass
+
+        try:
+            await metadata_sync_task
+        except asyncio.CancelledError:
+            pass
+        await _close_metadata_sync()
 
         # Close shared HTTPX client
         global _http_client
@@ -4702,32 +4715,54 @@ async def save_annotations(payload: AnnotationPayload, request: Request):
         raise HTTPException(status_code=500, detail="Failed to save annotations") from e
 
 
-@app.post("/admin/sync-models")
-async def admin_sync_models(request: Request):
-    """Trigger on-demand synchronization and deduplication of LiteLLM DB models."""
+async def _authenticate_admin_request(request: Request) -> None:
+    """Require an explicitly configured admin secret, even with no admin keys."""
     token = await _authenticate_client_request(request)
     admin_keys = {k.strip() for k in [os.getenv("ROUTER_API_KEY"), os.getenv("LITELLM_MASTER_KEY")] if k}
-    if admin_keys and token not in admin_keys:
+    if token not in admin_keys:
         raise HTTPException(status_code=403, detail="Admin privilege required")
 
+
+@app.get("/admin/model-metadata/status")
+async def admin_model_metadata_status(request: Request):
+    """Read cached sanitized status without fetching the catalog or writing state."""
+    await _authenticate_admin_request(request)
+    return JSONResponse({"status": "ok", "metadata": _metadata_sync.get_status() if _metadata_sync else {}})
+
+
+@app.post("/admin/sync-models")
+async def admin_sync_models(
+    request: Request, metadata_only: bool = False, dry_run: bool = False, force_catalog_refresh: bool = False
+):
+    """Sync managed models plus metadata; dry_run always bypasses registry writes.
+
+    Flags are explicit query parameters. Legacy result keys remain unchanged;
+    metadata reports are additive. Dry-run reads deployments/catalog only.
+    """
+    await _authenticate_admin_request(request)
     litellm_master_key = os.getenv("LITELLM_MASTER_KEY", "")
     if not litellm_master_key:
         raise HTTPException(status_code=500, detail="LiteLLM master key not configured")
-    whisper_url = os.getenv("WHISPER_SERVER_URL", "http://127.0.0.1:8084")
-    classifier_url = os.getenv("LLAMA_CLASSIFIER_URL", "http://127.0.0.1:8086")
-    agy_url = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005")
-    sync_engine = ModelRegistrySync(
-        litellm_url=LITELLM_URL,
-        master_key=litellm_master_key,
-        agy_daemon_url=agy_url,
-        llama_server_url=LLAMA_SERVER_URL,
-        whisper_server_url=whisper_url,
-        classifier_url=classifier_url,
-        strata_server_url=STRATA_SERVER_URL,
-        client=get_http_client(),
+    res = dict.fromkeys(("pruned_duplicates", "removed_stale", "created", "updated", "unchanged", "failed"), 0)
+    if not metadata_only and not dry_run:
+        whisper_url = os.getenv("WHISPER_SERVER_URL", "http://127.0.0.1:8084")
+        classifier_url = os.getenv("LLAMA_CLASSIFIER_URL", "http://127.0.0.1:8086")
+        agy_url = os.getenv("AGY_DAEMON_URL", "http://127.0.0.1:5005")
+        sync_engine = ModelRegistrySync(
+            litellm_url=LITELLM_URL,
+            master_key=litellm_master_key,
+            agy_daemon_url=agy_url,
+            llama_server_url=LLAMA_SERVER_URL,
+            whisper_server_url=whisper_url,
+            classifier_url=classifier_url,
+            strata_server_url=STRATA_SERVER_URL,
+            client=get_http_client(),
+        )
+        res = await sync_engine.sync_all_models()
+    metadata = await _get_metadata_sync(litellm_master_key).reconcile(
+        dry_run=dry_run, force_catalog_refresh=force_catalog_refresh
     )
-    res = await sync_engine.sync_all_models()
-    return JSONResponse({"status": "ok", "results": res})
+    return JSONResponse({"status": "ok", "results": res, "metadata": metadata})
 
 
 if __name__ == "__main__":  # pragma: no cover
