@@ -434,6 +434,7 @@ async def test_lifespan_error_branches():
     with (
         patch.dict("os.environ", {"LITELLM_MASTER_KEY": "test-key"}),
         patch("asyncio.sleep", side_effect=fake_sleep),
+        patch("router.main._get_metadata_sync", return_value=AsyncMock()),
         patch("router.main.ModelRegistrySync.sync_all_models", side_effect=RuntimeError("sync fail")),
     ):
         await _periodic_model_sync()
@@ -464,8 +465,10 @@ async def test_lifespan_error_branches():
         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
         patch("router.main.push_aggregate_scores", new=AsyncMock()),
         patch("router.main._periodic_triage_cache_cleanup", new=AsyncMock()),
+        patch("router.main._periodic_model_metadata_sync", new=AsyncMock()),
         patch("router.main._periodic_model_sync", new=AsyncMock()),
         patch("router.main._periodic_best_free_model_refresh", new=AsyncMock()),
+        patch("router.main._get_metadata_sync", return_value=AsyncMock()),
         patch("router.main.ModelRegistrySync.sync_all_models", side_effect=RuntimeError("sync fail")),
         patch("router.main.sync_adaptive_router_roster", side_effect=RuntimeError("roster fail")),
         patch("router.main._register_langfuse_models_in_db", side_effect=RuntimeError("langfuse fail")),
@@ -1585,9 +1588,11 @@ async def test_coverage_final_gaps():
         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
         patch("router.main.push_aggregate_scores", new=AsyncMock()),
         patch("router.main._periodic_triage_cache_cleanup", new=AsyncMock()),
+        patch("router.main._periodic_model_metadata_sync", new=AsyncMock()),
         patch("router.main._periodic_model_sync", new=AsyncMock()),
         patch("router.main._periodic_best_free_model_refresh", new=AsyncMock()),
         patch("asyncio.sleep", new=AsyncMock()),
+        patch("router.main._get_metadata_sync", return_value=AsyncMock()),
         patch("router.main.ModelRegistrySync.sync_all_models", new=AsyncMock()),
         patch("router.main.sync_adaptive_router_roster", new=AsyncMock()),
         patch("router.main._register_langfuse_models_in_db", new=AsyncMock()),
