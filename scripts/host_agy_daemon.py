@@ -375,7 +375,8 @@ def refresh_host_login() -> None:
         scratch_token = os.path.join(scratch, ".gemini", "antigravity-cli", "antigravity-oauth-token")
         write_private_atomic(scratch_token, json.dumps(doctored))
         try:
-            result = subprocess.run(
+            # Fixed argv list (constant binary path and argument), no shell: nothing client-controlled.
+            result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
                 [AGY_BINARY, "models"],
                 env=spawn_env("", "deny", scratch, home=scratch),
                 cwd=scratch,
@@ -461,7 +462,8 @@ def record_login(verified: bool, detail: str, models: int = 0) -> None:
 def run_agy_models(timeout: float = LIVE_CHECK_TIMEOUT) -> tuple[int, str]:
     """``agy models`` in the daemon HOME and a private workspace: (returncode, stdout)."""
     with run_workspace(False) as (work, tmp):
-        result = subprocess.run(
+        # Fixed argv list (constant binary path and argument), no shell: nothing client-controlled.
+        result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             [AGY_BINARY, "models"],
             env=spawn_env("", "deny", tmp),
             cwd=work,
