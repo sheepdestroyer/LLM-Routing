@@ -198,6 +198,21 @@ def prepare_home() -> None:
     prune_conversation_cache()
 
 
+def prune_when_idle() -> bool:
+    """Prune the conversation cache only while no agy runs (agy rewrites that file at run end)."""
+    taken = 0
+    try:
+        while taken < MAX_CONCURRENT and SPAWN_SLOTS.acquire(blocking=False):
+            taken += 1
+        if taken < MAX_CONCURRENT:
+            return False
+        prune_conversation_cache()
+        return True
+    finally:
+        for _ in range(taken):
+            SPAWN_SLOTS.release()
+
+
 def prune_conversation_cache() -> None:
     """Drop agy's last-conversation entries for run workspaces that no longer exist."""
     try:
@@ -438,7 +453,8 @@ def _sync_auth(need: float, background: bool) -> str:
 def record_login(verified: bool, detail: str, models: int = 0) -> None:
     """Store the outcome of a live login check."""
     with _LOGIN_LOCK:
-        LOGIN_STATE.update({"verified": verified, "checked_at": time.time(), "detail": detail, "models": models})
+        count = models if models or not verified else LOGIN_STATE.get("models", 0)
+        LOGIN_STATE.update({"verified": verified, "checked_at": time.time(), "detail": detail, "models": count})
 
 
 def run_agy_models(timeout: float = LIVE_CHECK_TIMEOUT) -> tuple[int, str]:
@@ -457,10 +473,10 @@ def run_agy_models(timeout: float = LIVE_CHECK_TIMEOUT) -> tuple[int, str]:
 
 def live_login_check() -> bool:
     """Verify the login with a live ``agy models`` call; skipped (False) when every slot is busy."""
+    # Proactive refresh, before taking a slot: keep the login valid until the next check.
+    ensure_auth(min(MAX_TOKEN_NEED_SEC, 2 * LIVE_CHECK_INTERVAL), background=True)
     try:
         with spawn_slot(timeout=5.0):
-            # Proactive: keep the login valid for the longest run, off the request path.
-            ensure_auth(MAX_TOKEN_NEED_SEC, background=True)
             try:
                 returncode, stdout = run_agy_models()
             except (OSError, subprocess.SubprocessError) as exc:
@@ -481,7 +497,7 @@ def live_check_loop(stop: threading.Event, interval: float) -> None:
     while True:
         try:
             live_login_check()
-            prune_conversation_cache()
+            prune_when_idle()
         except Exception as exc:
             record_login(False, f"live check error: {type(exc).__name__}")
         if stop.wait(interval):
@@ -1474,6 +1490,19 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 self.send_busy(exc)
         except OSError as exc:
             self.send_failure(exc)
+        except (TypeError, ValueError):
+            self.send_bad_request("timeout must be a number")
+
+    def send_bad_request(self, message: str) -> None:
+        """400 with an OpenAI-style error body."""
+        body_bytes = json.dumps({"error": {"message": message, "type": "invalid_request_error", "code": 400}}).encode(
+            "utf-8"
+        )
+        self.send_response(400)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
 
     def post_usage(self, body: dict):
         """POST /usage: quota table for a given model."""
@@ -1664,7 +1693,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             else body.get("prompt", "")
         )
         stream = body.get("stream", False)
-        timeout = float(body.get("timeout", 600.0))
+        try:
+            timeout = float(body.get("timeout", 600.0))
+        except (TypeError, ValueError):
+            self.send_bad_request("timeout must be a number")
+            return
         raw_conv_id = body.get("conversation_id")
         conversation_id = str(raw_conv_id).strip() if raw_conv_id and not str(raw_conv_id).startswith("sess-") else None
 

@@ -744,3 +744,40 @@ def test_remaining_timeout():
     assert d.remaining_timeout(0.1, 0.01) == 0.1
     assert d.remaining_timeout(600.0, 30.0) == 570.0
     assert d.remaining_timeout(10.0, 30.0) == 1.0
+
+
+@pytest.mark.parametrize("path", ["/run", "/v1/chat/completions"])
+def test_bad_timeout_is_400(server, path):
+    body = {"prompt": "hi", "timeout": "soon", "messages": [{"role": "user", "content": "hi"}]}
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(urllib.request.Request(f"{server}{path}", data=json.dumps(body).encode()), timeout=5)
+    assert exc.value.code == 400
+
+
+def test_prune_when_idle(monkeypatch):
+    calls = []
+    monkeypatch.setattr(d, "SPAWN_SLOTS", threading.BoundedSemaphore(2))
+    monkeypatch.setattr(d, "MAX_CONCURRENT", 2)
+    monkeypatch.setattr(d, "prune_conversation_cache", lambda: calls.append(1))
+    assert d.prune_when_idle() is True
+    with d.spawn_slot():
+        assert d.prune_when_idle() is False
+    assert calls == [1]
+    # All slots were given back.
+    assert d.SPAWN_SLOTS.acquire(blocking=False) and d.SPAWN_SLOTS.acquire(blocking=False)
+
+
+def test_record_login_keeps_model_count(monkeypatch):
+    monkeypatch.setattr(d, "LOGIN_STATE", {"verified": True, "checked_at": None, "detail": "", "models": 7})
+    d.record_login(True, "agy run succeeded")
+    assert d.LOGIN_STATE["models"] == 7
+    d.record_login(False, "bad")
+    assert d.LOGIN_STATE["models"] == 0
+
+
+def test_live_check_refreshes_outside_slot(no_slots, monkeypatch):
+    seen = []
+    monkeypatch.setattr(d, "ensure_auth", lambda need, background=False: seen.append((need, background)))
+    monkeypatch.setattr(d, "LIVE_CHECK_INTERVAL", 600.0)
+    assert d.live_login_check() is False
+    assert seen == [(1200.0, True)]
