@@ -78,6 +78,8 @@ FORCED_EXPIRY = "2000-01-01T00:00:00Z"
 # Periodic live login check (``agy models``: one model-list call, no model turn).
 LIVE_CHECK_INTERVAL = float(os.environ.get("AGY_DAEMON_LIVE_CHECK_SEC", "600"))
 LIVE_CHECK_TIMEOUT = 60.0
+# Without periodic checks, a verification older than this is reported as stale.
+UNMONITORED_MAX_AGE_SEC = 3600.0
 _LOGIN_LOCK = threading.Lock()
 LOGIN_STATE: dict[str, Any] = {"verified": False, "checked_at": None, "detail": "no live check yet", "models": 0}
 AUTH_STATE: dict[str, Any] = {"last_sync": None, "detail": "not synced yet"}
@@ -113,9 +115,9 @@ def tool_policy(autonomous: bool) -> str:
     """'native' when agy may execute its native tools for this request, else 'deny'."""
     if NATIVE_TOOLS == "all":
         return "native"
-    if NATIVE_TOOLS == "none":
-        return "deny"
-    return "native" if autonomous else "deny"
+    if NATIVE_TOOLS == "sse":
+        return "native" if autonomous else "deny"
+    return "deny"  # "none" and any unknown value fail closed
 
 
 def tool_guard_main(stdin: TextIO, stdout: TextIO, environ: Any) -> int:
@@ -424,12 +426,11 @@ def ensure_auth(run_timeout: float, background: bool = False) -> str:
 
 def _sync_auth(need: float, background: bool) -> str:
     now = time.time()
-    if token_expiry(read_token(daemon_token_path())) - now >= need:
-        return "daemon"
     host = read_token(CLI_TOKEN_PATH)
-    if token_expiry(host) - now >= need:
-        _install_host_copy(host)
-        return "host"
+    # A newer host login (refresh by another consumer, or a re-login) always wins.
+    installed = _install_host_copy(host)
+    if token_expiry(read_token(daemon_token_path())) - now >= need:
+        return "host" if installed else "daemon"
     if not background and now < _REFRESH_STATE["retry_after"]:
         _install_host_copy(host)
         return "backoff"
@@ -515,7 +516,7 @@ def login_status(now: float | None = None) -> dict:
         label = "unverified"
     elif not state["verified"]:
         label = "failed"
-    elif LIVE_CHECK_INTERVAL > 0 and now - checked > 2.5 * LIVE_CHECK_INTERVAL:
+    elif now - checked > (2.5 * LIVE_CHECK_INTERVAL if LIVE_CHECK_INTERVAL > 0 else UNMONITORED_MAX_AGE_SEC):
         label = "stale"
     else:
         label = "verified"
@@ -1033,6 +1034,27 @@ def health_payload(now: float | None = None) -> dict:
     }
 
 
+OPENAI_MODELS = [
+    {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
+    {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
+    {"id": "gemini-3.8-flash-medium", "object": "model", "owned_by": "google"},
+    {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
+    {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
+    {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
+    {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
+    {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
+    {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
+    {"id": "agy-gemini-sse", "object": "model", "owned_by": "agy"},
+    {"id": "agy-opus", "object": "model", "owned_by": "agy"},
+    {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
+    {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
+    {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
+    {"id": "agy-sse", "object": "model", "owned_by": "agy"},
+    {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
+    {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
+    {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
+]
+
 TOOL_CALL_RE = re.compile(
     r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)", re.IGNORECASE
 )
@@ -1369,7 +1391,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path in ["/usage", "/quota", "/models", "/v1/models"]:
+        if self.path == "/v1/models":
+            # Static catalog: no agy spawn, so it never waits for a slot.
+            self.send_json({"object": "list", "data": OPENAI_MODELS})
+            return
+
+        if self.path in ["/usage", "/quota", "/models"]:
             try:
                 with spawn_slot():
                     if self.path in ["/usage", "/quota"]:
@@ -1413,40 +1440,21 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def get_models(self):
-        """GET /models (agy's live list) or /v1/models (static OpenAI list)."""
+        """GET /models: agy's live model list (also a login check)."""
         try:
             ensure_auth(0)
             returncode, stdout = run_agy_models(timeout=15)
             models = parse_models_output(stdout)
             if returncode == 0 and models:
                 record_login(True, "agy models listed the account's models", len(models))
+            else:
+                record_login(False, f"agy models returned no models (exit {returncode})")
             res = {"status": "ok", "models": models}
         except Exception as e:
             res = {"status": "error", "error": str(e), "models": []}
+        self.send_json(res)
 
-        if self.path == "/v1/models":
-            openai_models = [
-                {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
-                {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
-                {"id": "gemini-3.8-flash-medium", "object": "model", "owned_by": "google"},
-                {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
-                {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
-                {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
-                {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
-                {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
-                {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
-                {"id": "agy-gemini-sse", "object": "model", "owned_by": "agy"},
-                {"id": "agy-opus", "object": "model", "owned_by": "agy"},
-                {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
-                {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
-                {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
-                {"id": "agy-sse", "object": "model", "owned_by": "agy"},
-                {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
-                {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
-                {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
-            ]
-            res = {"object": "list", "data": openai_models}
-
+    def send_json(self, res: dict) -> None:
         body = json.dumps(res).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

@@ -102,6 +102,7 @@ def no_slots(monkeypatch):
         ("none", True, "deny"),
         ("sse", True, "native"),
         ("sse", False, "deny"),
+        ("typo", True, "deny"),
     ],
 )
 def test_tool_policy(monkeypatch, mode, autonomous, expected):
@@ -588,7 +589,7 @@ def test_get_models_empty_does_not_verify(server, monkeypatch):
     monkeypatch.setattr(d, "run_agy_models", lambda timeout=60: (1, ""))
     with urllib.request.urlopen(f"{server}/models", timeout=5) as resp:
         assert json.loads(resp.read())["models"] == []
-    assert d.login_status()["state"] == "unverified"
+    assert d.login_status()["state"] == "failed"
 
 
 def test_get_usage_success(server, monkeypatch):
@@ -781,3 +782,22 @@ def test_live_check_refreshes_outside_slot(no_slots, monkeypatch):
     monkeypatch.setattr(d, "LIVE_CHECK_INTERVAL", 600.0)
     assert d.live_login_check() is False
     assert seen == [(1200.0, True)]
+
+
+def test_newer_host_login_replaces_valid_daemon_copy():
+    write_json(d.daemon_token_path(), token_doc(3000, access="at-old-account"))
+    write_json(d.CLI_TOKEN_PATH, token_doc(3500, access="at-relogin"))
+    assert REAL_ENSURE_AUTH(600) == "host"
+    assert json.load(open(d.daemon_token_path()))["token"]["access_token"] == "at-relogin"
+
+
+def test_unmonitored_verification_goes_stale(monkeypatch):
+    monkeypatch.setattr(d, "LIVE_CHECK_INTERVAL", 0.0)
+    d.record_login(True, "ok", 1)
+    assert d.login_status()["state"] == "verified"
+    assert d.login_status(time.time() + d.UNMONITORED_MAX_AGE_SEC + 10)["state"] == "stale"
+
+
+def test_v1_models_never_waits_for_a_slot(server, no_slots):
+    with urllib.request.urlopen(f"{server}/v1/models", timeout=5) as resp:
+        assert any(m["id"] == "agy-gemini" for m in json.loads(resp.read())["data"])
