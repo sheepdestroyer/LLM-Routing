@@ -244,6 +244,17 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=agy-daemon
+# Private state: daemon HOME (no host MCP servers, hooks, plugins or skills) and per-run workspaces.
+StateDirectory=agy-daemon
+StateDirectoryMode=0700
+WorkingDirectory=%S/agy-daemon
+Environment=AGY_DAEMON_STATE_DIR=%S/agy-daemon
+# Sandbox (user units get PrivateUsers=self implicitly): read-only file system except the state
+# directory (StateDirectory=), the host agy login directory (refresh write-back) and ~/.cache (agy-run lock).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache
 
 [Install]
 WantedBy=default.target"
@@ -448,7 +459,7 @@ import sys
 
 # Explicit allowlist: never copy unrelated host credentials into containers.
 APPLICATION_ENV = {
-    "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
+    "AGY_DAEMON_URL", "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
     "CLICKHOUSE_TCP_PORT", "DATA_ROOT", "LANGFUSE_INIT_USER_PASSWORD",
     "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_WEB_PORT",
     "LANGFUSE_WORKER_PORT", "LLAMA_CLASSIFIER_URL", "LLAMA_SERVER_URL",

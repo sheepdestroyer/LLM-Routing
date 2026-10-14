@@ -192,7 +192,7 @@ async def test_execute_agy_print_branches(monkeypatch):
         return proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "c123")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: "c123")
 
     res = await host_agy_daemon.execute_agy_print(
         "test prompt", model_override="claude-sonnet-4-6", conversation_id="conv-99"
@@ -228,8 +228,12 @@ async def test_execute_agy_print_branches(monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec_generic_exc)
 
-    def mock_unlink_err(path):
-        raise OSError("unlink error")
+    real_unlink = os.unlink
+
+    def mock_unlink_err(path, *args, **kwargs):
+        if "agy_out_" in str(path) or "agy_err_" in str(path):
+            raise OSError("unlink error")
+        return real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(host_agy_daemon.os, "unlink", mock_unlink_err)
     res = await host_agy_daemon.execute_agy_print("prompt")
