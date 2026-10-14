@@ -2,33 +2,468 @@
 """HTTP daemon to bridge router requests to the host-side agy CLI."""
 
 import asyncio
+import contextlib
+import errno
+import fcntl
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, TextIO
 
 PORT = int(os.environ.get("AGY_PORT", os.environ.get("PORT", 5005)))
 AGY_BINARY = os.path.expanduser("~/.local/bin/agy")
-CACHE_FILE = os.path.expanduser("~/.gemini/antigravity-cli/cache/last_conversations.json")
+# The host login (agy's own file, shared with agy-run and antigravity-cli-daemon).
 CLI_TOKEN_PATH = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
+HOST_SETTINGS_PATH = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
+
+# Isolation: agy runs with a daemon-private HOME (no host MCP servers, hooks, plugins or
+# skills; conversations persist there so --conversation keeps working) and a private
+# working directory per spawn.
+STATE_DIR = os.path.expanduser(os.environ.get("AGY_DAEMON_STATE_DIR", "~/.local/state/agy-daemon"))
+DAEMON_HOME = os.path.join(STATE_DIR, "home")
+RUNS_DIR = os.path.join(STATE_DIR, "runs")
+CACHE_FILE = os.path.join(DAEMON_HOME, ".gemini", "antigravity-cli", "cache", "last_conversations.json")
+# Workspace custom agent without default components: no shell, file, web or browser tools.
+PLAIN_AGENT = "llm-routing-plain"
+# Native tools: "sse" (only *-sse / autonomous models run them), "none" or "all".
+NATIVE_TOOLS = os.environ.get("AGY_DAEMON_NATIVE_TOOLS", "sse").strip().lower()
+ENV_PASSTHROUGH = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+)
+
+# Concurrency cap: every agy spawn takes a slot; requests wait at most QUEUE_TIMEOUT seconds.
+MAX_CONCURRENT = max(1, int(os.environ.get("AGY_DAEMON_MAX_CONCURRENT", "3")))
+QUEUE_TIMEOUT = float(os.environ.get("AGY_DAEMON_QUEUE_TIMEOUT", "120"))
+SPAWN_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT)
+_SLOT_LOCK = threading.Lock()
+_SLOT_STATE = {"in_use": 0}
+
+# Login refresh: serialized with agy-run (same flock), done by agy itself in a scratch HOME.
+AGY_RUN_LOCK = os.path.expanduser(os.environ.get("AGY_RUN_LOCK", "~/.cache/agy-run.lock"))
+LOCK_TIMEOUT = float(os.environ.get("AGY_DAEMON_LOCK_TIMEOUT", "60"))
+REFRESH_TIMEOUT = 90.0
+TOKEN_MARGIN_SEC = 300
+# An access token lives about one hour: never ask for more than this before a run.
+MAX_TOKEN_NEED_SEC = 2700
+FORCED_EXPIRY = "2000-01-01T00:00:00Z"
+
+# Periodic live login check (``agy models``: one model-list call, no model turn).
+LIVE_CHECK_INTERVAL = float(os.environ.get("AGY_DAEMON_LIVE_CHECK_SEC", "600"))
+LIVE_CHECK_TIMEOUT = 60.0
+_LOGIN_LOCK = threading.Lock()
+LOGIN_STATE: dict[str, Any] = {"verified": False, "checked_at": None, "detail": "no live check yet", "models": 0}
+AUTH_STATE: dict[str, Any] = {"last_sync": None, "detail": "not synced yet"}
 
 
-def get_last_conversation_id():
-    """Retrieve the last active conversation ID from the agy cache."""
+class DaemonBusyError(RuntimeError):
+    """All agy spawn slots are taken."""
+
+
+class AuthRefreshError(RuntimeError):
+    """agy could not refresh the host login (the message never contains token values)."""
+
+
+def log(msg: str) -> None:
+    """One line to the journal (stderr)."""
+    print(f"agy-daemon: {msg}", file=sys.stderr, flush=True)
+
+
+def get_last_conversation_id(cwd: str | None = None):
+    """Retrieve the last conversation ID agy recorded for a workspace (default: the daemon's cwd)."""
     try:
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE) as f:
                 data = json.load(f)
-            # Use current workspace
-            return data.get(os.getcwd())
+            return data.get(cwd or os.getcwd())
     except Exception:
         pass
     return None
+
+
+def tool_policy(autonomous: bool) -> str:
+    """'native' when agy may execute its native tools for this request, else 'deny'."""
+    if NATIVE_TOOLS == "all":
+        return "native"
+    if NATIVE_TOOLS == "none":
+        return "deny"
+    return "native" if autonomous else "deny"
+
+
+def tool_guard_main(stdin: TextIO, stdout: TextIO, environ: Any) -> int:
+    """PreToolUse hook: allow only when the spawn's policy is 'native'; deny otherwise (fail closed)."""
+    stdin.read()
+    if environ.get("AGY_DAEMON_TOOL_POLICY") == "native":
+        return 0
+    stdout.write(json.dumps({"decision": "deny", "reason": "native tools are disabled on this backend"}))
+    return 0
+
+
+def write_private_atomic(path: str, text: str) -> None:
+    """Write a 0600 file through a temp file, fsync and rename (readers never see a partial file)."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    dir_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def plain_agent_definition() -> str:
+    """Workspace custom agent: no default components, hence no native tools."""
+    return (
+        "---\n"
+        f"name: {PLAIN_AGENT}\n"
+        "description: LLM-Routing backend model without native tools.\n"
+        "mainAgent: true\n"
+        "subagent: false\n"
+        "excludeDefaultComponents: true\n"
+        "inheritMcp: false\n"
+        "tools: []\n"
+        "---\n"
+        "You are a helpful assistant serving API clients. Answer the request directly.\n"
+    )
+
+
+def daemon_token_path() -> str:
+    """The daemon HOME's copy of the login."""
+    return os.path.join(DAEMON_HOME, ".gemini", "antigravity-cli", "antigravity-oauth-token")
+
+
+def prepare_home() -> None:
+    """Create the daemon HOME: no MCP servers, a deny-unless-native PreToolUse hook; prune stale cache keys."""
+    for directory in (STATE_DIR, DAEMON_HOME, RUNS_DIR):
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+    config_dir = os.path.join(DAEMON_HOME, ".gemini", "config")
+    write_private_atomic(os.path.join(config_dir, "mcp_config.json"), json.dumps({"mcpServers": {}}))
+    guard = f"{sys.executable} {os.path.abspath(__file__)} --tool-guard"
+    hooks = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": guard}]}]}}
+    write_private_atomic(os.path.join(config_dir, "hooks.json"), json.dumps(hooks))
+    # Native tools run without prompts (as on the host); the hook still denies them unless the
+    # spawn's policy is "native". Credit usage follows the host login's setting.
+    host_settings = read_token(HOST_SETTINGS_PATH) or {}
+    settings = {
+        "toolPermission": "always-proceed",
+        "trustedWorkspaces": [RUNS_DIR],
+        "useG1Credits": bool(host_settings.get("useG1Credits", False)),
+    }
+    write_private_atomic(os.path.join(DAEMON_HOME, ".gemini", "antigravity-cli", "settings.json"), json.dumps(settings))
+    try:
+        with open(CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    kept = {k: v for k, v in data.items() if not (k.startswith(RUNS_DIR + os.sep) and not os.path.exists(k))}
+    if len(kept) != len(data):
+        write_private_atomic(CACHE_FILE, json.dumps(kept))
+
+
+@contextlib.contextmanager
+def run_workspace(plain_agent: bool) -> Iterator[tuple[str, str]]:
+    """A private working directory and TMPDIR for one spawn, removed afterwards."""
+    os.makedirs(RUNS_DIR, mode=0o700, exist_ok=True)
+    run = tempfile.mkdtemp(prefix="run-", dir=RUNS_DIR)
+    try:
+        work, tmp = os.path.join(run, "work"), os.path.join(run, "tmp")
+        os.mkdir(work, 0o700)
+        os.mkdir(tmp, 0o700)
+        if plain_agent:
+            agents = os.path.join(work, ".agents", "agents")
+            os.makedirs(agents, mode=0o700)
+            with open(os.path.join(agents, f"{PLAIN_AGENT}.md"), "w", encoding="utf-8") as f:
+                f.write(plain_agent_definition())
+        yield work, tmp
+    finally:
+        shutil.rmtree(run, ignore_errors=True)
+
+
+def spawn_env(model_override: str, policy: str, tmp: str, home: str | None = None) -> dict[str, str]:
+    """An allowlisted environment: nothing from the daemon but PATH, locale, identity and CA paths."""
+    env = {name: os.environ[name] for name in ENV_PASSTHROUGH if os.environ.get(name)}
+    env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
+    env.update(
+        {
+            "HOME": home or DAEMON_HOME,
+            "TMPDIR": tmp,
+            "AGY_CLI_DISABLE_AUTO_UPDATE": "1",
+            "AGY_DAEMON_TOOL_POLICY": policy,
+        }
+    )
+    if model_override:
+        env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
+    return env
+
+
+def agent_args(plain_agent: bool, slash_commands: bool = False) -> list[str]:
+    """CLI flags selecting the agent and disabling slash-command expansion of client prompts."""
+    args = ["--agent", PLAIN_AGENT] if plain_agent else []
+    if not slash_commands:
+        args.append("--disable-slash-commands")
+    return args
+
+
+@contextlib.contextmanager
+def spawn_slot(timeout: float | None = None) -> Iterator[None]:
+    """Hold one of MAX_CONCURRENT agy spawn slots, or raise DaemonBusyError."""
+    wait = QUEUE_TIMEOUT if timeout is None else timeout
+    if not SPAWN_SLOTS.acquire(timeout=wait):
+        raise DaemonBusyError(f"agy daemon at capacity ({MAX_CONCURRENT} concurrent runs)")
+    with _SLOT_LOCK:
+        _SLOT_STATE["in_use"] += 1
+    try:
+        yield
+    finally:
+        with _SLOT_LOCK:
+            _SLOT_STATE["in_use"] -= 1
+        SPAWN_SLOTS.release()
+
+
+@contextlib.contextmanager
+def agy_lock(timeout: float) -> Iterator[None]:
+    """The agy-run flock (exclusive), so login refreshes are serialized with agy-run; TimeoutError if busy."""
+    os.makedirs(os.path.dirname(AGY_RUN_LOCK), exist_ok=True)
+    fd = os.open(AGY_RUN_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"{AGY_RUN_LOCK} is held by another agy consumer") from None
+                time.sleep(0.5)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def expiry_to_ms(expiry_val: Any) -> int:
+    """agy's token expiry (RFC 3339 string with nanoseconds, or epoch s/ms) in epoch milliseconds; 0 if unknown."""
+    if isinstance(expiry_val, bool):
+        return 0
+    if isinstance(expiry_val, (int, float)):
+        return int(expiry_val * 1000) if expiry_val < 10000000000 else int(expiry_val)
+    if isinstance(expiry_val, str) and expiry_val.strip():
+        normalized = re.sub(r"(\.\d{6})\d+", r"\1", expiry_val.strip())
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+        except ValueError:
+            return 0
+    return 0
+
+
+def read_token(path: str) -> dict | None:
+    """The token file as a dict, or None when missing or malformed."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def token_expiry(data: dict | None) -> float:
+    """Access-token expiry in epoch seconds (0 when there is no usable access token)."""
+    token = data.get("token") if isinstance(data, dict) else None
+    if not isinstance(token, dict) or not token.get("access_token"):
+        return 0.0
+    return expiry_to_ms(token.get("expiry")) / 1000.0
+
+
+def refresh_host_login() -> None:
+    """Make agy refresh the host login, then write it back. Caller holds the agy-run lock.
+
+    agy refreshes only an expired access token, so a copy whose expiry is forced into the past
+    is given to ``agy models`` in a scratch HOME (one token refresh and one model-list call, no
+    model turn). The refreshed file agy writes there replaces the host file atomically, unless
+    another consumer refreshed it meanwhile.
+    """
+    host = read_token(CLI_TOKEN_PATH)
+    token = host.get("token") if host else None
+    if not isinstance(token, dict) or not token.get("refresh_token"):
+        raise AuthRefreshError("host agy login has no refresh token: an interactive re-login is needed")
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix="refresh-", dir=STATE_DIR)
+    try:
+        doctored = {**(host or {}), "token": {**token, "expiry": FORCED_EXPIRY}}
+        scratch_token = os.path.join(scratch, ".gemini", "antigravity-cli", "antigravity-oauth-token")
+        write_private_atomic(scratch_token, json.dumps(doctored))
+        try:
+            result = subprocess.run(
+                [AGY_BINARY, "models"],
+                env=spawn_env("", "deny", scratch, home=scratch),
+                cwd=scratch,
+                capture_output=True,
+                text=True,
+                timeout=REFRESH_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise AuthRefreshError(f"agy models failed: {type(exc).__name__}") from None
+        refreshed = read_token(scratch_token)
+        new_expiry = token_expiry(refreshed)
+        if result.returncode != 0 or refreshed is None or new_expiry <= time.time() + 60:
+            raise AuthRefreshError(f"agy did not refresh the login (agy models exit {result.returncode})")
+        if token_expiry(read_token(CLI_TOKEN_PATH)) >= new_expiry:
+            return
+        write_private_atomic(CLI_TOKEN_PATH, json.dumps(refreshed))
+        log(f"host agy login refreshed (expires in {int(new_expiry - time.time())}s)")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _install_host_copy(host: dict | None, daemon: dict | None) -> bool:
+    """Copy the host login into the daemon HOME when it is newer than the daemon's copy."""
+    if host is None or token_expiry(host) <= token_expiry(daemon):
+        return False
+    write_private_atomic(daemon_token_path(), json.dumps(host))
+    return True
+
+
+def ensure_auth(run_timeout: float) -> str:
+    """Make sure the daemon HOME holds a login valid for the run; refresh the host login if needed.
+
+    Returns what happened ("daemon", "host", "refreshed", "lock-timeout", "refresh-failed").
+    Failures are logged, not raised: agy can still refresh an expired copy by itself.
+    """
+    need = min(max(0.0, run_timeout) + TOKEN_MARGIN_SEC, MAX_TOKEN_NEED_SEC)
+    now = time.time()
+    daemon, host = read_token(daemon_token_path()), read_token(CLI_TOKEN_PATH)
+    if token_expiry(daemon) - now >= need:
+        outcome = "daemon"
+    elif token_expiry(host) - now >= need:
+        _install_host_copy(host, daemon)
+        outcome = "host"
+    else:
+        try:
+            with agy_lock(LOCK_TIMEOUT):
+                if token_expiry(read_token(CLI_TOKEN_PATH)) - time.time() < need:
+                    refresh_host_login()
+                _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
+            outcome = "refreshed"
+        except TimeoutError:
+            log("agy-run lock busy: login not refreshed before this run")
+            _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
+            outcome = "lock-timeout"
+        except AuthRefreshError as exc:
+            log(f"login refresh failed: {exc}")
+            _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
+            outcome = "refresh-failed"
+    AUTH_STATE.update({"last_sync": time.time(), "detail": outcome})
+    return outcome
+
+
+def record_login(verified: bool, detail: str, models: int = 0) -> None:
+    """Store the outcome of a live login check."""
+    with _LOGIN_LOCK:
+        LOGIN_STATE.update({"verified": verified, "checked_at": time.time(), "detail": detail, "models": models})
+
+
+def run_agy_models(timeout: float = LIVE_CHECK_TIMEOUT) -> tuple[int, str]:
+    """``agy models`` in the daemon HOME and a private workspace: (returncode, stdout)."""
+    with run_workspace(False) as (work, tmp):
+        result = subprocess.run(
+            [AGY_BINARY, "models"],
+            env=spawn_env("", "deny", tmp),
+            cwd=work,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    return result.returncode, result.stdout
+
+
+def live_login_check() -> bool:
+    """Verify the login with a live ``agy models`` call; skipped (False) when every slot is busy."""
+    try:
+        with spawn_slot(timeout=5.0):
+            ensure_auth(0)
+            try:
+                returncode, stdout = run_agy_models()
+            except (OSError, subprocess.SubprocessError) as exc:
+                record_login(False, f"agy models failed: {type(exc).__name__}")
+                return True
+    except DaemonBusyError:
+        return False
+    models = parse_models_output(stdout) if returncode == 0 else []
+    if models:
+        record_login(True, "agy models listed the account's models", len(models))
+    else:
+        record_login(False, f"agy models returned no models (exit {returncode})")
+    return True
+
+
+def live_check_loop(stop: threading.Event, interval: float) -> None:
+    """Run the live login check now and then every ``interval`` seconds until ``stop`` is set."""
+    while True:
+        try:
+            live_login_check()
+        except Exception as exc:
+            record_login(False, f"live check error: {type(exc).__name__}")
+        if stop.wait(interval):
+            return
+
+
+def login_status(now: float | None = None) -> dict:
+    """'verified' (recent successful live check), 'stale', 'failed' or 'unverified'."""
+    now = time.time() if now is None else now
+    with _LOGIN_LOCK:
+        state = dict(LOGIN_STATE)
+    checked = state["checked_at"]
+    age = None if checked is None else int(now - checked)
+    if checked is None:
+        label = "unverified"
+    elif not state["verified"]:
+        label = "failed"
+    elif LIVE_CHECK_INTERVAL > 0 and now - checked > 2.5 * LIVE_CHECK_INTERVAL:
+        label = "stale"
+    else:
+        label = "verified"
+    return {"state": label, "checked_at": checked, "age_sec": age, "detail": state["detail"], "models": state["models"]}
 
 
 def read_file_sync(path):
@@ -40,14 +475,15 @@ def read_file_sync(path):
         return ""
 
 
-def get_auth_status() -> dict:
-    """Check current agy OAuth token status and expiration from CLI token file."""
+def get_auth_status(path: str | None = None) -> dict:
+    """Token-file status (presence and expiry only: a refresh token is not a verified login)."""
+    token_path = path or CLI_TOKEN_PATH
     try:
-        if not os.path.exists(CLI_TOKEN_PATH):
+        if not os.path.exists(token_path):
             return {"authenticated": False, "status": "missing", "detail": "No credentials found", "expiry_ms": 0}
 
         try:
-            with open(CLI_TOKEN_PATH, encoding="utf-8") as f:
+            with open(token_path, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             return {"authenticated": False, "status": "error", "detail": "Invalid token JSON", "expiry_ms": 0}
@@ -71,27 +507,17 @@ def get_auth_status() -> dict:
                 "expiry_ms": 0,
             }
 
-        expiry_ms = 0
-        if isinstance(expiry_val, (int, float)):
-            expiry_ms = int(expiry_val * 1000) if expiry_val < 10000000000 else int(expiry_val)
-        elif isinstance(expiry_val, str) and expiry_val.strip():
-            s = expiry_val.strip()
-            normalized = re.sub(r"(\.\d{6})\d+", r"\1", s)
-            if normalized.endswith("Z"):
-                normalized = normalized[:-1] + "+00:00"
-            try:
-                expiry_dt = datetime.fromisoformat(normalized)
-                expiry_ms = int(expiry_dt.timestamp() * 1000)
-            except Exception:
-                expiry_ms = 0
+        expiry_ms = expiry_to_ms(expiry_val)
 
         current_ms = int(time.time() * 1000)
         diff_sec = (expiry_ms - current_ms) / 1000.0 if expiry_ms > 0 else 0
-        is_valid = diff_sec > 0 or (isinstance(token_info, dict) and bool(token_info.get("refresh_token")))
+        has_refresh = isinstance(token_info, dict) and bool(token_info.get("refresh_token"))
+        is_valid = diff_sec > 0 or has_refresh
 
         return {
             "authenticated": bool(access_token),
             "status": "valid" if diff_sec > 0 else ("valid_silent_refresh" if is_valid else "expired"),
+            "refresh_token_present": has_refresh,
             "source": "cli_token",
             "expiry_ms": expiry_ms,
             "remaining_sec": int(diff_sec) if diff_sec > 0 else 0,
@@ -148,16 +574,37 @@ def parse_models_output(text: str) -> list[dict]:
 
 
 async def execute_agy_print(
-    prompt: str, model_override: str = "", conversation_id: str | None = None, timeout: float = 600.0
+    prompt: str,
+    model_override: str = "",
+    conversation_id: str | None = None,
+    timeout: float = 600.0,
+    plain_agent: bool = True,
+    slash_commands: bool = False,
 ):
-    """Asynchronously execute agy and capture full output."""
-    env = os.environ.copy()
-    if model_override:
-        env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-    else:
-        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+    """Asynchronously execute agy (no native tools by default) and capture full output."""
+    ensure_auth(timeout)
+    with run_workspace(plain_agent) as (work, tmp):
+        return await _execute_agy_print(
+            prompt,
+            model_override,
+            conversation_id,
+            timeout,
+            work,
+            spawn_env(model_override, "deny", tmp),
+            agent_args(plain_agent, slash_commands),
+        )
 
-    cmd = [AGY_BINARY]
+
+async def _execute_agy_print(
+    prompt: str,
+    model_override: str,
+    conversation_id: str | None,
+    timeout: float,
+    work: str,
+    env: dict[str, str],
+    extra_args: list[str],
+):
+    cmd = [AGY_BINARY, *extra_args]
     if conversation_id:
         cmd.extend(["--conversation", conversation_id])
     cmd.extend(["--print", prompt])
@@ -174,6 +621,7 @@ async def execute_agy_print(
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
+            cwd=work,
             stdout=stdout_file,
             stderr=stderr_file,
         )
@@ -224,7 +672,7 @@ async def execute_agy_print(
     if returncode == -1 and not stderr:
         stderr = "TIMEOUT"
 
-    result_conv_id = get_last_conversation_id()
+    result_conv_id = get_last_conversation_id(work)
     return {"returncode": returncode, "stdout": stdout, "stderr": stderr, "conversation_id": result_conv_id}
 
 
@@ -236,15 +684,39 @@ async def execute_agy_stream_json(
     tools: list[Any] | None = None,
     intercept_tools: bool = True,
     effort: str | None = None,
+    policy: str = "deny",
+    plain_agent: bool = False,
 ) -> dict:
     """Asynchronously execute agy via stream-json over stdin and capture structured result."""
-    env = os.environ.copy()
-    if model_override:
-        env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-    else:
-        env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+    ensure_auth(timeout)
+    with run_workspace(plain_agent) as (work, tmp):
+        return await _execute_agy_stream_json(
+            prompt,
+            model_override,
+            conversation_id,
+            timeout,
+            tools,
+            intercept_tools,
+            effort,
+            work,
+            spawn_env(model_override, policy, tmp),
+            agent_args(plain_agent),
+        )
 
-    cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
+
+async def _execute_agy_stream_json(
+    prompt: str,
+    model_override: str,
+    conversation_id: str | None,
+    timeout: float,
+    tools: list[Any] | None,
+    intercept_tools: bool,
+    effort: str | None,
+    work: str,
+    env: dict[str, str],
+    extra_args: list[str],
+) -> dict:
+    cmd = [AGY_BINARY, *extra_args, "--input-format", "stream-json", "--output-format", "stream-json"]
     if conversation_id:
         cmd.extend(["--conversation", conversation_id])
     cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
@@ -257,6 +729,7 @@ async def execute_agy_stream_json(
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
+            cwd=work,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -479,6 +952,27 @@ async def execute_agy_stream_json(
         }
 
 
+def health_payload(now: float | None = None) -> dict:
+    """/health: 'health' is 'ok' only for a recently verified login, not for a merely present refresh token."""
+    login = login_status(now)
+    with _SLOT_LOCK:
+        in_use = _SLOT_STATE["in_use"]
+    return {
+        "status": "ok",
+        "health": "ok" if login["state"] == "verified" else "degraded",
+        "agy_binary": AGY_BINARY,
+        "agy_available": os.path.exists(AGY_BINARY),
+        "auth": get_auth_status(),
+        "daemon_auth": get_auth_status(daemon_token_path()),
+        "login": login,
+        "auth_sync": dict(AUTH_STATE),
+        "concurrency": {"max": MAX_CONCURRENT, "in_use": in_use},
+        "native_tools": NATIVE_TOOLS,
+        "home": DAEMON_HOME,
+        "last_conversation_id": get_last_conversation_id(),
+    }
+
+
 TOOL_CALL_RE = re.compile(
     r"(?:<tool_call>([\s\S]*?)</tool_call>|```(?:tool_call|json:tool_call)\s*([\s\S]*?)```)", re.IGNORECASE
 )
@@ -687,7 +1181,9 @@ def parse_tool_calls_from_text(text: str) -> tuple[str, list]:
     return cleaned, tool_calls
 
 
-def extract_prompt_from_messages(messages: list[Any], tools: list[Any] | None = None, is_sse_mode: bool = False) -> str:
+def extract_prompt_from_messages(
+    messages: list[Any], tools: list[Any] | None = None, is_sse_mode: bool = False, native_tools: bool = True
+) -> str:
     """Convert an OpenAI messages array into a clean unified prompt string for agy."""
     if not messages or not isinstance(messages, list):
         prompt = ""
@@ -743,12 +1239,20 @@ def extract_prompt_from_messages(messages: list[Any], tools: list[Any] | None = 
             else:
                 prompt = f"System: {tool_instr}\n\n{prompt}"
     else:
-        completion_instr = (
-            "# Execution Guidelines\n"
-            "You are acting as an intelligent autonomous backend for the client.\n"
-            "You have full access to your native workspace tools to inspect files, execute commands, or analyze context as needed to fulfill the user's request.\n"
-            "Provide a clear, concise conversational report."
-        )
+        if native_tools:
+            completion_instr = (
+                "# Execution Guidelines\n"
+                "You are acting as an intelligent autonomous backend for the client.\n"
+                "You have full access to your native workspace tools to inspect files, execute commands, or analyze context as needed to fulfill the user's request.\n"
+                "Provide a clear, concise conversational report."
+            )
+        else:
+            completion_instr = (
+                "# Execution Guidelines\n"
+                "You are acting as a backend model for an API client.\n"
+                "Answer from the conversation itself; you have no workspace, file or command tools.\n"
+                "Provide a clear, concise response."
+            )
         if prompt.startswith("System:"):
             prompt = f"System: {completion_instr}\n\n" + prompt
         else:
@@ -767,13 +1271,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests for health checks, usage/quota, and model listings."""
         if self.path in ["/health", "/status"]:
-            res = {
-                "status": "ok",
-                "agy_binary": AGY_BINARY,
-                "agy_available": os.path.exists(AGY_BINARY),
-                "auth": get_auth_status(),
-                "last_conversation_id": get_last_conversation_id(),
-            }
+            res = health_payload()
             body = json.dumps(res).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -792,72 +1290,90 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path in ["/usage", "/quota"]:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        if self.path in ["/usage", "/quota", "/models", "/v1/models"]:
             try:
-                exec_res = loop.run_until_complete(
-                    execute_agy_print("/usage", model_override="gpt-oss-120b-medium", timeout=30.0)
-                )
-                parsed = parse_usage_output(exec_res.get("stdout", ""))
-                parsed["returncode"] = exec_res.get("returncode", 0)
-                parsed["stderr"] = exec_res.get("stderr", "")
-            except Exception as e:
-                parsed = {"error": str(e), "quotas": []}
-            finally:
-                loop.close()
-
-            body = json.dumps(parsed).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-
-        if self.path in ["/models", "/v1/models"]:
-            import subprocess
-
-            try:
-                result = subprocess.run([AGY_BINARY, "models"], capture_output=True, text=True, timeout=15)
-                models = parse_models_output(result.stdout)
-                res = {"status": "ok", "models": models}
-            except Exception as e:
-                res = {"status": "error", "error": str(e), "models": []}
-
-            if self.path == "/v1/models":
-                openai_models = [
-                    {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
-                    {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
-                    {"id": "gemini-3.8-flash-medium", "object": "model", "owned_by": "google"},
-                    {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
-                    {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
-                    {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
-                    {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
-                    {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-gemini-sse", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-opus", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
-                    {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-sse", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
-                    {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
-                ]
-                res = {"object": "list", "data": openai_models}
-
-            body = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+                with spawn_slot():
+                    if self.path in ["/usage", "/quota"]:
+                        self.get_usage()
+                    else:
+                        self.get_models()
+            except DaemonBusyError as exc:
+                self.send_busy(exc)
             return
 
         self.send_response(404)
         self.end_headers()
+
+    def get_usage(self):
+        """GET /usage: quota table from agy's /usage slash command."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            exec_res = loop.run_until_complete(
+                execute_agy_print(
+                    "/usage",
+                    model_override="gpt-oss-120b-medium",
+                    timeout=30.0,
+                    plain_agent=False,
+                    slash_commands=True,
+                )
+            )
+            parsed = parse_usage_output(exec_res.get("stdout", ""))
+            parsed["returncode"] = exec_res.get("returncode", 0)
+            parsed["stderr"] = exec_res.get("stderr", "")
+        except Exception as e:
+            parsed = {"error": str(e), "quotas": []}
+        finally:
+            loop.close()
+
+        body = json.dumps(parsed).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def get_models(self):
+        """GET /models (agy's live list) or /v1/models (static OpenAI list)."""
+        try:
+            ensure_auth(0)
+            returncode, stdout = run_agy_models(timeout=15)
+            models = parse_models_output(stdout)
+            if returncode == 0 and models:
+                record_login(True, "agy models listed the account's models", len(models))
+            res = {"status": "ok", "models": models}
+        except Exception as e:
+            res = {"status": "error", "error": str(e), "models": []}
+
+        if self.path == "/v1/models":
+            openai_models = [
+                {"id": "gemini-3.8-flash", "object": "model", "owned_by": "google"},
+                {"id": "gemini-3.8-flash-low", "object": "model", "owned_by": "google"},
+                {"id": "gemini-3.8-flash-medium", "object": "model", "owned_by": "google"},
+                {"id": "gemini-3.8-flash-high", "object": "model", "owned_by": "google"},
+                {"id": "claude-opus-4.6", "object": "model", "owned_by": "anthropic"},
+                {"id": "claude-sonnet-4.6", "object": "model", "owned_by": "anthropic"},
+                {"id": "gpt-oss-120b-medium", "object": "model", "owned_by": "openai"},
+                {"id": "llm-routing-agy", "object": "model", "owned_by": "agy"},
+                {"id": "agy-gemini", "object": "model", "owned_by": "agy"},
+                {"id": "agy-gemini-sse", "object": "model", "owned_by": "agy"},
+                {"id": "agy-opus", "object": "model", "owned_by": "agy"},
+                {"id": "agy-sonnet", "object": "model", "owned_by": "agy"},
+                {"id": "agy-gptoss", "object": "model", "owned_by": "agy"},
+                {"id": "llm-routing-agy-sse", "object": "model", "owned_by": "agy"},
+                {"id": "agy-sse", "object": "model", "owned_by": "agy"},
+                {"id": "agy-opus-sse", "object": "model", "owned_by": "agy"},
+                {"id": "agy-sonnet-sse", "object": "model", "owned_by": "agy"},
+                {"id": "agy-gptoss-sse", "object": "model", "owned_by": "agy"},
+            ]
+            res = {"object": "list", "data": openai_models}
+
+        body = json.dumps(res).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         """Handle POST requests to execute agy commands."""
@@ -881,26 +1397,39 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.handle_chat_completions(body)
             return
 
-        if self.path == "/usage":
-            model = body.get("model", "gpt-oss-120b-medium")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                exec_res = loop.run_until_complete(execute_agy_print("/usage", model_override=model, timeout=30.0))
-                parsed = parse_usage_output(exec_res.get("stdout", ""))
-                parsed["returncode"] = exec_res.get("returncode", 0)
-            except Exception as e:
-                parsed = {"error": str(e), "quotas": []}
-            finally:
-                loop.close()
-            body_bytes = json.dumps(parsed).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body_bytes)))
-            self.end_headers()
-            self.wfile.write(body_bytes)
-            return
+        try:
+            with spawn_slot():
+                if self.path == "/usage":
+                    self.post_usage(body)
+                else:
+                    self.post_run(body)
+        except DaemonBusyError as exc:
+            self.send_busy(exc)
 
+    def post_usage(self, body: dict):
+        """POST /usage: quota table for a given model."""
+        model = body.get("model", "gpt-oss-120b-medium")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            exec_res = loop.run_until_complete(
+                execute_agy_print("/usage", model_override=model, timeout=30.0, plain_agent=False, slash_commands=True)
+            )
+            parsed = parse_usage_output(exec_res.get("stdout", ""))
+            parsed["returncode"] = exec_res.get("returncode", 0)
+        except Exception as e:
+            parsed = {"error": str(e), "quotas": []}
+        finally:
+            loop.close()
+        body_bytes = json.dumps(parsed).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def post_run(self, body: dict):
+        """POST /run: one agy --print run (tool-less agent), as JSON or streamed NDJSON."""
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
@@ -908,114 +1437,9 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         stream = body.get("stream", False)
 
         if stream:
-            # 1. Send HTTP headers for streaming NDJSON
-            self.protocol_version = "HTTP/1.1"
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson")
-            self.send_header("Connection", "close")
-            self.end_headers()
-
-            # 2. Setup loop to run async process and stream output
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            async def run_stream():
-                """Asynchronously execute agy and stream output via PTY."""
-                import pty
-
-                env = os.environ.copy()
-                if model_override:
-                    env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-                else:
-                    env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
-
-                cmd = [AGY_BINARY]
-                if conversation_id:
-                    cmd.extend(["--conversation", conversation_id])
-                cmd.extend(["--print", prompt])
-
-                master_fd, slave_fd = pty.openpty()
-                proc = None
-                try:
-                    try:
-                        proc = await asyncio.create_subprocess_exec(
-                            *cmd,
-                            env=env,
-                            stdout=slave_fd,
-                            stderr=slave_fd,
-                        )
-                        os.close(slave_fd)
-                    except Exception as e:
-                        os.close(slave_fd)
-                        # Write failure details as status
-                        err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
-                        self.wfile.write(err_msg.encode("utf-8"))
-                        self.wfile.flush()
-                        return
-
-                    loop_ref = asyncio.get_running_loop()
-
-                    def read_bytes():
-                        """Read raw bytes from the PTY master file descriptor."""
-                        try:
-                            return os.read(master_fd, 1024)
-                        except OSError:
-                            return b""
-
-                    while True:
-                        data = await loop_ref.run_in_executor(None, read_bytes)
-                        if not data:
-                            break
-                        text = data.decode("utf-8", errors="replace")
-                        # PTY text can have \r\n, normalize to \n
-                        text_norm = text.replace("\r\n", "\n")
-                        # Yield token JSON line
-                        chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
-                        try:
-                            self.wfile.write(chunk_json.encode("utf-8"))
-                            self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError, OSError):
-                            break
-
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=timeout)
-                        returncode = proc.returncode or 0
-                    except TimeoutError:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
-                        returncode = -1
-                    except Exception:
-                        returncode = -1
-
-                    # Retrieve last conversation ID
-                    result_conv_id = get_last_conversation_id()
-
-                    # Write closing metadata
-                    meta_json = (
-                        json.dumps({"type": "status", "returncode": returncode, "conversation_id": result_conv_id})
-                        + "\n"
-                    )
-                    self.wfile.write(meta_json.encode("utf-8"))
-                    self.wfile.flush()
-                finally:
-                    try:
-                        os.close(master_fd)
-                    except OSError:
-                        pass
-                    if proc is not None and proc.returncode is None:
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except Exception:
-                            pass
-
-            try:
-                loop.run_until_complete(run_stream())
-            finally:
-                loop.close()
+            ensure_auth(timeout)
+            with run_workspace(True) as (work, tmp):
+                self.stream_run(prompt, model_override, conversation_id, timeout, work, tmp)
             return
 
         # Execute in new asyncio event loop (non-streaming path)
@@ -1041,6 +1465,115 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_bytes)
 
+    def stream_run(
+        self, prompt: str, model_override: str, conversation_id: str | None, timeout: float, work: str, tmp: str
+    ):
+        """Stream an agy --print run through a PTY as NDJSON token lines plus a closing status line."""
+        # 1. Send HTTP headers for streaming NDJSON
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        # 2. Setup loop to run async process and stream output
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def run_stream():
+            """Asynchronously execute agy and stream output via PTY."""
+            import pty
+
+            env = spawn_env(model_override, "deny", tmp)
+
+            cmd = [AGY_BINARY, *agent_args(True)]
+            if conversation_id:
+                cmd.extend(["--conversation", conversation_id])
+            cmd.extend(["--print", prompt])
+
+            master_fd, slave_fd = pty.openpty()
+            proc = None
+            try:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        env=env,
+                        cwd=work,
+                        stdout=slave_fd,
+                        stderr=slave_fd,
+                    )
+                    os.close(slave_fd)
+                except Exception as e:
+                    os.close(slave_fd)
+                    # Write failure details as status
+                    err_msg = json.dumps({"type": "status", "returncode": -1, "stderr": str(e)}) + "\n"
+                    self.wfile.write(err_msg.encode("utf-8"))
+                    self.wfile.flush()
+                    return
+
+                loop_ref = asyncio.get_running_loop()
+
+                def read_bytes():
+                    """Read raw bytes from the PTY master file descriptor."""
+                    try:
+                        return os.read(master_fd, 1024)
+                    except OSError:
+                        return b""
+
+                while True:
+                    data = await loop_ref.run_in_executor(None, read_bytes)
+                    if not data:
+                        break
+                    text = data.decode("utf-8", errors="replace")
+                    # PTY text can have \r\n, normalize to \n
+                    text_norm = text.replace("\r\n", "\n")
+                    # Yield token JSON line
+                    chunk_json = json.dumps({"type": "token", "content": text_norm}) + "\n"
+                    try:
+                        self.wfile.write(chunk_json.encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        break
+
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=timeout)
+                    returncode = proc.returncode or 0
+                except TimeoutError:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+                    returncode = -1
+                except Exception:
+                    returncode = -1
+
+                # Retrieve last conversation ID
+                result_conv_id = get_last_conversation_id(work)
+
+                # Write closing metadata
+                meta_json = (
+                    json.dumps({"type": "status", "returncode": returncode, "conversation_id": result_conv_id}) + "\n"
+                )
+                self.wfile.write(meta_json.encode("utf-8"))
+                self.wfile.flush()
+            finally:
+                try:
+                    os.close(master_fd)
+                except OSError:
+                    pass
+                if proc is not None and proc.returncode is None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except Exception:
+                        pass
+
+        try:
+            loop.run_until_complete(run_stream())
+        finally:
+            loop.close()
+
     def handle_chat_completions(self, body: dict):
         """Handle standard OpenAI /v1/chat/completions requests from LiteLLM or direct clients."""
         messages = body.get("messages", [])
@@ -1048,8 +1581,14 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         model = body.get("model", "gemini-3.8-flash")
         model_lower = str(model).lower()
         is_sse_mode = "sse" in model_lower or "autonomous" in model_lower
+        policy = tool_policy(is_sse_mode)
+        # Without client tools and native tools, agy runs the tool-less custom agent; with client
+        # tools it keeps its default agent so native calls are intercepted (the hook denies them).
+        plain_agent = policy == "deny" and not tools
         prompt = (
-            extract_prompt_from_messages(messages, tools=tools, is_sse_mode=is_sse_mode)
+            extract_prompt_from_messages(
+                messages, tools=tools, is_sse_mode=is_sse_mode, native_tools=policy == "native"
+            )
             if messages
             else body.get("prompt", "")
         )
@@ -1092,7 +1631,49 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             else:
                 model_override = "gemini-3.8-flash-low"
 
-        if stream:
+        handler = self.stream_chat_completion if stream else self.complete_chat
+        try:
+            with spawn_slot():
+                handler(
+                    prompt,
+                    model,
+                    model_override,
+                    conversation_id,
+                    timeout,
+                    effort_cli,
+                    tools,
+                    is_sse_mode,
+                    policy,
+                    plain_agent,
+                )
+        except DaemonBusyError as exc:
+            self.send_busy(exc)
+
+    def send_busy(self, exc: Exception) -> None:
+        """503 so LiteLLM falls back to another deployment."""
+        body_bytes = json.dumps({"error": {"message": str(exc), "type": "api_error", "code": 503}}).encode("utf-8")
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.send_header("Retry-After", "5")
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def stream_chat_completion(
+        self,
+        prompt: str,
+        model: str,
+        model_override: str,
+        conversation_id: str | None,
+        timeout: float,
+        effort_cli: str | None,
+        tools: list[Any] | None,
+        is_sse_mode: bool,
+        policy: str,
+        plain_agent: bool,
+    ) -> None:
+        """Stream one chat completion as OpenAI SSE chunks."""
+        with run_workspace(plain_agent) as (work, tmp):
             self.protocol_version = "HTTP/1.1"
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -1100,17 +1681,21 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
 
+            ensure_auth(timeout)
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
             async def run_openai_stream():
-                env = os.environ.copy()
-                if model_override:
-                    env["CASCADE_DEFAULT_MODEL_OVERRIDE"] = model_override
-                else:  # pragma: no cover
-                    env.pop("CASCADE_DEFAULT_MODEL_OVERRIDE", None)
+                env = spawn_env(model_override, policy, tmp)
 
-                cmd = [AGY_BINARY, "--input-format", "stream-json", "--output-format", "stream-json"]
+                cmd = [
+                    AGY_BINARY,
+                    *agent_args(plain_agent),
+                    "--input-format",
+                    "stream-json",
+                    "--output-format",
+                    "stream-json",
+                ]
                 if conversation_id:
                     cmd.extend(["--conversation", conversation_id])
                 cmd.extend(["--print-timeout", f"{max(1, int(timeout))}s"])
@@ -1134,6 +1719,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
                         env=env,
+                        cwd=work,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
@@ -1478,16 +2064,28 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 loop.run_until_complete(run_openai_stream())
             finally:
                 loop.close()
-            return
 
-        # Non-streaming response
+    def complete_chat(
+        self,
+        prompt: str,
+        model: str,
+        model_override: str,
+        conversation_id: str | None,
+        timeout: float,
+        effort_cli: str | None,
+        tools: list[Any] | None,
+        is_sse_mode: bool,
+        policy: str,
+        plain_agent: bool,
+    ) -> None:
+        """Answer one non-streaming chat completion."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             import inspect
 
             sig = inspect.signature(execute_agy_stream_json)
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "prompt": prompt,
                 "model_override": model_override,
                 "conversation_id": conversation_id,
@@ -1505,7 +2103,10 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             ):
                 kwargs["effort"] = effort_cli
-            exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))  # type: ignore[arg-type]
+            if "policy" in sig.parameters:
+                kwargs["policy"] = policy
+                kwargs["plain_agent"] = plain_agent
+            exec_res = loop.run_until_complete(execute_agy_stream_json(**kwargs))
         finally:
             loop.close()
 
@@ -1585,16 +2186,29 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
 
 
 def run_server():
-    """Start the ThreadingHTTPServer on the configured port."""
+    """Prepare the daemon HOME, start the live login check and serve on 127.0.0.1:PORT."""
+    prepare_home()
+    stop = threading.Event()
+    if LIVE_CHECK_INTERVAL > 0:
+        threading.Thread(target=live_check_loop, args=(stop, LIVE_CHECK_INTERVAL), daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), AgyDaemonHandler)
-    print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT}")
+    print(f"🚀 Host agy Daemon running on http://127.0.0.1:{PORT} (max {MAX_CONCURRENT} concurrent agy runs)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         server.server_close()
 
 
-if __name__ == "__main__":  # pragma: no cover
+def main(argv: list[str]) -> int:
+    """``--tool-guard``: agy PreToolUse hook mode; otherwise run the daemon."""
+    if argv[1:2] == ["--tool-guard"]:
+        return tool_guard_main(sys.stdin, sys.stdout, os.environ)
     run_server()
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main(sys.argv))

@@ -437,11 +437,45 @@ This daemon runs as a **systemd user service** with security hardening:
 
 ```bash
 # Check status
-systemctl --user status agy-daemon.service
+systemctl --user status agy-daemon.service --no-pager
 
 # View live logs
-journalctl --user -fu agy-daemon.service
+journalctl --user -fu agy-daemon.service --no-pager
+
+# Health: "health" is "ok" only after a successful live login check (agy models)
+curl -s http://127.0.0.1:5005/health
 ```
+
+Isolation and limits (`scripts/host_agy_daemon.py`):
+
+- **Private HOME** `~/.local/state/agy-daemon/home`: `mcp_config.json` with no MCP servers, a PreToolUse hook
+  (`host_agy_daemon.py --tool-guard`), `settings.json` (`toolPermission: always-proceed`, `useG1Credits` copied from the
+  host login), and a copy of the host login. No host MCP servers, hooks, plugins or skills. Conversations persist there,
+  so `--conversation` keeps working.
+- **Private workspace per spawn** under `~/.local/state/agy-daemon/runs/`, removed after the run; an allowlisted
+  environment (PATH, locale, identity, CA paths, `AGY_CLI_DISABLE_AUTO_UPDATE=1`).
+- **Native tools** (`AGY_DAEMON_NATIVE_TOOLS`, default `sse`): only the `*-sse` / autonomous models may execute agy's
+  native tools. Every other request runs with the hook in deny mode; plain completions and `/run` also use the
+  tool-less workspace agent `llm-routing-plain` (`excludeDefaultComponents: true`, `tools: []`). With client tools,
+  native tool calls are still intercepted and returned as OpenAI `tool_calls`, but never executed on the host.
+  `none` denies native tools everywhere (breaks autonomous `*-sse` behaviour), `all` restores the legacy behaviour.
+- **Concurrency cap** `AGY_DAEMON_MAX_CONCURRENT` (default 3) for every agy spawn; a request waits up to
+  `AGY_DAEMON_QUEUE_TIMEOUT` seconds (default 120), then gets HTTP 503 (`Retry-After: 5`) so LiteLLM falls back.
+- **Login refresh** serialized with `agy-run` through `~/.cache/agy-run.lock`: when the daemon copy and the host login
+  both expire before the run timeout plus 5 min, agy itself refreshes the host login in a scratch HOME
+  (`agy models` on a copy whose expiry is forced into the past: one token refresh and one model-list call, no model
+  turn) and the result is written back atomically.
+- **Live check** every `AGY_DAEMON_LIVE_CHECK_SEC` seconds (default 600, `0` disables): `agy models` in the daemon HOME.
+  `/health` reports `login.state` (`verified`, `stale`, `failed`, `unverified`) separately from the token files
+  (`auth`, `daemon_auth`, `refresh_token_present`).
+- **systemd sandbox** (installed by `start-stack.sh` in the prod namespace): `StateDirectory=agy-daemon`,
+  `WorkingDirectory=%S/agy-daemon`, `NoNewPrivileges=yes`, `PrivateTmp=yes`, `ProtectSystem=strict` with
+  `ReadWritePaths=%S/agy-daemon %h/.gemini/antigravity-cli %h/.cache`: autonomous native tools cannot write outside
+  these paths.
+
+Dev qualification of a candidate daemon: run it on another port (for example with `systemd-run --user` and
+`AGY_PORT=5016 AGY_DAEMON_STATE_DIR=~/.local/state/agy-daemon-dev`) and start the dev stack with
+`AGY_DAEMON_URL=http://127.0.0.1:5016 ./start-dev.sh`; `AGY_DAEMON_URL` is passed to the router container.
 
 ### 3b. Logging Configuration
 
