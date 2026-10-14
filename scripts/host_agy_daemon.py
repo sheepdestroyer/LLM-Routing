@@ -1476,13 +1476,18 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.handle_chat_completions(body)
             return
 
+        try:
+            run_timeout = float(body.get("timeout", 600.0))
+        except (TypeError, ValueError):
+            self.send_bad_request("timeout must be a number")
+            return
         queued_at = time.monotonic()
         try:
             with spawn_slot():
                 if self.path == "/usage":
                     self.post_usage(body)
                 else:
-                    self.post_run(body, time.monotonic() - queued_at)
+                    self.post_run(body, remaining_timeout(run_timeout, time.monotonic() - queued_at))
         except DaemonBusyError as exc:
             if self.path == "/run" and body.get("stream", False):
                 self.send_busy_ndjson(exc)
@@ -1490,8 +1495,6 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 self.send_busy(exc)
         except OSError as exc:
             self.send_failure(exc)
-        except (TypeError, ValueError):
-            self.send_bad_request("timeout must be a number")
 
     def send_bad_request(self, message: str) -> None:
         """400 with an OpenAI-style error body."""
@@ -1526,12 +1529,11 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_bytes)
 
-    def post_run(self, body: dict, queued: float = 0.0):
+    def post_run(self, body: dict, timeout: float = 600.0):
         """POST /run: one agy --print run (tool-less agent), as JSON or streamed NDJSON."""
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
-        timeout = remaining_timeout(float(body.get("timeout", 600.0)), queued)
         stream = body.get("stream", False)
 
         if stream:
