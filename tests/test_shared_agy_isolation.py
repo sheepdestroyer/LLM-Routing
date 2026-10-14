@@ -46,7 +46,7 @@ def test_shared_agy_management_is_production_only(tmp_path, namespace):
             "NoNewPrivileges=yes",
             "PrivateTmp=yes",
             "ProtectSystem=strict",
-            "ReadWritePaths=%S/agy-daemon %h/.gemini/antigravity-cli %h/.cache",
+            "ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache",
         ):
             assert directive in text
         assert "restart agy-daemon.service" in log.read_text()

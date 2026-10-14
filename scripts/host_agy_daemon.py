@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -63,6 +64,11 @@ _SLOT_STATE = {"in_use": 0}
 # Login refresh: serialized with agy-run (same flock), done by agy itself in a scratch HOME.
 AGY_RUN_LOCK = os.path.expanduser(os.environ.get("AGY_RUN_LOCK", "~/.cache/agy-run.lock"))
 LOCK_TIMEOUT = float(os.environ.get("AGY_DAEMON_LOCK_TIMEOUT", "60"))
+# Request threads wait only briefly for the lock (agy-run can hold it for a whole task) and
+# back off after a failed attempt; the live-check thread does the proactive refresh.
+REQUEST_LOCK_TIMEOUT = 2.0
+REFRESH_BACKOFF_SEC = 120.0
+_REFRESH_STATE = {"retry_after": 0.0}
 REFRESH_TIMEOUT = 90.0
 TOKEN_MARGIN_SEC = 300
 # An access token lives about one hour: never ask for more than this before a run.
@@ -75,6 +81,7 @@ LIVE_CHECK_TIMEOUT = 60.0
 _LOGIN_LOCK = threading.Lock()
 LOGIN_STATE: dict[str, Any] = {"verified": False, "checked_at": None, "detail": "no live check yet", "models": 0}
 AUTH_STATE: dict[str, Any] = {"last_sync": None, "detail": "not synced yet"}
+LAST_CONVERSATION: dict[str, Any] = {"id": None}
 
 
 class DaemonBusyError(RuntimeError):
@@ -171,7 +178,7 @@ def prepare_home() -> None:
         os.chmod(directory, 0o700)
     config_dir = os.path.join(DAEMON_HOME, ".gemini", "config")
     write_private_atomic(os.path.join(config_dir, "mcp_config.json"), json.dumps({"mcpServers": {}}))
-    guard = f"{sys.executable} {os.path.abspath(__file__)} --tool-guard"
+    guard = f"{shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))} --tool-guard"
     hooks = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": guard}]}]}}
     write_private_atomic(os.path.join(config_dir, "hooks.json"), json.dumps(hooks))
     # Native tools run without prompts (as on the host); the hook still denies them unless the
@@ -183,6 +190,16 @@ def prepare_home() -> None:
         "useG1Credits": bool(host_settings.get("useG1Credits", False)),
     }
     write_private_atomic(os.path.join(DAEMON_HOME, ".gemini", "antigravity-cli", "settings.json"), json.dumps(settings))
+    # Leftovers of a crash: run workspaces and refresh scratch HOMEs (which hold a login copy).
+    for parent, prefix in ((RUNS_DIR, "run-"), (STATE_DIR, "refresh-")):
+        for name in os.listdir(parent):
+            if name.startswith(prefix):
+                shutil.rmtree(os.path.join(parent, name), ignore_errors=True)
+    prune_conversation_cache()
+
+
+def prune_conversation_cache() -> None:
+    """Drop agy's last-conversation entries for run workspaces that no longer exist."""
     try:
         with open(CACHE_FILE, encoding="utf-8") as f:
             data = json.load(f)
@@ -237,6 +254,13 @@ def agent_args(plain_agent: bool, slash_commands: bool = False) -> list[str]:
     if not slash_commands:
         args.append("--disable-slash-commands")
     return args
+
+
+def remaining_timeout(timeout: float, queued: float) -> float:
+    """The run timeout minus a queue wait of a second or more (never below one second)."""
+    if queued < 1.0:
+        return timeout
+    return max(1.0, timeout - queued)
 
 
 @contextlib.contextmanager
@@ -356,44 +380,58 @@ def refresh_host_login() -> None:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def _install_host_copy(host: dict | None, daemon: dict | None) -> bool:
-    """Copy the host login into the daemon HOME when it is newer than the daemon's copy."""
-    if host is None or token_expiry(host) <= token_expiry(daemon):
+def _install_host_copy(host: dict | None) -> bool:
+    """Copy the host login into the daemon HOME when it is newer than the daemon's copy (re-read now)."""
+    if host is None or token_expiry(host) <= token_expiry(read_token(daemon_token_path())):
         return False
     write_private_atomic(daemon_token_path(), json.dumps(host))
     return True
 
 
-def ensure_auth(run_timeout: float) -> str:
+def ensure_auth(run_timeout: float, background: bool = False) -> str:
     """Make sure the daemon HOME holds a login valid for the run; refresh the host login if needed.
 
-    Returns what happened ("daemon", "host", "refreshed", "lock-timeout", "refresh-failed").
-    Failures are logged, not raised: agy can still refresh an expired copy by itself.
+    Returns what happened: "daemon", "host", "refreshed", "lock-timeout", "refresh-failed",
+    "backoff" or "error". Failures are logged, never raised: agy can still refresh an expired
+    copy by itself. Request threads (``background=False``) wait at most REQUEST_LOCK_TIMEOUT for
+    the agy-run lock and skip refreshing for REFRESH_BACKOFF_SEC after a failure; the live-check
+    thread waits LOCK_TIMEOUT and ignores the backoff.
     """
     need = min(max(0.0, run_timeout) + TOKEN_MARGIN_SEC, MAX_TOKEN_NEED_SEC)
-    now = time.time()
-    daemon, host = read_token(daemon_token_path()), read_token(CLI_TOKEN_PATH)
-    if token_expiry(daemon) - now >= need:
-        outcome = "daemon"
-    elif token_expiry(host) - now >= need:
-        _install_host_copy(host, daemon)
-        outcome = "host"
-    else:
-        try:
-            with agy_lock(LOCK_TIMEOUT):
-                if token_expiry(read_token(CLI_TOKEN_PATH)) - time.time() < need:
-                    refresh_host_login()
-                _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
-            outcome = "refreshed"
-        except TimeoutError:
-            log("agy-run lock busy: login not refreshed before this run")
-            _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
-            outcome = "lock-timeout"
-        except AuthRefreshError as exc:
-            log(f"login refresh failed: {exc}")
-            _install_host_copy(read_token(CLI_TOKEN_PATH), read_token(daemon_token_path()))
-            outcome = "refresh-failed"
+    try:
+        outcome = _sync_auth(need, background)
+    except OSError as exc:
+        log(f"login sync failed: {type(exc).__name__}")
+        outcome = "error"
     AUTH_STATE.update({"last_sync": time.time(), "detail": outcome})
+    return outcome
+
+
+def _sync_auth(need: float, background: bool) -> str:
+    now = time.time()
+    if token_expiry(read_token(daemon_token_path())) - now >= need:
+        return "daemon"
+    host = read_token(CLI_TOKEN_PATH)
+    if token_expiry(host) - now >= need:
+        _install_host_copy(host)
+        return "host"
+    if not background and now < _REFRESH_STATE["retry_after"]:
+        _install_host_copy(host)
+        return "backoff"
+    try:
+        with agy_lock(LOCK_TIMEOUT if background else REQUEST_LOCK_TIMEOUT):
+            if token_expiry(read_token(CLI_TOKEN_PATH)) - time.time() < need:
+                refresh_host_login()
+            _install_host_copy(read_token(CLI_TOKEN_PATH))
+        return "refreshed"
+    except TimeoutError:
+        log("agy-run lock busy: login not refreshed before this run")
+        outcome = "lock-timeout"
+    except AuthRefreshError as exc:
+        log(f"login refresh failed: {exc}")
+        outcome = "refresh-failed"
+    _REFRESH_STATE["retry_after"] = time.time() + REFRESH_BACKOFF_SEC
+    _install_host_copy(read_token(CLI_TOKEN_PATH))
     return outcome
 
 
@@ -421,7 +459,8 @@ def live_login_check() -> bool:
     """Verify the login with a live ``agy models`` call; skipped (False) when every slot is busy."""
     try:
         with spawn_slot(timeout=5.0):
-            ensure_auth(0)
+            # Proactive: keep the login valid for the longest run, off the request path.
+            ensure_auth(MAX_TOKEN_NEED_SEC, background=True)
             try:
                 returncode, stdout = run_agy_models()
             except (OSError, subprocess.SubprocessError) as exc:
@@ -442,6 +481,7 @@ def live_check_loop(stop: threading.Event, interval: float) -> None:
     while True:
         try:
             live_login_check()
+            prune_conversation_cache()
         except Exception as exc:
             record_login(False, f"live check error: {type(exc).__name__}")
         if stop.wait(interval):
@@ -673,6 +713,10 @@ async def _execute_agy_print(
         stderr = "TIMEOUT"
 
     result_conv_id = get_last_conversation_id(work)
+    if result_conv_id:
+        LAST_CONVERSATION["id"] = result_conv_id
+    if returncode == 0 and stdout:
+        record_login(True, "agy run succeeded")
     return {"returncode": returncode, "stdout": stdout, "stderr": stderr, "conversation_id": result_conv_id}
 
 
@@ -969,7 +1013,7 @@ def health_payload(now: float | None = None) -> dict:
         "concurrency": {"max": MAX_CONCURRENT, "in_use": in_use},
         "native_tools": NATIVE_TOOLS,
         "home": DAEMON_HOME,
-        "last_conversation_id": get_last_conversation_id(),
+        "last_conversation_id": LAST_CONVERSATION["id"],
     }
 
 
@@ -1268,6 +1312,25 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         """Override to silence standard HTTP logging."""
         pass
 
+    def send_response(self, code, message=None):
+        """Track whether a response was started, so a failure never sends a second one."""
+        self._responded = True
+        super().send_response(code, message)
+
+    def send_failure(self, exc: Exception) -> None:
+        """502 for a failed spawn setup (logged by type only), unless a response already started."""
+        log(f"request failed before agy ran: {type(exc).__name__}")
+        if getattr(self, "_responded", False):
+            return
+        body_bytes = json.dumps(
+            {"error": {"message": f"agy daemon error: {type(exc).__name__}", "type": "api_error", "code": 502}}
+        ).encode("utf-8")
+        self.send_response(502)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
     def do_GET(self):
         """Handle GET requests for health checks, usage/quota, and model listings."""
         if self.path in ["/health", "/status"]:
@@ -1397,14 +1460,20 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.handle_chat_completions(body)
             return
 
+        queued_at = time.monotonic()
         try:
             with spawn_slot():
                 if self.path == "/usage":
                     self.post_usage(body)
                 else:
-                    self.post_run(body)
+                    self.post_run(body, time.monotonic() - queued_at)
         except DaemonBusyError as exc:
-            self.send_busy(exc)
+            if self.path == "/run" and body.get("stream", False):
+                self.send_busy_ndjson(exc)
+            else:
+                self.send_busy(exc)
+        except OSError as exc:
+            self.send_failure(exc)
 
     def post_usage(self, body: dict):
         """POST /usage: quota table for a given model."""
@@ -1428,12 +1497,12 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_bytes)
 
-    def post_run(self, body: dict):
+    def post_run(self, body: dict, queued: float = 0.0):
         """POST /run: one agy --print run (tool-less agent), as JSON or streamed NDJSON."""
         prompt = body.get("prompt", "")
         model_override = body.get("model_override", "")
         conversation_id = body.get("conversation_id", None)
-        timeout = body.get("timeout", 600.0)
+        timeout = remaining_timeout(float(body.get("timeout", 600.0)), queued)
         stream = body.get("stream", False)
 
         if stream:
@@ -1550,6 +1619,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
 
                 # Retrieve last conversation ID
                 result_conv_id = get_last_conversation_id(work)
+                if result_conv_id:
+                    LAST_CONVERSATION["id"] = result_conv_id
 
                 # Write closing metadata
                 meta_json = (
@@ -1632,6 +1703,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 model_override = "gemini-3.8-flash-low"
 
         handler = self.stream_chat_completion if stream else self.complete_chat
+        queued_at = time.monotonic()
         try:
             with spawn_slot():
                 handler(
@@ -1639,7 +1711,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     model,
                     model_override,
                     conversation_id,
-                    timeout,
+                    remaining_timeout(timeout, time.monotonic() - queued_at),
                     effort_cli,
                     tools,
                     is_sse_mode,
@@ -1648,6 +1720,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                 )
         except DaemonBusyError as exc:
             self.send_busy(exc)
+        except OSError as exc:
+            self.send_failure(exc)
 
     def send_busy(self, exc: Exception) -> None:
         """503 so LiteLLM falls back to another deployment."""
@@ -1658,6 +1732,16 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         self.send_header("Retry-After", "5")
         self.end_headers()
         self.wfile.write(body_bytes)
+
+    def send_busy_ndjson(self, exc: Exception) -> None:
+        """Busy answer for a streamed /run: the router reads a failed status line, not an HTTP code."""
+        line = json.dumps({"type": "status", "returncode": -1, "stderr": str(exc)}) + "\n"
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(line.encode("utf-8"))
 
     def stream_chat_completion(
         self,
@@ -1673,6 +1757,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
         plain_agent: bool,
     ) -> None:
         """Stream one chat completion as OpenAI SSE chunks."""
+        ensure_auth(timeout)
         with run_workspace(plain_agent) as (work, tmp):
             self.protocol_version = "HTTP/1.1"
             self.send_response(200)
@@ -1681,7 +1766,6 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
 
-            ensure_auth(timeout)
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
@@ -1903,6 +1987,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                     safe_write(b"data: " + json.dumps(err_chunk).encode("utf-8") + b"\n\n")
                     return
 
+                record_login(True, "agy run succeeded")
                 if intercepted_tool_call:
                     tool_chunk = {
                         "id": chunk_id,
@@ -2111,6 +2196,8 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
             loop.close()
 
         retcode = exec_res.get("returncode", 0)
+        if retcode == 0:
+            record_login(True, "agy run succeeded")
         if retcode != 0:
             err_text = exec_res.get("stderr") or exec_res.get("stdout") or "Unknown error"
             err_lower = err_text.lower()

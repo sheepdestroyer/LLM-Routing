@@ -470,8 +470,10 @@ Isolation and limits (`scripts/host_agy_daemon.py`):
   (`auth`, `daemon_auth`, `refresh_token_present`).
 - **systemd sandbox** (installed by `start-stack.sh` in the prod namespace): `StateDirectory=agy-daemon`,
   `WorkingDirectory=%S/agy-daemon`, `NoNewPrivileges=yes`, `PrivateTmp=yes`, `ProtectSystem=strict` with
-  `ReadWritePaths=%S/agy-daemon %h/.gemini/antigravity-cli %h/.cache`: autonomous native tools cannot write outside
-  these paths.
+  `ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache`: autonomous native tools cannot write outside the state
+  directory and these paths.
+- **Cutover note**: conversations created before this version live in the host HOME; their IDs do not resolve in the
+  daemon HOME, so an in-flight router session starts a new agy conversation once.
 
 Dev qualification of a candidate daemon: run it on another port (for example with `systemd-run --user` and
 `AGY_PORT=5016 AGY_DAEMON_STATE_DIR=~/.local/state/agy-daemon-dev`) and start the dev stack with
@@ -500,26 +502,16 @@ Then redeploy (no rebuild needed):
 The router container in `pod.yaml` defaults to `info` for operational visibility.
 Uvicorn's log level follows the same env var via `${LOG_LEVEL:-warning}` in the pod args.
 
-**Security hardening** applied to the unit:
+**Security hardening** of `agy-daemon.service` (installed by `start-stack.sh` in the `llm-routing-prod` namespace; `scripts/agy-daemon.service` is the reference copy, with `ExecStart` on `~/prod/LLM-Routing`):
 
 | Setting | Value | Purpose |
 |---|---|---|
-| `NoNewPrivileges` | `yes` | Prevents privilege escalation via setuid/setgid |
-| `PrivateTmp` | `yes` | Isolates `/tmp` namespace for the daemon |
-| `PrivateDevices` | `yes` | Restricts access to `/dev` (no raw disk/device access) |
-| `ProtectSystem` | `strict` | Makes `/usr` and `/etc` read-only |
-| `ProtectHome` | `read-only` | The user home directory is read-only except specific paths |
-| `ProtectKernelTunables` | `yes` | Makes `/sys` and `/proc/sys` read-only |
-| `ProtectKernelModules` | `yes` | Blocks loading or listing kernel modules |
-| `ProtectControlGroups` | `yes` | Makes cgroup filesystem read-only |
-| `ProtectClock` | `yes` | Blocks system clock manipulation |
-| `ReadWritePaths` | `~/.gemini /tmp` | Writable paths for Gemini cache and agy temp data |
-| `ReadOnlyPaths` | `~/.local/bin/agy` | Explicit read-only mount for the agy binary |
-| `RestrictSUIDSGID` | `yes` | Blocks creation of setuid/setgid files |
-| `RestrictRealtime` | `yes` | Blocks realtime scheduling policies |
-| `LockPersonality` | `yes` | Blocks execution domain changes |
-| `RemoveIPC` | `yes` | Cleans up System V / POSIX IPC on service stop |
-| `SystemCallArchitectures` | `native` | Restricts syscalls to native architecture only |
+| `StateDirectory` / `StateDirectoryMode` | `agy-daemon` / `0700` | Creates `~/.local/state/agy-daemon` (daemon HOME and run workspaces), always writable |
+| `WorkingDirectory` | `%S/agy-daemon` | The daemon never runs in `$HOME` |
+| `NoNewPrivileges` | `yes` | No privilege escalation via setuid/setgid |
+| `PrivateTmp` | `yes` | Private `/tmp` and `/var/tmp` |
+| `ProtectSystem` | `strict` | Whole file system read-only except the paths below (user units get `PrivateUsers=self` implicitly) |
+| `ReadWritePaths` | `-%h/.gemini/antigravity-cli -%h/.cache` | Host login write-back after a refresh, and the `agy-run` lock |
 
 Unit file location: `~/.config/systemd/user/agy-daemon.service`
 

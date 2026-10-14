@@ -172,12 +172,14 @@ def test_run_workspace(monkeypatch):
 
 
 def test_prepare_home_writes_config_and_prunes_cache():
-    os.makedirs(d.RUNS_DIR, exist_ok=True)
-    live = os.path.join(d.RUNS_DIR, "run-live")
-    os.makedirs(live)
+    os.makedirs(os.path.join(d.RUNS_DIR, "run-crashed", "work"))
+    os.makedirs(os.path.join(d.STATE_DIR, "refresh-crashed", ".gemini"))
+    os.makedirs(os.path.join(d.STATE_DIR, "keep-me"))
     gone = os.path.join(d.RUNS_DIR, "run-gone")
-    write_json(d.CACHE_FILE, {gone: "c1", live: "c2", "/elsewhere": "c3"})
+    write_json(d.CACHE_FILE, {gone: "c1", "/elsewhere": "c3"})
     d.prepare_home()
+    assert os.listdir(d.RUNS_DIR) == []
+    assert "refresh-crashed" not in os.listdir(d.STATE_DIR) and "keep-me" in os.listdir(d.STATE_DIR)
     config = os.path.join(d.DAEMON_HOME, ".gemini", "config")
     assert json.load(open(os.path.join(config, "mcp_config.json"))) == {"mcpServers": {}}
     hooks = json.load(open(os.path.join(config, "hooks.json")))
@@ -190,10 +192,15 @@ def test_prepare_home_writes_config_and_prunes_cache():
     write_json(d.HOST_SETTINGS_PATH, {"useG1Credits": True, "permissions": {"allow": ["command(cat)"]}})
     d.prepare_home()
     assert json.load(open(settings_path))["useG1Credits"] is True
-    assert json.load(open(d.CACHE_FILE)) == {live: "c2", "/elsewhere": "c3"}
-    # Nothing left to prune: the file is not rewritten.
+    assert json.load(open(d.CACHE_FILE)) == {"/elsewhere": "c3"}
+    # A live run keeps its entry; nothing to prune leaves the file untouched.
+    live = os.path.join(d.RUNS_DIR, "run-live")
+    os.makedirs(live)
+    write_json(d.CACHE_FILE, {gone: "c1", live: "c2"})
+    d.prune_conversation_cache()
+    assert json.load(open(d.CACHE_FILE)) == {live: "c2"}
     before = os.stat(d.CACHE_FILE).st_mtime_ns
-    d.prepare_home()
+    d.prune_conversation_cache()
     assert os.stat(d.CACHE_FILE).st_mtime_ns == before
 
 
@@ -374,9 +381,10 @@ def test_refresh_host_login_spawn_error(tmp_path, monkeypatch):
 
 def test_install_host_copy():
     daemon_path = d.daemon_token_path()
-    assert d._install_host_copy(None, None) is False
-    assert d._install_host_copy(token_doc(100), token_doc(200)) is False
-    assert d._install_host_copy(token_doc(300), token_doc(200)) is True
+    assert d._install_host_copy(None) is False
+    write_json(daemon_path, token_doc(200))
+    assert d._install_host_copy(token_doc(100)) is False
+    assert d._install_host_copy(token_doc(300)) is True
     assert stat.S_IMODE(os.stat(daemon_path).st_mode) == 0o600
 
 
@@ -396,6 +404,7 @@ def test_ensure_auth_copies_host():
 
 
 def test_ensure_auth_refreshes(monkeypatch):
+    monkeypatch.setattr(d, "_REFRESH_STATE", {"retry_after": 0.0})
     write_json(d.CLI_TOKEN_PATH, token_doc(60))
 
     def refresh():
@@ -407,6 +416,7 @@ def test_ensure_auth_refreshes(monkeypatch):
 
 
 def test_ensure_auth_other_consumer_refreshed_while_waiting(monkeypatch):
+    monkeypatch.setattr(d, "_REFRESH_STATE", {"retry_after": 0.0})
     write_json(d.CLI_TOKEN_PATH, token_doc(60))
 
     @contextlib.contextmanager
@@ -423,20 +433,40 @@ def test_ensure_auth_other_consumer_refreshed_while_waiting(monkeypatch):
     assert json.load(open(d.daemon_token_path()))["token"]["access_token"] == "at-other"
 
 
-def test_ensure_auth_lock_timeout(monkeypatch):
+def test_ensure_auth_lock_timeout_then_backoff(monkeypatch):
+    monkeypatch.setattr(d, "_REFRESH_STATE", {"retry_after": 0.0})
     write_json(d.CLI_TOKEN_PATH, token_doc(60))
+    waits = []
 
     @contextlib.contextmanager
     def lock(timeout):
+        waits.append(timeout)
         raise TimeoutError("busy")
         yield  # pragma: no cover
 
     monkeypatch.setattr(d, "agy_lock", lock)
     assert REAL_ENSURE_AUTH(600) == "lock-timeout"
     assert os.path.exists(d.daemon_token_path())
+    # Within the backoff, request threads do not wait for the lock again.
+    assert REAL_ENSURE_AUTH(600) == "backoff"
+    # The live-check thread ignores the backoff and waits longer.
+    assert REAL_ENSURE_AUTH(600, background=True) == "lock-timeout"
+    assert waits == [d.REQUEST_LOCK_TIMEOUT, d.LOCK_TIMEOUT]
+
+
+def test_ensure_auth_os_error(monkeypatch):
+    write_json(d.CLI_TOKEN_PATH, token_doc(3000))
+
+    def broken(path, text):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(d, "write_private_atomic", broken)
+    assert REAL_ENSURE_AUTH(600) == "error"
+    assert d.AUTH_STATE["detail"] == "error"
 
 
 def test_ensure_auth_refresh_failed(monkeypatch):
+    monkeypatch.setattr(d, "_REFRESH_STATE", {"retry_after": 0.0})
     write_json(d.CLI_TOKEN_PATH, token_doc(60))
 
     def refresh():
@@ -647,3 +677,70 @@ def test_run_server_starts_live_check(monkeypatch):
         time.sleep(0.01)
     assert started == [600.0]
     assert os.path.exists(os.path.join(d.DAEMON_HOME, ".gemini", "config", "hooks.json"))
+
+
+def test_busy_streamed_run_reports_failed_status(server, no_slots):
+    req = urllib.request.Request(f"{server}/run", data=json.dumps({"prompt": "hi", "stream": True}).encode())
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        line = json.loads(resp.read().decode().splitlines()[0])
+    assert line["type"] == "status" and line["returncode"] == -1 and "capacity" in line["stderr"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("POST", "/run", {"prompt": "hi"}),
+        ("POST", "/v1/chat/completions", {"model": "agy-gemini", "messages": [{"role": "user", "content": "hi"}]}),
+        (
+            "POST",
+            "/v1/chat/completions",
+            {"model": "agy-gemini", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
+        ),
+    ],
+)
+def test_setup_failure_returns_502(server, monkeypatch, method, path, payload):
+    @contextlib.contextmanager
+    def broken(plain_agent):
+        raise OSError("no space left")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(d, "run_workspace", broken)
+    data = json.dumps(payload).encode() if payload is not None else None
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(urllib.request.Request(f"{server}{path}", data=data, method=method), timeout=5)
+    assert exc.value.code == 502
+    assert json.loads(exc.value.read())["error"]["message"] == "agy daemon error: OSError"
+
+
+def test_failure_after_response_started_sends_nothing_more(capsys):
+    handler = d.AgyDaemonHandler.__new__(d.AgyDaemonHandler)
+    handler._responded = True
+    handler.send_failure(OSError("late"))
+    assert "request failed before agy ran: OSError" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_successful_print_run_records_login_and_conversation(monkeypatch):
+    monkeypatch.setattr(d, "LOGIN_STATE", {"verified": False, "checked_at": None, "detail": "", "models": 0})
+    monkeypatch.setattr(d, "LAST_CONVERSATION", {"id": None})
+    monkeypatch.setattr(d, "get_last_conversation_id", lambda cwd=None: "conv-9")
+
+    async def fake_exec(*cmd, **kwargs):
+        with open(kwargs["stdout"].name, "w") as f:
+            f.write("answer")
+        proc = AsyncMock()
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr(d.asyncio, "create_subprocess_exec", fake_exec)
+    res = await d.execute_agy_print("p")
+    assert res["conversation_id"] == "conv-9"
+    assert d.LAST_CONVERSATION["id"] == "conv-9"
+    assert d.login_status()["state"] == "verified"
+    assert d.health_payload()["last_conversation_id"] == "conv-9"
+
+
+def test_remaining_timeout():
+    assert d.remaining_timeout(0.1, 0.01) == 0.1
+    assert d.remaining_timeout(600.0, 30.0) == 570.0
+    assert d.remaining_timeout(10.0, 30.0) == 1.0

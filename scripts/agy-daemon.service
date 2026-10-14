@@ -20,11 +20,11 @@ StateDirectoryMode=0700
 WorkingDirectory=%S/agy-daemon
 Environment=AGY_DAEMON_STATE_DIR=%S/agy-daemon
 # Sandbox (user units get PrivateUsers=self implicitly): read-only file system except the state
-# directory, the host agy login directory (refresh write-back) and ~/.cache (agy-run lock).
+# directory (StateDirectory=), the host agy login directory (refresh write-back) and ~/.cache (agy-run lock).
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=%S/agy-daemon %h/.gemini/antigravity-cli %h/.cache
+ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache
 
 [Install]
 WantedBy=default.target

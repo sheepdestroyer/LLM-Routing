@@ -36,6 +36,6 @@ def _isolate_agy_daemon_state(tmp_path, monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "CLI_TOKEN_PATH", str(tmp_path / "host-token.json"))
     monkeypatch.setattr(host_agy_daemon, "HOST_SETTINGS_PATH", str(tmp_path / "host-settings.json"))
     monkeypatch.setattr(host_agy_daemon, "AGY_RUN_LOCK", str(tmp_path / "agy-run.lock"))
-    monkeypatch.setattr(host_agy_daemon, "ensure_auth", lambda run_timeout: "daemon")
+    monkeypatch.setattr(host_agy_daemon, "ensure_auth", lambda run_timeout, background=False: "daemon")
     monkeypatch.setattr(host_agy_daemon, "LIVE_CHECK_INTERVAL", 0.0)
     yield
