@@ -18,6 +18,7 @@ import logging
 import os
 import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -756,7 +757,12 @@ class ModelRegistrySync:
         ]
 
     def build_openrouter_models(self) -> list[dict[str, Any]]:
-        """Build model definitions for OpenRouter models."""
+        """Register routing only; provider metadata belongs to the reconciler.
+
+        Existing explicit fields are preserved as overrides/adoption-needed, not
+        silently claimed or removed. New deployments omit invented limits,
+        prices, capabilities and mode so the exact catalog can populate them.
+        """
         return [
             {
                 "model_name": "openrouter-auto",
@@ -764,15 +770,7 @@ class ModelRegistrySync:
                     "model": "openrouter/openrouter/auto",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 2000000,
-                    "max_input_tokens": 2000000,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
             {
                 "model_name": "openrouter-gpt-5.6-luna",
@@ -782,17 +780,7 @@ class ModelRegistrySync:
                     "reasoning_effort": "max",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
             {
                 "model_name": "openrouter-gpt-5.6-luna-max",
@@ -802,17 +790,7 @@ class ModelRegistrySync:
                     "reasoning_effort": "max",
                     "request_timeout": 120,
                 },
-                "model_info": {
-                    "mode": "chat",
-                    "max_tokens": 1050000,
-                    "max_input_tokens": 1050000,
-                    "input_cost_per_token": 0.0000002,
-                    "output_cost_per_token": 0.0000012,
-                    "supports_vision": True,
-                    "supports_reasoning": True,
-                    "supports_function_calling": True,
-                    "is_public_model_group": True,
-                },
+                "model_info": {"is_public_model_group": True},
             },
         ]
 
@@ -864,31 +842,24 @@ class ModelRegistrySync:
         # Compare all configured litellm_params
         params_drift = any(current_params.get(k) != new_params.get(k) for k in new_params)
 
-        # Compare critical capabilities and limits in model_info
-        info_keys = (
-            "supports_vision",
-            "supports_reasoning",
-            "supports_function_calling",
-            "max_tokens",
-            "max_input_tokens",
-            "mode",
-        )
-        info_drift = any(current_info.get(k) != new_info.get(k) for k in info_keys if k in new_info)
+        # Compare every configured field, excluding identity and volatile server fields.
+        volatile_info = {"id", "db_model", "created_at", "updated_at"}
+        info_changes = {k: v for k, v in new_info.items() if k not in volatile_info and current_info.get(k) != v}
+        info_drift = bool(info_changes)
 
         if not params_drift and not info_drift:
             return ("unchanged", False)
 
+        # Supported partial PATCH merges metadata without replacing provenance or
+        # unrelated fields. Never send existing secrets back from /model/info.
         update_payload = {
             "litellm_params": new_params,
-            "model_info": {
-                **new_info,
-                "id": model_id,
-            },
+            "model_info": {"id": model_id, **info_changes},
         }
 
         try:
-            resp = await client.post(
-                f"{self.litellm_url}/model/update",
+            resp = await client.patch(
+                f"{self.litellm_url}/model/{quote(str(model_id), safe='')}/update",
                 headers=self.headers,
                 json=update_payload,
                 timeout=10.0,
