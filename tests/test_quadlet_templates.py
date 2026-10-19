@@ -353,6 +353,16 @@ def test_postgres_checkpoint_logging_suppressed():
     assert block.count("\\\n") >= 2
 
 
+def test_clickhouse_logging_level_warning():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert "generate_clickhouse_config()" in script
+    gen_block = script[script.index("generate_clickhouse_config()") : script.index("render_litellm_config()")]
+    assert "<logger>" in gen_block
+    assert "<level>warning</level>" in gen_block
+    assert "<text_log>" in gen_block
+    assert "SYSTEM RELOAD CONFIG" in script
+
+
 def test_dev_stack_disabled_by_default_and_stop_command_supported():
     script = (ROOT / "start-stack.sh").read_text()
     assert "./start-stack.sh --stop | --down" in script

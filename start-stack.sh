@@ -624,6 +624,10 @@ verify_stack_health() {
                 -c "SELECT pg_reload_conf()" >/dev/null; then
                 echo "   ⚠️  Failed to apply log_checkpoints=off via ALTER SYSTEM (Exec= flag still covers it)" >&2
             fi
+            # Reload ClickHouse configuration so logger level overrides take effect immediately
+            if podman container exists "${POD_NAME}-clickhouse-db" 2>/dev/null; then
+                podman exec "${POD_NAME}-clickhouse-db" clickhouse-client --host 127.0.0.1 --port "${CLICKHOUSE_TCP_PORT}" --user clickhouse --password "${CLICKHOUSE_PASSWORD}" --query "SYSTEM RELOAD CONFIG" >/dev/null 2>&1 || true
+            fi
             break
         fi
         sleep 5
@@ -787,7 +791,7 @@ fi
 
 # ── ClickHouse port override XML & user profile settings ──
 # Writes minimal config.d and users.d XML overrides so ClickHouse listens on the
-# configured ports and parses bare integer DateTime64 ticks for Langfuse.
+# configured ports, sets loggers to warning level, and parses bare integer DateTime64 ticks for Langfuse.
 generate_clickhouse_config() {
     local config_dir="${DATA_ROOT}/clickhouse-config"
     mkdir -p "$config_dir"
@@ -796,6 +800,13 @@ generate_clickhouse_config() {
     <http_port>${CLICKHOUSE_HTTP_PORT}</http_port>
     <tcp_port>${CLICKHOUSE_TCP_PORT}</tcp_port>
     <interserver_http_port>${CLICKHOUSE_INTERSERVER_PORT}</interserver_http_port>
+    <logger>
+        <level>warning</level>
+        <console>1</console>
+    </logger>
+    <text_log>
+        <level>warning</level>
+    </text_log>
 </clickhouse>
 EOF
     cat > "${config_dir}/settings-override.xml" << EOF
