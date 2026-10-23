@@ -80,6 +80,13 @@ litellm_settings:
   - agy-gemini:
     - strata-qwen
     - locallama-qwen
+  # strata-qwen (GX10 LAN) falls back to the LOCAL llama-router only. locallama-qwen is the
+  # same llama-router preset as local-qwen (alias of [Qwen3.8-27B-spec], sampling from
+  # model_presets.ini) but, unlike local-qwen, has no fallbacks of its own: LiteLLM follows
+  # the fallbacks of a fallback target, and local-qwen escalates to Ollama/OpenRouter (cloud).
+  # Security-log analysis must never leave the LAN.
+  - strata-qwen:
+    - locallama-qwen
   - agy-gemini-sse:
     - agy-opus-sse
     - agent-advanced-core
@@ -390,6 +397,9 @@ model_list:
     api_key: local-token
     model: openai/strata-qwen
     request_timeout: 600
+    # Streaming clients (Hermes) give up on a dead GX10 after 120 s between chunks/connect
+    # instead of the 600 s non-streaming budget.
+    stream_timeout: 120
   model_name: strata-qwen
   model_info:
     supports_vision: false
@@ -399,6 +409,16 @@ model_list:
     max_tokens: 262144
     max_input_tokens: 262144
     is_public_model_group: true
+    # Deployment-level cooldown override (router-wide allowed_fails: 0 / cooldown_time: 300
+    # put strata-qwen in a 300 s cooldown after a single connection error on 2026-10-23,
+    # answering every retry with 429 "No deployments available"). Tolerate one failure so the
+    # retry policy below gets a real second attempt, then cool down briefly and let the
+    # local fallback (locallama-qwen) answer.
+    allowed_fails_policy:
+      InternalServerErrorAllowedFails: 1
+      TimeoutErrorAllowedFails: 1
+      RateLimitErrorAllowedFails: 1
+    cooldown_time: 60
 
 - litellm_params:
     api_base: STRATA_SERVER_URL_PLACEHOLDER
@@ -438,6 +458,19 @@ router_settings:
   cooldown_time: 300
   enable_pre_call_checks: false
   num_retries: 1
+  # strata-qwen: retry connection errors / 5xx / timeouts (exponential backoff 0.5 s, 1 s, ...
+  # for single-deployment groups) before the locallama-qwen fallback; never retry 4xx.
+  model_group_retry_policy:
+    strata-qwen:
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 2
+      TimeoutErrorRetries: 1
+      RateLimitErrorRetries: 1
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+      NotFoundErrorRetries: 0
+      DefaultRetries: 1
   routing_strategy: latency-based-routing
   enable_health_check_routing: false
 vector_store_settings:
