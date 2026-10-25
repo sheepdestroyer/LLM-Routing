@@ -105,7 +105,7 @@ spec:
       name: gemini-secrets
   # LLM Triage Router — classification + routing gateway
   - args:
-    - set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 0.0.0.0 --port ROUTER_PORT_PLACEHOLDER --log-level ${LOG_LEVEL:-warning} --timeout-graceful-shutdown 10
+    - set -a && . /config/.env && set +a && LITELLM_PORT=LITELLM_PORT_PLACEHOLDER VALKEY_CACHE_PORT=VALKEY_CACHE_PORT_PLACEHOLDER exec uvicorn main:app --host 127.0.0.1 --port ROUTER_PORT_PLACEHOLDER --log-level ${LOG_LEVEL:-warning} --timeout-graceful-shutdown 10
     command:
     - /bin/sh
     - -c
@@ -194,6 +194,8 @@ spec:
     - log_checkpoints=off
     - -c
     - log_min_messages=warning
+    - -c
+    - listen_addresses=127.0.0.1,::1
     env:
     - name: POSTGRES_USER
       value: postgres
@@ -341,7 +343,7 @@ spec:
     - name: ENCRYPTION_KEY
       value: ENCRYPTION_KEY_PLACEHOLDER
     - name: HOSTNAME
-      value: 0.0.0.0
+      value: 127.0.0.1
     - name: PORT
       value: 'LANGFUSE_WEB_PORT_PLACEHOLDER'
     - name: TELEMETRY_ENABLED
@@ -433,7 +435,7 @@ spec:
     - name: REDIS_AUTH
       value: REDIS_AUTH_PLACEHOLDER
     - name: HOSTNAME
-      value: 0.0.0.0
+      value: 127.0.0.1
     - name: PORT
       value: 'LANGFUSE_WORKER_PORT_PLACEHOLDER'
     - name: TELEMETRY_ENABLED
@@ -470,9 +472,9 @@ spec:
     - --quiet
     - /data
     - --address
-    - ":MINIO_S3_PORT_PLACEHOLDER"
+    - "127.0.0.1:MINIO_S3_PORT_PLACEHOLDER"
     - --console-address
-    - ":MINIO_CONSOLE_PORT_PLACEHOLDER"
+    - "127.0.0.1:MINIO_CONSOLE_PORT_PLACEHOLDER"
     env:
     - name: MINIO_ROOT_USER
       value: MINIO_USER_PLACEHOLDER

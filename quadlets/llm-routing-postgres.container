@@ -16,7 +16,7 @@ Environment=POSTGRES_DB=langfuse
 Environment=PGDATA=/var/lib/postgresql/data/pg18
 Environment=PGPORT=POSTGRES_PORT_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/postgres-data:/var/lib/postgresql
-Exec=postgres -c log_checkpoints=off -c log_min_messages=warning
+Exec=postgres -c log_checkpoints=off -c log_min_messages=warning -c listen_addresses=127.0.0.1,::1
 HealthCmd=pg_isready -U postgres -p POSTGRES_PORT_PLACEHOLDER
 HealthInterval=10s
 HealthTimeout=5s

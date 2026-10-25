@@ -591,3 +591,12 @@ def test_client_auth_log_routing_stdout_vs_stderr():
     assert "Prisma failure" in stderr_output
     assert "[Traceback:" in stderr_output
     assert "Prisma engine query failed fatally" in stderr_output
+
+
+def test_litellm_binds_loopback_only():
+    # AGENTS.md E3: the pod runs with Network=host and the litellm CLI defaults to
+    # --host 0.0.0.0, so the entrypoint must pin the proxy to loopback.
+    assert entrypoint.litellm_host == os.environ.get("LITELLM_HOST", "127.0.0.1")
+    src = open("litellm/entrypoint.py").read()
+    assert '"--host", litellm_host' in src
+    assert 'os.environ.get("LITELLM_HOST") or "127.0.0.1"' in src
