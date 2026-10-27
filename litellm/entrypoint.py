@@ -392,5 +392,7 @@ except Exception as e:
     sys.stderr.write(f"⚠️ Warning: Failed to configure custom single-line logging: {e}\n")
 
 litellm_port = os.environ.get("LITELLM_PORT") or os.environ.get("PORT") or "4000"
-sys.argv = ["litellm", "--config", "/app/config.yaml", "--port", litellm_port]
+# Loopback only (AGENTS.md E3): the pod uses Network=host and the litellm CLI defaults to --host 0.0.0.0.
+litellm_host = os.environ.get("LITELLM_HOST") or "127.0.0.1"
+sys.argv = ["litellm", "--config", "/app/config.yaml", "--host", litellm_host, "--port", litellm_port]
 run_server()

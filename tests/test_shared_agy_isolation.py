@@ -38,5 +38,15 @@ def test_shared_agy_management_is_production_only(tmp_path, namespace):
         assert unit.read_text() == "existing production unit\n"
         assert not log.exists()
     else:
-        assert str(ROOT / "scripts/host_agy_daemon.py") in unit.read_text()
+        text = unit.read_text()
+        assert str(ROOT / "scripts/host_agy_daemon.py") in text
+        for directive in (
+            "StateDirectory=agy-daemon",
+            "WorkingDirectory=%S/agy-daemon",
+            "NoNewPrivileges=yes",
+            "PrivateTmp=yes",
+            "ProtectSystem=strict",
+            "ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache",
+        ):
+            assert directive in text
         assert "restart agy-daemon.service" in log.read_text()

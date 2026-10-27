@@ -244,6 +244,17 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=agy-daemon
+# Private state: daemon HOME (no host MCP servers, hooks, plugins or skills) and per-run workspaces.
+StateDirectory=agy-daemon
+StateDirectoryMode=0700
+WorkingDirectory=%S/agy-daemon
+Environment=AGY_DAEMON_STATE_DIR=%S/agy-daemon
+# Sandbox (user units get PrivateUsers=self implicitly): read-only file system except the state
+# directory (StateDirectory=), the host agy login directory (refresh write-back) and ~/.cache (agy-run lock).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache
 
 [Install]
 WantedBy=default.target"
@@ -448,7 +459,7 @@ import sys
 
 # Explicit allowlist: never copy unrelated host credentials into containers.
 APPLICATION_ENV = {
-    "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
+    "AGY_DAEMON_URL", "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
     "CLICKHOUSE_TCP_PORT", "DATA_ROOT", "LANGFUSE_INIT_USER_PASSWORD",
     "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_WEB_PORT",
     "LANGFUSE_WORKER_PORT", "LLAMA_CLASSIFIER_URL", "LLAMA_SERVER_URL",
@@ -608,10 +619,19 @@ verify_stack_health() {
             # needs its own -c. Failure is surfaced as a warning instead of being
             # swallowed; the Quadlet Exec= flags already set log_checkpoints=off, but
             # ALTER SYSTEM keeps the tuning durable in postgresql.auto.conf.
+            # listen_addresses is enforced by the Exec= -c flag (loopback only, AGENTS.md E3);
+            # mirroring it in postgresql.auto.conf keeps the image's postgresql.conf
+            # listen_addresses='*' from making every reload log "cannot be changed without
+            # restarting the server" / "configuration file contains errors".
             if ! podman exec "${POD_NAME}-postgres-db" psql -U postgres -p "${POSTGRES_PORT}" -d postgres \
                 -c "ALTER SYSTEM SET log_checkpoints = 'off'" \
+                -c "ALTER SYSTEM SET listen_addresses = '127.0.0.1,::1'" \
                 -c "SELECT pg_reload_conf()" >/dev/null; then
-                echo "   ⚠️  Failed to apply log_checkpoints=off via ALTER SYSTEM (Exec= flag still covers it)" >&2
+                echo "   ⚠️  Failed to apply log_checkpoints=off / listen_addresses via ALTER SYSTEM (Exec= flags still cover them)" >&2
+            fi
+            # Reload ClickHouse configuration so logger level overrides take effect immediately
+            if podman container exists "${POD_NAME}-clickhouse-db" 2>/dev/null; then
+                podman exec "${POD_NAME}-clickhouse-db" clickhouse-client --host 127.0.0.1 --port "${CLICKHOUSE_TCP_PORT}" --user clickhouse --password "${CLICKHOUSE_PASSWORD}" --query "SYSTEM RELOAD CONFIG" >/dev/null 2>&1 || true
             fi
             break
         fi
@@ -776,15 +796,34 @@ fi
 
 # ── ClickHouse port override XML & user profile settings ──
 # Writes minimal config.d and users.d XML overrides so ClickHouse listens on the
-# configured ports and parses bare integer DateTime64 ticks for Langfuse.
+# configured ports, sets loggers to warning level, and parses bare integer DateTime64 ticks for Langfuse.
+# Loopback only (AGENTS.md E3): the official image ships config.d/docker_related_config.xml with
+# <listen_host>::</listen_host> + <listen_host>0.0.0.0</listen_host>, and the pod runs with
+# Network=host, so without this override ClickHouse binds *:<http|tcp|9004|9005|interserver> on every
+# host interface. config.d files merge alphabetically (docker_related_config.xml, then
+# port-override.xml) and same-name elements are merged in order, so these two entries replace both
+# wildcard entries. The MySQL (9004) and PostgreSQL (9005) wire-protocol listeners of the default
+# config.xml are unused by Langfuse and are not per-environment ports (prod and dev would collide on
+# the shared host network), so they are removed.
 generate_clickhouse_config() {
     local config_dir="${DATA_ROOT}/clickhouse-config"
     mkdir -p "$config_dir"
     cat > "${config_dir}/port-override.xml" << EOF
 <clickhouse>
+    <listen_host>127.0.0.1</listen_host>
+    <listen_host>::1</listen_host>
+    <mysql_port remove="1"/>
+    <postgresql_port remove="1"/>
     <http_port>${CLICKHOUSE_HTTP_PORT}</http_port>
     <tcp_port>${CLICKHOUSE_TCP_PORT}</tcp_port>
     <interserver_http_port>${CLICKHOUSE_INTERSERVER_PORT}</interserver_http_port>
+    <logger>
+        <level>warning</level>
+        <console>1</console>
+    </logger>
+    <text_log>
+        <level>warning</level>
+    </text_log>
 </clickhouse>
 EOF
     cat > "${config_dir}/settings-override.xml" << EOF

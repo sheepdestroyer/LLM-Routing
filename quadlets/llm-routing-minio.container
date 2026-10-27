@@ -16,7 +16,7 @@ Environment=MINIO_ROOT_PASSWORD=MINIO_PASSWORD_PLACEHOLDER
 # pod.yaml used args: server ... with no command:, so image entrypoint
 # /usr/bin/docker-entrypoint.sh ran and consumed them. Quadlet Exec= sets args
 # the same way — image entrypoint stays, Exec provides the server args.
-Exec=server --quiet /data --address :MINIO_S3_PORT_PLACEHOLDER --console-address :MINIO_CONSOLE_PORT_PLACEHOLDER
+Exec=server --quiet /data --address 127.0.0.1:MINIO_S3_PORT_PLACEHOLDER --console-address 127.0.0.1:MINIO_CONSOLE_PORT_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/minio-data:/data
 HealthCmd=["curl", "-sf", "http://127.0.0.1:MINIO_S3_PORT_PLACEHOLDER/minio/health/live"]
 HealthInterval=15s

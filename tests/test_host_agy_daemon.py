@@ -111,12 +111,21 @@ def test_daemon_post_stream_false(daemon_server, monkeypatch):
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "last_conv_456")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: "last_conv_456")
 
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
 
-    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_abc", "--print", "test prompt")
+    assert captured.get("args") == (
+        host_agy_daemon.AGY_BINARY,
+        "--agent",
+        host_agy_daemon.PLAIN_AGENT,
+        "--disable-slash-commands",
+        "--conversation",
+        "conv_abc",
+        "--print",
+        "test prompt",
+    )
     assert captured.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "gpt-4"
     assert data["returncode"] == 0
     assert data["stdout"] == "mocked stdout output"
@@ -163,7 +172,7 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "last_conv_456")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: "last_conv_456")
 
     read_calls = 0
 
@@ -183,7 +192,14 @@ def test_daemon_post_stream_true(daemon_server, monkeypatch):
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
-    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--print", "test prompt")
+    assert captured.get("args") == (
+        host_agy_daemon.AGY_BINARY,
+        "--agent",
+        host_agy_daemon.PLAIN_AGENT,
+        "--disable-slash-commands",
+        "--print",
+        "test prompt",
+    )
     assert captured.get("env", {}).get("CASCADE_DEFAULT_MODEL_OVERRIDE") == "test-model"
     assert len(lines) == 3
     assert json.loads(lines[0]) == {"type": "token", "content": "token1\n"}
@@ -223,7 +239,7 @@ def test_daemon_post_stream_true_timeout(daemon_server, monkeypatch):
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: None)
 
     read_calls = 0
 
@@ -343,7 +359,7 @@ def test_daemon_post_stream_true_timeout_kill_fail(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: None)
 
     with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
@@ -368,7 +384,7 @@ def test_daemon_post_stream_true_wait_exception(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: None)
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: None)
 
     with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
@@ -461,8 +477,12 @@ def test_daemon_post_stream_false_unlink_error(daemon_server, monkeypatch):
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
 
-    def mock_unlink(path):
-        raise Exception("unlink failed")
+    real_unlink = os.unlink
+
+    def mock_unlink(path, *args, **kwargs):
+        if "agy_out_" in str(path) or "agy_err_" in str(path):
+            raise Exception("unlink failed")
+        return real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(host_agy_daemon.os, "unlink", mock_unlink)
 
@@ -485,14 +505,23 @@ def test_daemon_post_stream_true_with_conversation(daemon_server, monkeypatch):
         return mock_proc
 
     monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda: "conv_789")
+    monkeypatch.setattr(host_agy_daemon, "get_last_conversation_id", lambda *a, **k: "conv_789")
     monkeypatch.setattr(host_agy_daemon.os, "read", lambda fd, n: b"")
 
     with urllib.request.urlopen(req, timeout=5) as resp:
         content = resp.read().decode().strip()
         lines = content.split("\n")
 
-    assert captured.get("args") == (host_agy_daemon.AGY_BINARY, "--conversation", "conv_789", "--print", "test prompt")
+    assert captured.get("args") == (
+        host_agy_daemon.AGY_BINARY,
+        "--agent",
+        host_agy_daemon.PLAIN_AGENT,
+        "--disable-slash-commands",
+        "--conversation",
+        "conv_789",
+        "--print",
+        "test prompt",
+    )
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"type": "status", "returncode": 0, "conversation_id": "conv_789"}
 

@@ -4,22 +4,27 @@ Documentation=https://github.com/sheepdestroyer/LLM-Routing
 After=network.target
 Wants=network.target
 
+# Reference copy: start-stack.sh (llm-routing-prod namespace) installs the production unit
+# with ExecStart pointing at ~/prod/LLM-Routing/scripts/host_agy_daemon.py.
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/dev/LLM-Routing/scripts/host_agy_daemon.py
+ExecStart=/usr/bin/python3 %h/prod/LLM-Routing/scripts/host_agy_daemon.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=agy-daemon
-
-# Security hardening
+# Private state: daemon HOME (no host MCP servers, hooks, plugins or skills) and per-run workspaces.
+StateDirectory=agy-daemon
+StateDirectoryMode=0700
+WorkingDirectory=%S/agy-daemon
+Environment=AGY_DAEMON_STATE_DIR=%S/agy-daemon
+# Sandbox (user units get PrivateUsers=self implicitly): read-only file system except the state
+# directory (StateDirectory=), the host agy login directory (refresh write-back) and ~/.cache (agy-run lock).
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.gemini /tmp
-ReadOnlyPaths=%h/.local/bin/agy
+ReadWritePaths=-%h/.gemini/antigravity-cli -%h/.cache
 
 [Install]
 WantedBy=default.target

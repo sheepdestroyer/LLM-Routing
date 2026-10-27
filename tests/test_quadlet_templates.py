@@ -348,9 +348,23 @@ def test_postgres_checkpoint_logging_suppressed():
     assert "|| true" not in block
     assert "2>&1" not in block
     assert "Failed to apply log_checkpoints=off" in block
-    # Both statements are -c arguments of that single psql invocation (line continuations).
-    assert block.count("-c ") == 2
-    assert block.count("\\\n") >= 2
+    # All statements are -c arguments of that single psql invocation (line continuations).
+    assert block.count("-c ") == 3
+    assert block.count("\\\n") >= 3
+    # listen_addresses mirrored in postgresql.auto.conf before the reload (loopback only).
+    listen_arg = "-c \"ALTER SYSTEM SET listen_addresses = '127.0.0.1,::1'\""
+    assert script.count(listen_arg) == 1
+    assert alter_idx < script.index(listen_arg) < reload_idx
+
+
+def test_clickhouse_logging_level_warning():
+    script = (ROOT / "start-stack.sh").read_text()
+    assert "generate_clickhouse_config()" in script
+    gen_block = script[script.index("generate_clickhouse_config()") : script.index("render_litellm_config()")]
+    assert "<logger>" in gen_block
+    assert "<level>warning</level>" in gen_block
+    assert "<text_log>" in gen_block
+    assert "SYSTEM RELOAD CONFIG" in script
 
 
 def test_dev_stack_disabled_by_default_and_stop_command_supported():
@@ -424,3 +438,45 @@ def test_dev_stack_disabled_by_default_and_stop_command_supported():
         assert "default.target" not in dev_container
         # Container must still be tied to dev pod unit
         assert "WantedBy=llm-routing-dev-pod.service" in dev_container
+
+
+def test_host_network_services_bind_loopback_only():
+    # AGENTS.md E3/E5: the pod is a documented Network=host exception, so every
+    # service must bind loopback itself. Regression: ClickHouse's official image
+    # (config.d/docker_related_config.xml: listen_host :: + 0.0.0.0), postgres
+    # (listen_addresses='*'), minio (":port"), uvicorn/litellm (--host 0.0.0.0)
+    # listened on all interfaces, reachable from the firewalld trusted tailnet.
+    script = (ROOT / "start-stack.sh").read_text()
+    gen_block = script[script.index("generate_clickhouse_config()") : script.index("render_litellm_config()")]
+    port_xml = gen_block[gen_block.index('port-override.xml" << EOF') : gen_block.index("settings-override.xml")]
+    hosts = re.findall(r"<listen_host>([^<]*)</listen_host>", port_xml)
+    # Two entries are required to override both wildcard entries of the image config.
+    assert hosts == ["127.0.0.1", "::1"]
+    # Unused wire-protocol listeners (9004/9005) are dropped, not left on shared host ports.
+    assert '<mysql_port remove="1"/>' in port_xml
+    assert '<postgresql_port remove="1"/>' in port_xml
+
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    templates = {p.name: p.read_text() for p in QUADLETS.glob("*.container")}
+    combined = pod_yaml + "\n".join(templates.values())
+    assert "0.0.0.0" not in combined
+    assert not re.search(r"listen_host>\s*(::|0\.0\.0\.0)\s*<", combined)
+
+    assert "listen_addresses=127.0.0.1,::1" in templates["llm-routing-postgres.container"]
+    assert "- listen_addresses=127.0.0.1,::1" in pod_yaml
+
+    minio = templates["llm-routing-minio.container"]
+    assert "--address 127.0.0.1:MINIO_S3_PORT_PLACEHOLDER" in minio
+    assert "--console-address 127.0.0.1:MINIO_CONSOLE_PORT_PLACEHOLDER" in minio
+    assert '- "127.0.0.1:MINIO_S3_PORT_PLACEHOLDER"' in pod_yaml
+    assert '- "127.0.0.1:MINIO_CONSOLE_PORT_PLACEHOLDER"' in pod_yaml
+
+    assert "uvicorn main:app --host 127.0.0.1" in templates["llm-routing-router.container"]
+    assert "uvicorn main:app --host 127.0.0.1" in pod_yaml
+
+    for name in ("llm-routing-langfuse-web.container", "llm-routing-langfuse-worker.container"):
+        assert "Environment=HOSTNAME=127.0.0.1" in templates[name], name
+    assert pod_yaml.count("- name: HOSTNAME\n      value: 127.0.0.1") == 2
+
+    valkey_lines = [t for n, t in templates.items() if "valkey" in n]
+    assert valkey_lines and all("--bind 127.0.0.1" in t for t in valkey_lines)
