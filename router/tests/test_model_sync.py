@@ -262,7 +262,7 @@ async def test_upsert_model_create_errors(sync_engine, mock_client):
 @pytest.mark.asyncio
 async def test_upsert_model_update_on_drift(sync_engine, mock_client):
     mock_resp = MagicMock(status_code=200)
-    mock_client.post.return_value = mock_resp
+    mock_client.patch.return_value = mock_resp
 
     existing = {
         "agy-gemini": [
@@ -296,7 +296,7 @@ async def test_upsert_model_update_on_drift(sync_engine, mock_client):
 
 @pytest.mark.asyncio
 async def test_upsert_model_update_errors(sync_engine, mock_client):
-    mock_client.post.return_value = MagicMock(status_code=500, text="error")
+    mock_client.patch.return_value = MagicMock(status_code=500, text="error")
     existing = {
         "agy-gemini": [
             {
@@ -310,7 +310,7 @@ async def test_upsert_model_update_errors(sync_engine, mock_client):
     action, ok = await sync_engine.upsert_model(target, existing_grouped=existing)
     assert action == "failed"
 
-    mock_client.post.side_effect = Exception("network error")
+    mock_client.patch.side_effect = Exception("network error")
     action_err, ok_err = await sync_engine.upsert_model(target, existing_grouped=existing)
     assert action_err == "error"
 
@@ -387,6 +387,7 @@ async def test_admin_sync_models_endpoint():
     with (
         patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}),
         patch("router.main._authenticate_client_request", new_callable=AsyncMock, return_value="test-key"),
+        patch("router.main._get_metadata_sync", return_value=AsyncMock(reconcile=AsyncMock(return_value={}))),
         patch.object(ModelRegistrySync, "sync_all_models", mock_sync),
     ):
         resp = client.post("/admin/sync-models", headers={"Authorization": "Bearer test-key"})

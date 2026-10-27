@@ -6,6 +6,10 @@ The gateway exposes a unified OpenAI-compatible endpoint that dynamically assess
 
 ---
 
+## OpenRouter metadata refresh
+
+Stable client aliases can change their underlying model without a LiteLLM fork. The router reconciles OpenRouter database deployment metadata at startup and through periodic or authenticated manual scans, preserving deliberate overrides. See [OpenRouter model metadata refresh](docs/openrouter-model-metadata.md) for ownership, pricing, refresh bounds, admin commands and stock-LiteLLM limitations.
+
 ## 1. System Architecture
 
 The gateway runs as a rootless Podman pod (`prod-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
