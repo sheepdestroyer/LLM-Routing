@@ -204,6 +204,9 @@ def test_build_model_suites(sync_engine):
     assert any(m["model_name"] == "strata-qwen" for m in strata)
     assert any(m["model_name"] == "locallama-strata" for m in strata)
     assert any(m["model_name"] == "gb10-strata" for m in strata)
+    (vision,) = [m for m in strata if m["model_name"] == "strata-qwen-vl"]
+    assert vision["litellm_params"]["model"] == "openai/strata-qwen"
+    assert all(m["model_info"]["supports_vision"] is True for m in strata)
     sync_engine.strata_server_url = "http://127.0.0.1:8087/v1"
     strata2 = sync_engine.build_strata_models()
     assert strata2[0]["litellm_params"]["api_base"] == "http://127.0.0.1:8087/v1"
