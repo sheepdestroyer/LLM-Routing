@@ -89,10 +89,10 @@ litellm_settings:
   - strata-qwen:
     - locallama-qwen
   # strata-qwen-vl: the canonical vision/OCR route (TASK-353, owner decision 2026-10-30).
-  # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY the local llama-router vision profile
-  # [Qwen3.8-27B-vl] (locallama-qwen-vl, mmproj on, reasoning off). Case pages must never leave
-  # the LAN: locallama-qwen-vl / local-qwen-vl have no fallbacks of their own, and strata-qwen's
-  # text fallback (locallama-qwen, no mmproj) cannot read images.
+  # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY locallama-qwen-vl: the vision alias of
+  # the single llama-router preset [Qwen3.8-27B-spec] (mmproj on), sent with thinking off and the
+  # vl sampling defaults set on that deployment (AGENTS.md L1 exception). Case pages must never
+  # leave the LAN: locallama-qwen-vl / local-qwen-vl have no fallbacks of their own.
   - strata-qwen-vl:
     - locallama-qwen-vl
   - agy-gemini-sse:
