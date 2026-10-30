@@ -57,6 +57,7 @@ litellm_settings:
     - strata-qwen
     - locallama-strata
     - gb10-strata
+    - strata-qwen-vl
   fallbacks:
   - llm-routing-agy:
     - agy-opus
@@ -87,6 +88,13 @@ litellm_settings:
   # Security-log analysis must never leave the LAN.
   - strata-qwen:
     - locallama-qwen
+  # strata-qwen-vl: the canonical vision/OCR route (TASK-353, owner decision 2026-10-30).
+  # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY the local llama-router vision profile
+  # [Qwen3.8-27B-vl] (locallama-qwen-vl, mmproj on, reasoning off). Case pages must never leave
+  # the LAN: locallama-qwen-vl / local-qwen-vl have no fallbacks of their own, and strata-qwen's
+  # text fallback (locallama-qwen, no mmproj) cannot read images.
+  - strata-qwen-vl:
+    - locallama-qwen-vl
   - agy-gemini-sse:
     - agy-opus-sse
     - agent-advanced-core
@@ -402,7 +410,7 @@ model_list:
     stream_timeout: 120
   model_name: strata-qwen
   model_info:
-    supports_vision: false
+    supports_vision: true
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
@@ -427,7 +435,7 @@ model_list:
     request_timeout: 600
   model_name: locallama-strata
   model_info:
-    supports_vision: false
+    supports_vision: true
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
@@ -442,13 +450,41 @@ model_list:
     request_timeout: 600
   model_name: gb10-strata
   model_info:
-    supports_vision: false
+    # gb10-strata has no fallback: callers that must reach Strata alone (e.g. a two-reader
+    # comparison whose other reader is the local model) use it.
+    supports_vision: true
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
     max_tokens: 262144
     max_input_tokens: 262144
     is_public_model_group: true
+
+- litellm_params:
+    api_base: STRATA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    # Strata serves the aliases strata-qwen / locallama-strata / gb10-strata / qwen3.8-flash-next.
+    model: openai/strata-qwen
+    # A page takes ~30-45 s on Strata (up to ~300 s with hidden reasoning, ~480 s when both
+    # Strata slots are busy). 540 s leaves the local fallback (~25 s/page) a chance to answer
+    # inside the 600 s client budget of the DIVORCE-IA page reader.
+    request_timeout: 540
+  model_name: strata-qwen-vl
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
+    # Same deployment-level override as strata-qwen (section 9g of the manual): one failure does
+    # not cool Strata down, so the retry is a real second attempt; then 60 s on the local fallback.
+    allowed_fails_policy:
+      InternalServerErrorAllowedFails: 1
+      TimeoutErrorAllowedFails: 1
+      RateLimitErrorAllowedFails: 1
+    cooldown_time: 60
 
 redis_settings:
   redis_host: 127.0.0.1
@@ -465,6 +501,18 @@ router_settings:
       InternalServerErrorRetries: 2
       ServiceUnavailableErrorRetries: 2
       TimeoutErrorRetries: 1
+      RateLimitErrorRetries: 1
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+      NotFoundErrorRetries: 0
+      DefaultRetries: 1
+    # strata-qwen-vl: retry a connection error / 5xx once, never a timeout (a page that ran 540 s
+    # would run as long again); then the locallama-qwen-vl fallback.
+    strata-qwen-vl:
+      InternalServerErrorRetries: 1
+      ServiceUnavailableErrorRetries: 1
+      TimeoutErrorRetries: 0
       RateLimitErrorRetries: 1
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
