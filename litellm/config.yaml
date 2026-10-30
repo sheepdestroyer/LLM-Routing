@@ -186,6 +186,11 @@ model_list:
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): llama-router serves every
+    # Qwen3.8-27B alias from one preset, so the hass profile lives here as request defaults.
+    temperature: 0.7
+    top_p: 0.8
+    presence_penalty: 1.5
     request_timeout: 600
   model_name: locallama-qwen-hass
   model_info:
@@ -204,6 +209,11 @@ model_list:
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): llama-router serves every
+    # Qwen3.8-27B alias from one preset, so the hass profile lives here as request defaults.
+    temperature: 0.7
+    top_p: 0.8
+    presence_penalty: 1.5
     request_timeout: 600
   model_name: local-qwen-hass
   model_info:
@@ -269,6 +279,14 @@ model_list:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen-vl
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
+    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults.
+    temperature: 0.7
+    top_p: 0.8
+    seed: 3407
     request_timeout: 600
   model_name: locallama-qwen-vl
   model_info:
@@ -284,6 +302,14 @@ model_list:
     api_base: LLAMA_SERVER_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-vl
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
+    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults.
+    temperature: 0.7
+    top_p: 0.8
+    seed: 3407
     request_timeout: 600
   model_name: local-qwen-vl
   model_info:
