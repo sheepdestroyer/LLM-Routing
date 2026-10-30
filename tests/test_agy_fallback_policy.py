@@ -87,6 +87,28 @@ def test_strata_qwen_vl_vision_route_stays_on_the_lan():
     assert "strata-qwen-vl" in config["litellm_settings"]["public_model_groups"]
 
 
+def test_strata_qwen_vl_has_no_other_fallback_path():
+    """No LiteLLM fallback mechanism other than `fallbacks` can move a vision request off the LAN.
+
+    LiteLLM also falls back through `default_fallbacks`, a generic `*` entry, `context_window_fallbacks`
+    (ContextWindowExceededError), `content_policy_fallbacks` (ContentPolicyViolationError) and
+    deployment `order` levels; with none of them set, those errors use the `fallbacks` closure tested above.
+    """
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] / "litellm/config.yaml").read_text())
+    for section in ("litellm_settings", "router_settings"):
+        for key in ("default_fallbacks", "context_window_fallbacks", "content_policy_fallbacks"):
+            assert not config[section].get(key), (section, key)
+    keys = [name for entry in config["litellm_settings"]["fallbacks"] for name in entry]
+    assert "*" not in keys
+    assert all("*" not in d["model_name"] for d in config["model_list"])
+    closure = _fallback_closure(config, "strata-qwen-vl")
+    in_closure = [d for d in config["model_list"] if d["model_name"] in closure]
+    assert {d["model_name"] for d in in_closure} == closure
+    for dep in in_closure:  # every deployment of every group in the closure, not only the first one
+        assert dep["litellm_params"]["api_base"] in LOCAL_API_BASES, dep["model_name"]
+        assert "order" not in dep["litellm_params"], dep["model_name"]
+
+
 def test_strata_qwen_vl_retry_timeout_and_cooldown_policy():
     config = yaml.safe_load((Path(__file__).resolve().parents[1] / "litellm/config.yaml").read_text())
     policy = config["router_settings"]["model_group_retry_policy"]["strata-qwen-vl"]

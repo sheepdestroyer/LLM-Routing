@@ -267,7 +267,8 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
 | `local-qwen` (aliases: `local-qwen-hass`, `gpt-4o-mini`, `gpt-4o`) | ❌ | Local GPU llama.cpp (`Qwen3.8-27B`) | Direct local llama-server | 240K (240,896 tok) |
-| `local-qwen-vl` (alias: `locallama-qwen-vl`) | ❌ | Local GPU llama.cpp (`Qwen3-VL-32B`) | Direct local multimodal vision | 64K (65,536 tok) |
+| `strata-qwen-vl` | ❌ | Strata on the GX10 (`Qwen3.8-Flash-Next`, vision) | LiteLLM `locallama-qwen-vl` only (never cloud) | 262K |
+| `local-qwen-vl` (alias: `locallama-qwen-vl`) | ❌ | Local GPU llama.cpp vision profile (`model_presets.ini`) | None (direct local multimodal vision) | 64K (65,536 tok) |
 | `local-qwen-routing` | ❌ | Local CPU llama.cpp (`Qwen3.5-4B`) | Direct local classifier | 8K (8,192 tok) |
 | `openrouter-gpt-5.6-luna` (aliases: `openrouter-gpt-5.6-luna-max`, `gpt-5.6-luna`) | ❌ | OpenRouter (`openai/gpt-5.6-luna`, max reasoning) | Direct OpenRouter | 1.05M |
 | `ollama/GPT-5.6 Luna (max)` (aliases: `ollama-gpt-5.6-luna-max`, `ollama/gpt-5.6-luna`, `ollama-gpt-5.6-luna`) | ❌ | Ollama (`gpt-5.6-luna`, max reasoning) | Direct Ollama | 1.05M |
@@ -292,6 +293,7 @@ Orchestrates routing fallback chains, Redis caching, and telemetry callbacks:
   - `collection_name: "litellm_semantic_cache"` — stores embeddings for similarity-based cache lookups
 - **Shared agy daemon isolation**: only the `llm-routing-prod` deployment namespace manages `agy-daemon.service`. Dev deployments probe the existing daemon without rewriting its unit or restarting it. Start/restore that shared host dependency separately when required.
 - **Gemini delegation fallbacks**: `agy-gemini` → `strata-qwen` → `locallama-qwen` (canonical local Qwen model). This chain is local-only after Gemini: no Opus, free-tier groups, Ollama, or OpenRouter fallback. `agy-opus` falls back through `agy-gemini` → `strata-qwen` → `locallama-qwen`, with no return edge from Gemini to Opus. SSE variants and other model chains remain unchanged.
+- **Vision route (`strata-qwen-vl`)**: Strata on the GX10 first (`request_timeout` 540 s; one retry on a connection error or 5xx, none on a timeout; 60 s deployment cooldown), then only `locallama-qwen-vl`, which has no fallback of its own. Case-document page images never leave the LAN. `tests/test_agy_fallback_policy.py` asserts the fallback closure, that every deployment in it is local, and that no default, generic `*`, context-window or content-policy fallback exists.
 - **Cascading Fallback Chains** (configured in `litellm_settings.fallbacks`):
   Each tier escalates through increasingly capable free models, then the local llama.cpp safety net (`local-qwen`), then the paid/remote Ollama tier, and finally falls back to `openrouter-auto` (LiteLLM's internal fallback to OpenRouter `/auto`).
 
