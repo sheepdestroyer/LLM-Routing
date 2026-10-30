@@ -35,6 +35,13 @@ DEPRECATED_MODEL_NAMES = [
 ]
 
 
+# Per-alias sampling for the single Qwen3.8-27B llama-router instance (AGENTS.md L1 amendment,
+# 2026-10-30): one preset serves local-qwen, -hass and -vl, so the hass and vision profiles are
+# request defaults here. Must match the deployments in litellm/config.yaml.
+HASS_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5}
+VL_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "seed": 3407}
+
+
 class ModelInfoFetchError(Exception):
     """Raised when /model/info cannot be fetched reliably from LiteLLM."""
 
@@ -288,6 +295,7 @@ class ModelRegistrySync:
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    **HASS_SAMPLING,
                 },
                 "model_info": {
                     "mode": "chat",
@@ -307,6 +315,7 @@ class ModelRegistrySync:
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    **HASS_SAMPLING,
                 },
                 "model_info": {
                     "mode": "chat",
@@ -361,6 +370,8 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    **VL_SAMPLING,
                 },
                 "model_info": {
                     "mode": "chat",
@@ -379,6 +390,8 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    **VL_SAMPLING,
                 },
                 "model_info": {
                     "mode": "chat",
