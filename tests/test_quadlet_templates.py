@@ -480,3 +480,55 @@ def test_host_network_services_bind_loopback_only():
 
     valkey_lines = [t for n, t in templates.items() if "valkey" in n]
     assert valkey_lines and all("--bind 127.0.0.1" in t for t in valkey_lines)
+
+
+def _quadlet_keys(text):
+    """Return the [Container] key=value lines of a Quadlet template as a dict of lists."""
+    keys = {}
+    for line in text.splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            keys.setdefault(key.strip(), []).append(value)
+    return keys
+
+
+def test_state_engines_run_an_init_to_reap_orphaned_exec_children():
+    # Incident 2026-10-31: a timed-out exec healthcheck child was reparented to the
+    # postmaster (PID 1), died of SIGPIPE and forced a full crash-restart. catatonit
+    # (RunInit=true, podman --init) must be PID 1 in every server-binary container
+    # that runs an exec healthcheck. RunInit= is the Quadlet key (not Init=).
+    for name in ("postgres", "clickhouse", "valkey-cache", "valkey-lf"):
+        text = (QUADLETS / f"llm-routing-{name}.container").read_text()
+        keys = _quadlet_keys(text)
+        assert keys.get("RunInit") == ["true"], name
+        assert "Init" not in keys, name
+        assert "--init" not in text, name
+
+
+def test_postgres_healthcheck_tolerates_host_io_stalls():
+    keys = _quadlet_keys((QUADLETS / "llm-routing-postgres.container").read_text())
+    assert keys["HealthCmd"] == ["pg_isready -q -U postgres -p POSTGRES_PORT_PLACEHOLDER"]
+    assert keys["HealthTimeout"] == ["15s"]
+    assert keys["HealthInterval"] == ["20s"]
+    assert keys["HealthRetries"] == ["9"]
+    assert keys["HealthStartPeriod"] == ["60s"]
+    assert keys["HealthOnFailure"] == ["kill"]
+
+    def seconds(value):
+        return int(value.rstrip("s"))
+
+    # Checks never overlap, and kill needs >= 3 min of consecutive failures (the
+    # 2026-10-31 stall lasted ~90 s).
+    assert seconds(keys["HealthTimeout"][0]) < seconds(keys["HealthInterval"][0])
+    assert seconds(keys["HealthInterval"][0]) * int(keys["HealthRetries"][0]) >= 180
+
+
+def test_postgres_probes_are_quiet_everywhere():
+    pod_yaml = (ROOT / "pod.yaml").read_text()
+    assert pod_yaml.count("- pg_isready\n        - -q\n") == 2
+    assert "      timeoutSeconds: 15\n      failureThreshold: 9\n    name: postgres-db" in pod_yaml
+    for script in ("scripts/backup.sh", "start-stack.sh"):
+        text = (ROOT / script).read_text()
+        for line in text.splitlines():
+            if "pg_isready" in line and "podman exec" in line:
+                assert " -q" in line, (script, line)

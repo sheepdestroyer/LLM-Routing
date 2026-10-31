@@ -38,7 +38,7 @@ if [ "$PG_RUNNING" != "true" ]; then
     log "⚠️  PostgreSQL container not running — skipping DB backup"
 else
     for i in {1..15}; do
-        if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
+        if podman exec "${POD_NAME}-postgres-db" pg_isready -q -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
             PG_READY=1
             log "✅ PostgreSQL is ready"
             break
