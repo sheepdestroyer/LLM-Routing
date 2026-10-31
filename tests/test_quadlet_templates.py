@@ -507,7 +507,7 @@ def test_state_engines_run_an_init_to_reap_orphaned_exec_children():
 
 def test_postgres_healthcheck_tolerates_host_io_stalls():
     keys = _quadlet_keys((QUADLETS / "llm-routing-postgres.container").read_text())
-    assert keys["HealthCmd"] == ["pg_isready -q -U postgres -p POSTGRES_PORT_PLACEHOLDER"]
+    assert keys["HealthCmd"] == ["pg_isready -q -h 127.0.0.1 -U postgres -p POSTGRES_PORT_PLACEHOLDER"]
     assert keys["HealthTimeout"] == ["15s"]
     assert keys["HealthInterval"] == ["20s"]
     assert keys["HealthRetries"] == ["9"]
@@ -525,13 +525,14 @@ def test_postgres_healthcheck_tolerates_host_io_stalls():
 
 def test_postgres_probes_are_quiet_everywhere():
     pod_yaml = (ROOT / "pod.yaml").read_text()
-    assert pod_yaml.count("- pg_isready\n        - -q\n") == 2
+    assert pod_yaml.count("- pg_isready\n        - -q\n        - -h\n        - 127.0.0.1\n") == 2
     assert "      timeoutSeconds: 15\n      failureThreshold: 9\n    name: postgres-db" in pod_yaml
     for script in ("scripts/backup.sh", "start-stack.sh"):
         text = (ROOT / script).read_text()
         for line in text.splitlines():
             if "pg_isready" in line and "podman exec" in line:
                 assert " -q" in line, (script, line)
+                assert " -h 127.0.0.1 " in line, (script, line)
 
 
 def test_postgres_password_is_a_podman_secret():

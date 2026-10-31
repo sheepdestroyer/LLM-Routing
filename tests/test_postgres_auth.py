@@ -92,8 +92,12 @@ def test_in_container_admin_calls_use_the_peer_socket():
         'podman exec -u postgres "${POD_NAME}-postgres-db" \\\n            pg_dump -U postgres -p "${POSTGRES_PORT}"'
         in backup
     )
-    # Health probes need no authentication.
-    assert "pg_isready -q -U postgres" in (QUADLETS / "llm-routing-postgres.container").read_text()
+    # Health probes need no authentication; over TCP (scram) they disconnect at the password
+    # request without a server log line, while the peer socket would log a FATAL per probe
+    # (podman exec / HealthCmd run as root).
+    assert (
+        "HealthCmd=pg_isready -q -h 127.0.0.1 -U postgres" in (QUADLETS / "llm-routing-postgres.container").read_text()
+    )
 
 
 def test_password_is_checked_after_postgres_is_ready():

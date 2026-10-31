@@ -215,6 +215,8 @@ spec:
         command:
         - pg_isready
         - -q
+        - -h
+        - 127.0.0.1
         - -U
         - postgres
         - -p
@@ -229,6 +231,8 @@ spec:
         command:
         - pg_isready
         - -q
+        - -h
+        - 127.0.0.1
         - -U
         - postgres
         - -p

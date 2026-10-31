@@ -35,7 +35,10 @@ RunInit=true
 # checks never overlap. kill stays as the safety net for a wedged postmaster, but
 # only after 9 consecutive failures (>= 3 min): postgres recovers from I/O stalls
 # by itself, and killing it mid-stall only adds crash recovery on top of the stall.
-HealthCmd=pg_isready -q -U postgres -p POSTGRES_PORT_PLACEHOLDER
+# -h 127.0.0.1: pg_isready never authenticates; over scram-sha-256 TCP it disconnects at
+# the password request without a server log line, whereas the socket (peer, exec runs as
+# root) would log "FATAL: Peer authentication failed" on every probe.
+HealthCmd=pg_isready -q -h 127.0.0.1 -U postgres -p POSTGRES_PORT_PLACEHOLDER
 HealthInterval=20s
 HealthTimeout=15s
 HealthOnFailure=kill

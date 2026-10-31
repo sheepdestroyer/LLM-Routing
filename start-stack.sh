@@ -641,7 +641,7 @@ verify_stack_health() {
     
     # Wait for postgres first — everything depends on it
     while [ "$waited" -lt "$MAX_WAIT" ]; do
-        if podman exec "${POD_NAME}-postgres-db" pg_isready -U postgres -p "${POSTGRES_PORT}" -q 2>/dev/null; then
+        if podman exec "${POD_NAME}-postgres-db" pg_isready -q -h 127.0.0.1 -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
             echo "   ✓ PostgreSQL ready after ${waited}s"
             # ALTER SYSTEM cannot run inside a transaction block, and psql -c "a; b"
             # wraps both statements in ONE implicit transaction — so each statement
