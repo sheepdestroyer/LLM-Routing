@@ -38,7 +38,7 @@ if [ "$PG_RUNNING" != "true" ]; then
     log "⚠️  PostgreSQL container not running — skipping DB backup"
 else
     for i in {1..15}; do
-        if podman exec "${POD_NAME}-postgres-db" pg_isready -q -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
+        if podman exec "${POD_NAME}-postgres-db" pg_isready -q -h 127.0.0.1 -U postgres -p "${POSTGRES_PORT}" 2>/dev/null; then
             PG_READY=1
             log "✅ PostgreSQL is ready"
             break
@@ -52,8 +52,10 @@ fi
 if [ "$PG_READY" -eq 1 ]; then
     for db in postgres langfuse; do
         FILE="${BACKUP_DIR}/${db}_db_${TIMESTAMP}.dump"
-        if podman exec "${POD_NAME}-postgres-db" \
-            pg_dump -U postgres -d "$db" -F c > "$FILE"; then
+        # Unix socket as the postgres OS user (pg_hba.conf: "local all postgres peer");
+        # loopback TCP would need the password (scram-sha-256).
+        if podman exec -u postgres "${POD_NAME}-postgres-db" \
+            pg_dump -U postgres -p "${POSTGRES_PORT}" -d "$db" -F c > "$FILE"; then
             log "✅ ${db} db: $(ls -lh "$FILE" | awk '{print $5}')"
         else
             log "❌ ${db} db: FAILED"
