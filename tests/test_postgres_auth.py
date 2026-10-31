@@ -4,6 +4,9 @@ The pod shares the host network, so loopback is reachable by every local process
 host: loopback must require scram-sha-256, and every client/tool must authenticate.
 """
 
+import base64
+import hashlib
+import hmac
 import os
 import re
 import subprocess
@@ -84,7 +87,7 @@ def test_in_container_admin_calls_use_the_peer_socket():
             call = line + (lines[i + 1] if line.rstrip().endswith("\\") else "")
             if not re.search(r"\b(psql|pg_dump)\b", call):
                 continue
-            peer = "podman exec -u postgres" in call or "-e PG_NEW_PASSWORD -u postgres" in call
+            peer = "podman exec -u postgres" in call or "-e PG_NEW_VERIFIER -u postgres" in call
             password = "podman exec -e PGPASSWORD" in call and " -h 127.0.0.1" in call
             assert peer or password, (name, call)
     backup = (ROOT / "scripts/backup.sh").read_text()
@@ -104,16 +107,18 @@ def test_password_is_checked_after_postgres_is_ready():
     health = _function("verify_stack_health")
     assert "if ! ensure_postgres_password; then\n                return 1\n            fi" in health
     ensure = _function("ensure_postgres_password")
-    # The password never reaches argv: name-only -e copies the caller's value, and the
-    # re-set reads it in psql via \getenv from a quoted heredoc.
+    # The password never reaches argv: name-only -e copies the caller's value. The re-set
+    # sends only a SCRAM verifier computed on the host (like psql's \password), read in
+    # psql via \getenv from a quoted heredoc: the plaintext never reaches the server.
     assert 'PGPASSWORD="$POSTGRES_PASSWORD" podman exec -e PGPASSWORD "$ctr"' in ensure
-    assert 'PG_NEW_PASSWORD="$POSTGRES_PASSWORD" podman exec -i -e PG_NEW_PASSWORD -u postgres "$ctr"' in ensure
+    assert 'verifier="$(postgres_scram_verifier "$POSTGRES_PASSWORD")"' in ensure
+    assert 'PG_NEW_VERIFIER="$verifier" podman exec -i -e PG_NEW_VERIFIER -u postgres "$ctr"' in ensure
     assert "<< 'SQL'" in ensure
-    assert "\\getenv pg_new_password PG_NEW_PASSWORD" in ensure
-    assert "SET password_encryption = 'scram-sha-256';" in ensure
+    assert "\\getenv pg_new_verifier PG_NEW_VERIFIER" in ensure
+    assert "PG_NEW_PASSWORD" not in ensure
     # No statement logging path may record the expanded ALTER ROLE ... PASSWORD '...'.
     sql = ensure.split("<< 'SQL'\n", 1)[1].split("\nSQL\n", 1)[0].splitlines()
-    alter = sql.index("ALTER ROLE postgres PASSWORD :'pg_new_password';")
+    alter = sql.index("ALTER ROLE postgres PASSWORD :'pg_new_verifier';")
     for guard in (
         "SET log_statement = 'none';",
         "SET log_min_duration_statement = -1;",
@@ -122,8 +127,8 @@ def test_password_is_checked_after_postgres_is_ready():
         "SET log_min_error_statement = 'panic';",
     ):
         assert sql.index(guard) < alter, guard
-    assert "ALTER ROLE postgres PASSWORD :'pg_new_password';" in ensure
-    assert "-e PGPASSWORD=" not in ensure and "-e PG_NEW_PASSWORD=" not in ensure
+    assert "ALTER ROLE postgres PASSWORD :'pg_new_verifier';" in ensure
+    assert "-e PGPASSWORD=" not in ensure and "-e PG_NEW_VERIFIER=" not in ensure
 
 
 def _run_ensure(tmp_path: Path, exit_codes: list[int]) -> tuple[subprocess.CompletedProcess, list[str]]:
@@ -138,7 +143,7 @@ def _run_ensure(tmp_path: Path, exit_codes: list[int]) -> tuple[subprocess.Compl
     fake.write_text(
         "#!/bin/bash\n"
         f'n=$(cat "{state}"); echo $((n + 1)) > "{state}"\n'
-        f'echo "ARGV:$* PGPASSWORD=${{PGPASSWORD:-}} NEW=${{PG_NEW_PASSWORD:-}} STDIN=$(cat | tr "\\n" " ")" >> "{log}"\n'
+        f'echo "ARGV:$* PGPASSWORD=${{PGPASSWORD:-}} NEW=${{PG_NEW_VERIFIER:-}} STDIN=$(cat | tr "\\n" " ")" >> "{log}"\n'
         f"codes=({codes}); exit ${{codes[$n]}}\n"
     )
     fake.chmod(0o755)
@@ -150,13 +155,54 @@ def _run_ensure(tmp_path: Path, exit_codes: list[int]) -> tuple[subprocess.Compl
         "POSTGRES_PASSWORD": "s3cr'et$pw",
     }
     result = subprocess.run(
-        ["bash", "-c", "set -euo pipefail\n" + _function("ensure_postgres_password") + "ensure_postgres_password"],
+        [
+            "bash",
+            "-c",
+            "set -euo pipefail\n"
+            + _function("postgres_scram_verifier")
+            + _function("ensure_postgres_password")
+            + "ensure_postgres_password",
+        ],
         env=env,
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
     )
     return result, log.read_text().splitlines()
+
+
+def _scram_matches(verifier: str, password: str) -> bool:
+    """Check a SCRAM-SHA-256 verifier the way the server does (RFC 5802 keys)."""
+    scheme, rest = verifier.split("$", 1)
+    assert scheme == "SCRAM-SHA-256"
+    head, keys = rest.split("$")
+    iterations, salt = head.split(":")
+    stored_key, server_key = keys.split(":")
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), base64.b64decode(salt), int(iterations))
+    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    server = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+    return (
+        base64.b64encode(hashlib.sha256(client_key).digest()).decode() == stored_key
+        and base64.b64encode(server).decode() == server_key
+    )
+
+
+def test_scram_verifier_is_salted_and_verifies():
+    script = _function("postgres_scram_verifier")
+    out = [
+        subprocess.run(
+            ["bash", "-c", script + 'postgres_scram_verifier "$1"', "_", "p@ss'w$rd"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        for _ in range(2)
+    ]
+    assert out[0] != out[1]  # random salt
+    for verifier in out:
+        assert verifier.startswith("SCRAM-SHA-256$4096:")
+        assert _scram_matches(verifier, "p@ss'w$rd")
+        assert not _scram_matches(verifier, "p@ss'w$rD")
 
 
 def test_ensure_password_ok_needs_no_reset(tmp_path):
@@ -178,10 +224,13 @@ def test_ensure_password_resets_from_env_when_login_fails(tmp_path):
     assert "re-set from .env" in result.stdout
     assert len(calls) == 2
     argv = calls[1].split(" PGPASSWORD=")[0]
-    assert "exec -i -e PG_NEW_PASSWORD -u postgres t-pod-postgres-db psql -v ON_ERROR_STOP=1" in argv
-    assert "s3cr" not in argv
-    assert "NEW=s3cr'et$pw " in calls[1]
-    assert "ALTER ROLE postgres PASSWORD :'pg_new_password';" in calls[1]
+    assert "exec -i -e PG_NEW_VERIFIER -u postgres t-pod-postgres-db psql -v ON_ERROR_STOP=1" in argv
+    # Only the SCRAM verifier reaches the container, never the plaintext.
+    assert "s3cr" not in calls[1]
+    verifier = calls[1].split(" NEW=", 1)[1].split(" STDIN=", 1)[0]
+    assert _scram_matches(verifier, "s3cr'et$pw")
+    assert not _scram_matches(verifier, "other")
+    assert "ALTER ROLE postgres PASSWORD :'pg_new_verifier';" in calls[1]
     assert "s3cr" not in result.stdout + result.stderr
 
 
