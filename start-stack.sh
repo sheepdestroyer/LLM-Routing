@@ -603,10 +603,27 @@ setup_minio_buckets() {
 # ── PostgreSQL password check (loopback is scram-sha-256, see generate_postgres_hba) ──
 # Every client logs in over TCP with POSTGRES_PASSWORD from .env (DATABASE_URL). Check that
 # it authenticates; if not (role password drifted from .env, or an md5 hash, which cannot
-# answer a SCRAM exchange), re-set it from .env as a SCRAM verifier over the peer socket.
-# The password only travels in the environment (podman exec -e NAME copies the caller's
-# value) and on stdin: never in argv or output. The session SETs keep the expanded
-# ALTER ROLE out of the server log (statement, duration, sampling and error-statement logging).
+# answer a SCRAM exchange), re-set it over the peer socket. Like psql's \password, the
+# SCRAM-SHA-256 verifier is computed here (postgres_scram_verifier) and only the verifier
+# is sent: the plaintext never reaches the server, so no log level can record it. The
+# password/verifier travel only in the environment (podman exec -e NAME copies the
+# caller's value) and on stdin, never in argv or output; the session SETs also keep the
+# verifier out of statement, duration, sampled and error-statement logs.
+# The verifier skips SASLprep, i.e. it matches what clients send for ASCII passwords
+# (start-stack.sh generates hex ones).
+postgres_scram_verifier() {
+    PG_PLAIN_PASSWORD="$1" python3 -c '
+import base64, hashlib, hmac, os
+pw = os.environ["PG_PLAIN_PASSWORD"].encode()
+salt, iterations = os.urandom(16), 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw, salt, iterations)
+client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+b64 = lambda b: base64.b64encode(b).decode()
+print(f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(hashlib.sha256(client_key).digest())}:{b64(server_key)}")
+'
+}
+
 ensure_postgres_password() {
     local ctr="${POD_NAME}-postgres-db"
     if PGPASSWORD="$POSTGRES_PASSWORD" podman exec -e PGPASSWORD "$ctr" \
@@ -615,16 +632,17 @@ ensure_postgres_password() {
         return 0
     fi
     echo "   ⚠️  PostgreSQL password login failed; re-setting the postgres role password from .env (SCRAM)" >&2
-    if PG_NEW_PASSWORD="$POSTGRES_PASSWORD" podman exec -i -e PG_NEW_PASSWORD -u postgres "$ctr" \
+    local verifier
+    if verifier="$(postgres_scram_verifier "$POSTGRES_PASSWORD")" && [[ "$verifier" == SCRAM-SHA-256\$* ]] \
+        && PG_NEW_VERIFIER="$verifier" podman exec -i -e PG_NEW_VERIFIER -u postgres "$ctr" \
         psql -v ON_ERROR_STOP=1 -q -U postgres -p "${POSTGRES_PORT}" -d postgres >/dev/null << 'SQL'
-SET password_encryption = 'scram-sha-256';
 SET log_statement = 'none';
 SET log_min_duration_statement = -1;
 SET log_min_duration_sample = -1;
 SET log_transaction_sample_rate = 0;
 SET log_min_error_statement = 'panic';
-\getenv pg_new_password PG_NEW_PASSWORD
-ALTER ROLE postgres PASSWORD :'pg_new_password';
+\getenv pg_new_verifier PG_NEW_VERIFIER
+ALTER ROLE postgres PASSWORD :'pg_new_verifier';
 SQL
     then
         echo "   ✓ postgres role password re-set from .env"
