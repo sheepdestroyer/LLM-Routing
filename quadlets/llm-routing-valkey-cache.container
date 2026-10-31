@@ -13,6 +13,9 @@ AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
 Entrypoint=valkey-server
 Exec=--bind 127.0.0.1 --port VALKEY_CACHE_PORT_PLACEHOLDER --loglevel warning
 Volume=DATA_ROOT_PLACEHOLDER/valkey-data:/data
+# catatonit at PID 1 reaps orphaned exec-healthcheck children (see postgres template,
+# incident 2026-10-31) instead of leaving them to the server process.
+RunInit=true
 HealthCmd=valkey-cli -p VALKEY_CACHE_PORT_PLACEHOLDER ping
 HealthInterval=10s
 HealthTimeout=2s

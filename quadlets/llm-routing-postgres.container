@@ -17,12 +17,22 @@ Environment=PGDATA=/var/lib/postgresql/data/pg18
 Environment=PGPORT=POSTGRES_PORT_PLACEHOLDER
 Volume=DATA_ROOT_PLACEHOLDER/postgres-data:/var/lib/postgresql
 Exec=postgres -c log_checkpoints=off -c log_min_messages=warning -c listen_addresses=127.0.0.1,::1
-HealthCmd=pg_isready -U postgres -p POSTGRES_PORT_PLACEHOLDER
-HealthInterval=10s
-HealthTimeout=5s
+# Incident 2026-10-31 15:25: a ~90 s host disk stall timed out the exec healthcheck;
+# the orphaned exec child was reparented to postgres (then PID 1), died of SIGPIPE,
+# and the postmaster treated the "untracked child process" as a backend crash and
+# did a full crash-restart (~65 s down). RunInit= puts catatonit at PID 1 so it,
+# not the postmaster, reaps orphaned healthcheck/`podman exec` children.
+RunInit=true
+# -q: no stdout to write (no SIGPIPE if the reader is gone). Timeout < interval so
+# checks never overlap. kill stays as the safety net for a wedged postmaster, but
+# only after 9 consecutive failures (>= 3 min): postgres recovers from I/O stalls
+# by itself, and killing it mid-stall only adds crash recovery on top of the stall.
+HealthCmd=pg_isready -q -U postgres -p POSTGRES_PORT_PLACEHOLDER
+HealthInterval=20s
+HealthTimeout=15s
 HealthOnFailure=kill
-HealthRetries=5
-HealthStartPeriod=15s
+HealthRetries=9
+HealthStartPeriod=60s
 
 [Service]
 Restart=always
