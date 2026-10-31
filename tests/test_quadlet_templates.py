@@ -342,7 +342,7 @@ def test_postgres_checkpoint_logging_suppressed():
 
     # Regression #723: the failure must not be swallowed by `|| true` + `2>&1`;
     # it must be guarded and surfaced as a warning.
-    guard = 'if ! podman exec "${POD_NAME}-postgres-db" psql'
+    guard = 'if ! podman exec -u postgres "${POD_NAME}-postgres-db" psql'
     assert guard in script
     block = script[script.index(guard) : script.index("fi", reload_idx)]
     assert "|| true" not in block

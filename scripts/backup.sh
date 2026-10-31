@@ -52,8 +52,10 @@ fi
 if [ "$PG_READY" -eq 1 ]; then
     for db in postgres langfuse; do
         FILE="${BACKUP_DIR}/${db}_db_${TIMESTAMP}.dump"
-        if podman exec "${POD_NAME}-postgres-db" \
-            pg_dump -U postgres -d "$db" -F c > "$FILE"; then
+        # Unix socket as the postgres OS user (pg_hba.conf: "local all postgres peer");
+        # loopback TCP would need the password (scram-sha-256).
+        if podman exec -u postgres "${POD_NAME}-postgres-db" \
+            pg_dump -U postgres -p "${POSTGRES_PORT}" -d "$db" -F c > "$FILE"; then
             log "✅ ${db} db: $(ls -lh "$FILE" | awk '{print $5}')"
         else
             log "❌ ${db} db: FAILED"

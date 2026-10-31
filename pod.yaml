@@ -196,6 +196,8 @@ spec:
     - log_min_messages=warning
     - -c
     - listen_addresses=127.0.0.1,::1
+    - -c
+    - hba_file=/etc/postgresql/pg_hba.conf
     env:
     - name: POSTGRES_USER
       value: postgres
@@ -237,6 +239,10 @@ spec:
     volumeMounts:
     - mountPath: /var/lib/postgresql
       name: postgres-storage
+    - mountPath: /etc/postgresql/pg_hba.conf
+      name: postgres-hba-config
+      subPath: pg_hba.conf
+      readOnly: true
   # ClickHouse — Langfuse v3 OLAP trace/observation store
   - env:
     - name: CLICKHOUSE_DB
@@ -553,6 +559,10 @@ spec:
       path: DATA_ROOT_PLACEHOLDER/datasets
       type: DirectoryOrCreate
     name: dataset-data
+  - hostPath:
+      path: DATA_ROOT_PLACEHOLDER/postgres-config
+      type: DirectoryOrCreate
+    name: postgres-hba-config
   - hostPath:
       path: DATA_ROOT_PLACEHOLDER/clickhouse-config
       type: DirectoryOrCreate
