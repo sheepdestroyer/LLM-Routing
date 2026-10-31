@@ -532,3 +532,23 @@ def test_postgres_probes_are_quiet_everywhere():
         for line in text.splitlines():
             if "pg_isready" in line and "podman exec" in line:
                 assert " -q" in line, (script, line)
+
+
+def test_postgres_password_is_a_podman_secret():
+    postgres = (QUADLETS / "llm-routing-postgres.container").read_text()
+    assert "Secret=POSTGRES_PASSWORD_SECRET_PLACEHOLDER,type=env,target=POSTGRES_PASSWORD" in postgres
+    assert "POSTGRES_PASSWORD_RAW_PLACEHOLDER" not in postgres
+    assert not re.search(r"(?m)^Environment=POSTGRES_PASSWORD=", postgres)
+    # Clients keep connecting with the URL-encoded password in DATABASE_URL.
+    for name in ("litellm", "router", "langfuse-web", "langfuse-worker"):
+        text = (QUADLETS / f"llm-routing-{name}.container").read_text()
+        assert "DATABASE_URL=postgresql://postgres:POSTGRES_PASSWORD_ENCODED_PLACEHOLDER@127.0.0.1:" in text, name
+
+    script = (ROOT / "start-stack.sh").read_text()
+    render = script.split("render_quadlets() {", 1)[1].split("\n}\n", 1)[0]
+    # The namespaced secret is (re)created from .env before the units are rendered,
+    # piped on stdin so the value never appears in argv or output.
+    assert 'local pg_secret="${QUADLET_NAMESPACE}-postgres-password"' in render
+    assert 'printf \'%s\' "$POSTGRES_PASSWORD" | podman secret create --replace "$pg_secret" - >/dev/null' in render
+    assert render.index("podman secret create") < render.index('python3 - "$src_dir"')
+    assert '"POSTGRES_PASSWORD_SECRET_PLACEHOLDER": f"{namespace}-postgres-password",' in render

@@ -11,7 +11,10 @@ Pod=llm-routing.pod
 # (langfuse 3.222+) that resolve the pod hostname for self/intra-pod calls.
 AddHost=POD_NAME_PLACEHOLDER:127.0.0.1
 Environment=POSTGRES_USER=postgres
-Environment=POSTGRES_PASSWORD=POSTGRES_PASSWORD_RAW_PLACEHOLDER
+# Podman secret created by start-stack.sh render_quadlets() from .env (same value);
+# keeps the password out of this unit and `podman inspect`. Clients still use
+# DATABASE_URL with the URL-encoded password.
+Secret=POSTGRES_PASSWORD_SECRET_PLACEHOLDER,type=env,target=POSTGRES_PASSWORD
 Environment=POSTGRES_DB=langfuse
 Environment=PGDATA=/var/lib/postgresql/data/pg18
 Environment=PGPORT=POSTGRES_PORT_PLACEHOLDER
