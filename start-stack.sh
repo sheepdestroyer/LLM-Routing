@@ -920,6 +920,14 @@ render_quadlets() {
     fi
     mkdir -p "$QUADLET_DIR"
     chmod 700 "$QUADLET_DIR"
+    # POSTGRES_PASSWORD reaches the postgres container as a Podman secret
+    # (Quadlet Secret=...,type=env), not a plaintext Environment= line. --replace
+    # re-syncs it with .env on every render; the value is piped, never echoed.
+    local pg_secret="${QUADLET_NAMESPACE}-postgres-password"
+    if ! printf '%s' "$POSTGRES_PASSWORD" | podman secret create --replace "$pg_secret" - >/dev/null; then
+        echo "❌ Error: failed to create Podman secret ${pg_secret}" >&2
+        return 1
+    fi
     python3 - "$src_dir" "$QUADLET_DIR" <<'PY'
 import os, sys, urllib.parse, re, glob, shutil, tempfile
 uid = os.getuid()
@@ -947,6 +955,7 @@ repl = {
     "LITELLM_UI_PASSWORD_PLACEHOLDER": os.environ.get("UI_PASSWORD") or os.environ.get("LITELLM_MASTER_KEY") or "admin",
     "POSTGRES_PASSWORD_RAW_PLACEHOLDER": os.environ["POSTGRES_PASSWORD"],
     "POSTGRES_PASSWORD_ENCODED_PLACEHOLDER": encoded_pg,
+    "POSTGRES_PASSWORD_SECRET_PLACEHOLDER": f"{namespace}-postgres-password",
     "NEXTAUTH_SECRET_PLACEHOLDER": os.environ["NEXTAUTH_SECRET"],
     "NEXTAUTH_URL_PLACEHOLDER": nextauth_url,
     "SALT_PLACEHOLDER": os.environ["SALT"],
