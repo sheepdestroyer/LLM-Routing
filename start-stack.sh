@@ -605,7 +605,8 @@ setup_minio_buckets() {
 # it authenticates; if not (role password drifted from .env, or an md5 hash, which cannot
 # answer a SCRAM exchange), re-set it from .env as a SCRAM verifier over the peer socket.
 # The password only travels in the environment (podman exec -e NAME copies the caller's
-# value) and on stdin: never in argv, output or the server log.
+# value) and on stdin: never in argv or output. The session SETs keep the expanded
+# ALTER ROLE out of the server log (statement, duration, sampling and error-statement logging).
 ensure_postgres_password() {
     local ctr="${POD_NAME}-postgres-db"
     if PGPASSWORD="$POSTGRES_PASSWORD" podman exec -e PGPASSWORD "$ctr" \
@@ -618,6 +619,10 @@ ensure_postgres_password() {
         psql -v ON_ERROR_STOP=1 -q -U postgres -p "${POSTGRES_PORT}" -d postgres >/dev/null << 'SQL'
 SET password_encryption = 'scram-sha-256';
 SET log_statement = 'none';
+SET log_min_duration_statement = -1;
+SET log_min_duration_sample = -1;
+SET log_transaction_sample_rate = 0;
+SET log_min_error_statement = 'panic';
 \getenv pg_new_password PG_NEW_PASSWORD
 ALTER ROLE postgres PASSWORD :'pg_new_password';
 SQL

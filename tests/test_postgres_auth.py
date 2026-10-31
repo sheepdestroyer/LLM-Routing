@@ -111,6 +111,17 @@ def test_password_is_checked_after_postgres_is_ready():
     assert "<< 'SQL'" in ensure
     assert "\\getenv pg_new_password PG_NEW_PASSWORD" in ensure
     assert "SET password_encryption = 'scram-sha-256';" in ensure
+    # No statement logging path may record the expanded ALTER ROLE ... PASSWORD '...'.
+    sql = ensure.split("<< 'SQL'\n", 1)[1].split("\nSQL\n", 1)[0].splitlines()
+    alter = sql.index("ALTER ROLE postgres PASSWORD :'pg_new_password';")
+    for guard in (
+        "SET log_statement = 'none';",
+        "SET log_min_duration_statement = -1;",
+        "SET log_min_duration_sample = -1;",
+        "SET log_transaction_sample_rate = 0;",
+        "SET log_min_error_statement = 'panic';",
+    ):
+        assert sql.index(guard) < alter, guard
     assert "ALTER ROLE postgres PASSWORD :'pg_new_password';" in ensure
     assert "-e PGPASSWORD=" not in ensure and "-e PG_NEW_PASSWORD=" not in ensure
 
