@@ -484,7 +484,8 @@ class ModelRegistrySync:
             {
                 "model_name": "locallama-strata",
                 "litellm_params": {
-                    "model": "openai/locallama-strata",
+                    # Every GX10 deployment sends the one served name: Basalt accepts a single model name.
+                    "model": "openai/strata-qwen",
                     "api_base": strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
@@ -502,7 +503,7 @@ class ModelRegistrySync:
             {
                 "model_name": "gb10-strata",
                 "litellm_params": {
-                    "model": "openai/gb10-strata",
+                    "model": "openai/strata-qwen",
                     "api_base": strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
