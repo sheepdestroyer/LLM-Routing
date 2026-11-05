@@ -457,7 +457,8 @@ model_list:
 - litellm_params:
     api_base: STRATA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/locallama-strata
+    # Every GX10 deployment sends the one served name: Basalt accepts a single model name.
+    model: openai/strata-qwen
     request_timeout: 600
   model_name: locallama-strata
   model_info:
@@ -472,7 +473,7 @@ model_list:
 - litellm_params:
     api_base: STRATA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    model: openai/gb10-strata
+    model: openai/strata-qwen
     request_timeout: 600
   model_name: gb10-strata
   model_info:
@@ -489,7 +490,7 @@ model_list:
 - litellm_params:
     api_base: STRATA_SERVER_URL_PLACEHOLDER
     api_key: local-token
-    # Strata serves the aliases strata-qwen / locallama-strata / gb10-strata / qwen3.8-flash-next.
+    # The GX10 engine (Strata or Basalt) is always asked for its served name, strata-qwen.
     model: openai/strata-qwen
     # A page takes ~30-45 s on Strata (up to ~300 s with hidden reasoning, ~480 s when both
     # Strata slots are busy). 540 s leaves the local fallback (~25 s/page) a chance to answer
