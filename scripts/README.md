@@ -22,6 +22,8 @@ Release-driven prod upgrade: `scripts/upgrade-prod.sh [--dry-run] [<tag>]` clone
 
 ### `scripts/backup.sh`
 Automated database backup script that runs before every stack deployment. Uses `pg_isready` to safely wait for database connections and manages timestamped backups under `backups/`.
+- Owner-only whatever the caller's umask: the config tarball holds `.env` and the dumps hold the LiteLLM and Langfuse databases. The script runs under `umask 077`, sets `backups/` to `0700` and every `*.dump` / `*.tar.gz` it writes (or finds there from older runs) to `0600`.
+- Tests: `tests/test_backup_script.py` runs the script under `umask 022` in a temporary tree against a stub `podman`.
 
 ---
 

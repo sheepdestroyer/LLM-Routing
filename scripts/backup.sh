@@ -7,6 +7,12 @@ set -euo pipefail
 # Scheduled via: systemctl --user enable llm-backup.timer
 # ============================================================
 
+# The config tarball holds .env (every stack secret) and the dumps hold the LiteLLM and Langfuse
+# databases: owner-only, whatever umask the caller runs with. umask covers what this script
+# creates; the explicit chmods below cover a directory or file that already existed (mkdir -p,
+# a ">" redirect and tar keep an existing mode).
+umask 077
+
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="${WORKDIR}/backups"
@@ -26,6 +32,9 @@ POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+# Backups written before the umask existed were 0644.
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "*.dump" -o -name "*.tar.gz" \) -perm /077 -exec chmod 600 {} +
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
@@ -60,6 +69,8 @@ if [ "$PG_READY" -eq 1 ]; then
         else
             log "❌ ${db} db: FAILED"
         fi
+        # A failed dump can still leave a partial file behind.
+        if [ -e "$FILE" ]; then chmod 600 "$FILE"; fi
     done
 else
     log "❌ PostgreSQL db backup: FAILED (PostgreSQL was not ready after 30s)"
@@ -72,6 +83,7 @@ if [ -f "${WORKDIR}/.env" ]; then
     CONFIG_FILES+=(.env)
 fi
 tar czf "$CONFIG_SNAPSHOT" -C "$WORKDIR" "${CONFIG_FILES[@]}"
+chmod 600 "$CONFIG_SNAPSHOT"
 log "✅ configs: $(ls -lh "$CONFIG_SNAPSHOT" | awk '{print $5}')"
 
 # ---- Prune old backups ----
