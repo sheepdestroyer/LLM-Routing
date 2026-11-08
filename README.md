@@ -461,6 +461,14 @@ Isolation and limits (`scripts/host_agy_daemon.py`):
   tool-less workspace agent `llm-routing-plain` (`excludeDefaultComponents: true`, `tools: []`). With client tools,
   native tool calls are still intercepted and returned as OpenAI `tool_calls`, but never executed on the host.
   `none` denies native tools everywhere (breaks autonomous `*-sse` behaviour), `all` restores the legacy behaviour.
+- **Exact tool arguments (Path A)**: agy's stream-json tool summary (`tool_info.parameters`) is for display only. It
+  cuts every string to 512 characters plus "…" and drops keys (a `write_file` event carries only `Path`). The
+  `--tool-guard` hook receives the exact tool input, so for spawns that intercept tool calls it writes each call
+  (`toolCall.args`) to the run's `tmp/tool-calls/` (`AGY_DAEMON_TOOL_RECORDS`). The intercepted `tool_calls` carry those
+  arguments: the daemon waits up to 5 s for the record of the step. Without a record it falls back to the summary,
+  unless a string in it was cut (513+ characters ending in "…", searched recursively): it then fails closed with
+  HTTP 502 (streaming: an SSE error chunk, no `[DONE]`), so LiteLLM falls back. It also logs a warning (journal
+  priority 4) naming the tool and the key, never the value.
 - **Concurrency cap** `AGY_DAEMON_MAX_CONCURRENT` (default 3) for every agy spawn; a request waits up to
   `AGY_DAEMON_QUEUE_TIMEOUT` seconds (default 120), then gets HTTP 503 (`Retry-After: 5`) so LiteLLM falls back.
 - **Login refresh** serialized with `agy-run` through `~/.cache/agy-run.lock`: when the daemon copy and the host login
