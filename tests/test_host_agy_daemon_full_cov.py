@@ -41,6 +41,14 @@ class DummyHandler(host_agy_daemon.AgyDaemonHandler):
         pass
 
 
+def tool_guard_record(env: dict, name: str, args: dict, step: int = 2) -> None:
+    """What agy's PreToolUse hook (the daemon's tool-guard) records for a Path A tool step."""
+    host_agy_daemon.record_tool_call(
+        json.dumps({"stepIdx": step, "toolCall": {"name": name, "args": args}}),
+        env.get(host_agy_daemon.TOOL_RECORDS_ENV),
+    )
+
+
 def test_read_file_sync_branches(tmp_path):
     f = tmp_path / "sample.txt"
     f.write_text("  hello world  \n")
@@ -248,6 +256,7 @@ async def test_execute_agy_stream_json_mock_branches(monkeypatch):
 
     async def mock_exec(*cmd, **kwargs):
         captured_cmd.extend(cmd)
+        tool_guard_record(kwargs["env"], "run_command", {"CommandLine": "whoami"})
         proc = MagicMock()
         proc.returncode = 0
         proc.communicate = AsyncMock()
@@ -259,6 +268,7 @@ async def test_execute_agy_stream_json_mock_branches(monkeypatch):
                 {
                     "event": "step_update",
                     "step_update": {
+                        "step_index": 2,
                         "step_type": "tool",
                         "tool_name": "run_command",
                         "tool_info": {"parameters": {"CommandLine": "whoami"}},
@@ -370,6 +380,7 @@ async def test_execute_agy_stream_json_real_process_branches(monkeypatch):
 
     # 2. Tool interception in real process mode with proc.wait raising Exception
     async def mock_exec_tool_real(*cmd, **kwargs):
+        tool_guard_record(kwargs["env"], "run_command", {"CommandLine": "ls"})
         proc = MagicMock()
         proc.communicate = None
         proc.returncode = 0
@@ -388,6 +399,7 @@ async def test_execute_agy_stream_json_real_process_branches(monkeypatch):
                 {
                     "event": "step_update",
                     "step_update": {
+                        "step_index": 2,
                         "step_type": "tool",
                         "tool_name": "run_command",
                         "tool_info": {"parameters": {"CommandLine": "ls"}},
@@ -1107,6 +1119,7 @@ def test_daemon_chat_completions_safe_write_failures(monkeypatch):
 
     # 3. safe_write fail in intercepted tool call (tool chunk & finish chunk)
     async def mock_intercept_fail(*cmd, **kwargs):
+        tool_guard_record(kwargs["env"], "run_command", {"CommandLine": "ls"})
         p = await base_proc()
         p.stdout.readline = AsyncMock(
             side_effect=[
@@ -1114,6 +1127,7 @@ def test_daemon_chat_completions_safe_write_failures(monkeypatch):
                     {
                         "event": "step_update",
                         "step_update": {
+                            "step_index": 2,
                             "step_type": "tool",
                             "tool_name": "run_command",
                             "tool_info": {"parameters": {"CommandLine": "ls"}},
@@ -1391,6 +1405,7 @@ async def test_execute_agy_stream_json_real_process_more_branches(monkeypatch):
 
     # 3. Tool interception without proc.kill (line 391->398) or proc.wait not coroutine (line 394->398)
     async def mock_exec_tool_nokill(*args, **kwargs):
+        tool_guard_record(kwargs["env"], "bash", {})
         proc = MagicMock()
         proc.communicate = None
         proc.stdin = MagicMock()
@@ -1399,7 +1414,10 @@ async def test_execute_agy_stream_json_real_process_more_branches(monkeypatch):
         del proc.kill
         tool_ev = (
             json.dumps(
-                {"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "bash", "tool_info": {}}}
+                {
+                    "event": "step_update",
+                    "step_update": {"step_index": 2, "step_type": "tool", "tool_name": "bash", "tool_info": {}},
+                }
             ).encode("utf-8")
             + b"\n"
         )
@@ -1415,6 +1433,7 @@ async def test_execute_agy_stream_json_real_process_more_branches(monkeypatch):
 
     # 3b. Tool interception with proc.kill but proc.wait not a coroutine (line 394->398)
     async def mock_exec_tool_wait_not_coro(*args, **kwargs):
+        tool_guard_record(kwargs["env"], "bash", {})
         proc = MagicMock()
         proc.communicate = None
         proc.stdin = MagicMock()
@@ -1424,7 +1443,10 @@ async def test_execute_agy_stream_json_real_process_more_branches(monkeypatch):
         proc.wait = lambda: None  # not a coroutine function
         tool_ev = (
             json.dumps(
-                {"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "bash", "tool_info": {}}}
+                {
+                    "event": "step_update",
+                    "step_update": {"step_index": 2, "step_type": "tool", "tool_name": "bash", "tool_info": {}},
+                }
             ).encode("utf-8")
             + b"\n"
         )
@@ -1518,13 +1540,17 @@ def test_run_openai_stream_more_branches(monkeypatch):
 
     # 5. Tool interception proc.wait raises exception (lines 1193-1194)
     async def mock_exec_tool_wait_err(*cmd, **kwargs):
+        tool_guard_record(kwargs["env"], "terminal", {})
         proc = MagicMock()
         proc.stdin = MagicMock()
         proc.stderr = MagicMock()
         proc.stderr.read = AsyncMock(return_value=b"")
         tool_ev = (
             json.dumps(
-                {"event": "step_update", "step_update": {"step_type": "tool", "tool_name": "terminal", "tool_info": {}}}
+                {
+                    "event": "step_update",
+                    "step_update": {"step_index": 2, "step_type": "tool", "tool_name": "terminal", "tool_info": {}},
+                }
             ).encode("utf-8")
             + b"\n"
         )

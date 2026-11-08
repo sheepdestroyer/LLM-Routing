@@ -38,4 +38,6 @@ def _isolate_agy_daemon_state(tmp_path, monkeypatch):
     monkeypatch.setattr(host_agy_daemon, "AGY_RUN_LOCK", str(tmp_path / "agy-run.lock"))
     monkeypatch.setattr(host_agy_daemon, "ensure_auth", lambda run_timeout, background=False: "daemon")
     monkeypatch.setattr(host_agy_daemon, "LIVE_CHECK_INTERVAL", 0.0)
+    # Fake agy processes run no tool-guard hook: do not wait for its tool-call record.
+    monkeypatch.setattr(host_agy_daemon, "TOOL_RECORD_WAIT", 0.0)
     yield
