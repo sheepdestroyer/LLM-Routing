@@ -2421,6 +2421,17 @@ _FALLBACK_BEST_FREE_MODEL: dict[str, Any] = {
 _registered_free_models: dict[str, set[str]] = {}
 _last_roster_sync: float = 0.0
 
+# Free OpenRouter models (id prefixes) never put in the agent-*-core tiers, the free roster or
+# best_free_model.json, although the catalog lists them as free with tool calling.
+FREE_MODEL_DENYLIST: tuple[str, ...] = (
+    "meta-llama/",  # stale entries / wrong context_length
+    "nousresearch/hermes-3-llama",
+    # Upstream 403 "This model is not available in your region." (provider Stealth) for this
+    # account, while the public catalog still lists it (free, tools, 1,048,576 context), checked
+    # 2026-11-08; prod v0.1.93 had it as an agent-simple-core deployment.
+    "stealth/crouton-alpha",
+)
+
 # --- Artificial Analysis Agentic Index scores cache ---
 _AA_SCORES_CACHE: dict[str, float] = {}
 _AA_SCORES_LOADED = False
@@ -2470,12 +2481,8 @@ async def _fetch_openrouter_free_models() -> list[dict]:
             supported_params = m.get("supported_parameters") or []
             has_tools = "tools" in supported_params
 
-            # 2. Denylist: skip models known to be problematic (stale, wrong context_length, etc.)
-            _denylist_prefixes = (
-                "meta-llama/",
-                "nousresearch/hermes-3-llama",
-            )
-            if any(mid.startswith(p) for p in _denylist_prefixes):
+            # 2. Denylist: skip models known to be problematic (FREE_MODEL_DENYLIST)
+            if any(mid.startswith(p) for p in FREE_MODEL_DENYLIST):
                 logger.info(f"Skipping free model {mid}: denylisted")
                 continue
 
@@ -2808,6 +2815,59 @@ async def health():
     return {"status": "ok"}
 
 
+# Context windows the router accepts per model: the completion pre-screen in chat_completions
+# rejects a prompt whose estimate plus a 2048-token margin does not fit (HTTP 400) and clamps
+# max_tokens to what is left. Unlisted models get DEFAULT_ROUTER_CONTEXT_LIMIT. /v1/models never
+# advertises more than these: each agent-*-core group mixes the config.yaml bootstrap deployment
+# (local Qwen, 240,896) with the free OpenRouter roster (65,536 to 1,000,000 tokens), and LiteLLM
+# lists the widest *configured* max_input_tokens of a group, so the window it reports depends on
+# which deployment carries an explicit limit, not on what a request routed through here can use:
+# up to 1,048,576 (stealth/crouton-alpha's catalog window) while the roster sync wrote catalog
+# limits, 240,896 (the bootstrap) since #738 stopped that.
+ROUTER_CONTEXT_LIMITS: dict[str, int] = {
+    "locallama-qwen": 240896,
+    "local-qwen": 240896,
+    "locallama-qwen-hass": 240896,
+    "local-qwen-hass": 240896,
+    "locallama-qwen-routing": 8192,
+    "local-qwen-routing": 8192,
+    "locallama-qwen-vl": 65536,
+    "local-qwen-vl": 65536,
+    "strata-qwen": 262144,
+    "locallama-strata": 262144,
+    "gb10-strata": 262144,
+    "locallama-whisper": 32768,
+    "whisper-1": 32768,
+    "locallama-nomic-embed": 8192,
+    "local-nomic-embed": 8192,
+    "gpt-4o-mini": 240896,
+    "gpt-4o": 240896,
+    # agent-simple-core held 32K models when this was set; the smallest now is 65,536 (liquid/lfm-2.5).
+    "agent-simple-core": 32768,
+    "agent-medium-core": 262144,
+    "agent-complex-core": 262144,
+    "agent-reasoning-core": 262144,
+    "agent-advanced-core": 240896,
+    "ollama-deepseek-v4-pro": 524288,
+    "ollama-deepseek-v4-flash": 524288,
+    "openrouter-gpt-5.6-luna": 1050000,
+    "openrouter-gpt-5.6-luna-max": 1050000,
+    "openrouter-auto": 2000000,
+    "llm-routing-agy": 1048576,
+    "llm-routing-agy-sse": 1048576,
+    "agy-sse": 1048576,
+    "agy-gemini": 1048576,
+    "agy-gemini-sse": 1048576,
+    "agy-opus": 200000,
+    "agy-opus-sse": 200000,
+    "agy-sonnet": 200000,
+    "agy-sonnet-sse": 200000,
+    "agy-gptoss": 131072,
+    "agy-gptoss-sse": 131072,
+}
+DEFAULT_ROUTER_CONTEXT_LIMIT = 262144
+
+
 def extract_model_context_length(entry: dict) -> int | None:
     """Extract context length integer from a model entry or its model_info dictionary."""
     for key in ("context_length", "max_input_tokens", "max_tokens"):
@@ -2845,10 +2905,18 @@ async def proxy_models():
                         if isinstance(entry, dict):
                             ctx = extract_model_context_length(entry)
                             if ctx is not None:
+                                m_id = entry.get("id")
+                                limit = ROUTER_CONTEXT_LIMITS.get(m_id) if isinstance(m_id, str) else None
+                                if limit is not None:
+                                    # Never advertise more than the completion pre-screen accepts.
+                                    ctx = min(ctx, limit)
+                                for key in ("max_tokens", "max_output_tokens"):
+                                    # A mixed group lists its widest output cap, possibly above its window.
+                                    if isinstance(entry.get(key), int) and entry[key] > ctx:
+                                        entry[key] = ctx
                                 entry["context_length"] = ctx
                                 entry["max_input_tokens"] = ctx
                                 entry.setdefault("max_tokens", ctx)
-                                m_id = entry.get("id")
                                 if isinstance(m_id, str):
                                     model_contexts[m_id] = ctx
 
@@ -3615,48 +3683,7 @@ async def chat_completions(request: Request):
                     body_to_send["model"] = model_name
                     requested_max_tokens = body_to_send.get("max_tokens", 4096)
 
-                    # Tier-aware minimum context length (from actual roster data):
-                    # - agent-simple-core: 32K (includes tiny liquid/dolphin models)
-                    # - agent-medium-core+: 256K (smallest non-tiny model is nemotron-nano-omni at 256K)
-                    # - ollama-deepseek-v4-*: 1M (DeepSeek V4 native context)
-                    _tier_min_ctx = {
-                        "locallama-qwen": 240896,
-                        "local-qwen": 240896,
-                        "locallama-qwen-hass": 240896,
-                        "local-qwen-hass": 240896,
-                        "locallama-qwen-routing": 8192,
-                        "local-qwen-routing": 8192,
-                        "locallama-qwen-vl": 65536,
-                        "local-qwen-vl": 65536,
-                        "strata-qwen": 262144,
-                        "locallama-strata": 262144,
-                        "gb10-strata": 262144,
-                        "locallama-whisper": 32768,
-                        "whisper-1": 32768,
-                        "locallama-nomic-embed": 8192,
-                        "local-nomic-embed": 8192,
-                        "gpt-4o-mini": 240896,
-                        "gpt-4o": 240896,
-                        "agent-advanced-core": 240896,
-                        "agent-simple-core": 32768,
-                        "ollama-deepseek-v4-pro": 524288,
-                        "ollama-deepseek-v4-flash": 524288,
-                        "openrouter-gpt-5.6-luna": 1050000,
-                        "openrouter-gpt-5.6-luna-max": 1050000,
-                        "openrouter-auto": 2000000,
-                        "llm-routing-agy": 1048576,
-                        "llm-routing-agy-sse": 1048576,
-                        "agy-sse": 1048576,
-                        "agy-gemini": 1048576,
-                        "agy-gemini-sse": 1048576,
-                        "agy-opus": 200000,
-                        "agy-opus-sse": 200000,
-                        "agy-sonnet": 200000,
-                        "agy-sonnet-sse": 200000,
-                        "agy-gptoss": 131072,
-                        "agy-gptoss-sse": 131072,
-                    }
-                    _min_ctx = _tier_min_ctx.get(model_name, 262144)
+                    _min_ctx = ROUTER_CONTEXT_LIMITS.get(model_name, DEFAULT_ROUTER_CONTEXT_LIMIT)
                     _est_input = estimate_prompt_tokens(body_to_send)
                     _safe_max = _min_ctx - _est_input - 2048  # 2K safety margin
                     if _safe_max < 1024:
