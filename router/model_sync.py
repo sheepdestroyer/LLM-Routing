@@ -10,10 +10,18 @@ Unifies model naming under <provider>-<model> convention:
 Idempotent: inspects existing DB models, prunes duplicate deployments,
 updates changed configurations, and registers new models.
 Fails closed: if /model/info cannot be fetched, never blindly creates duplicates.
+
+Write-only params: GET /model/info never returns api_key (and masks any other credential-like
+param), so those cannot be compared with what was written. An HMAC of their desired values,
+keyed with the master key, is stored on the deployment (model_info.llm_routing_write_only_digest)
+and compared instead: an unchanged deployment is not PATCHed, a changed key still is.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import re
@@ -41,6 +49,58 @@ DEPRECATED_MODEL_NAMES = [
 # request defaults here. Must match the deployments in litellm/config.yaml.
 HASS_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5}
 VL_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "seed": 3407}
+
+# LiteLLM's GET /model/info (remove_sensitive_info_from_deployment, checked on v1.108.0) pops these
+# litellm_params and masks every other key, at any depth, with one of _MASKED_SEGMENTS as an
+# underscore/hyphen segment unless a segment is "cost" (SensitiveDataMasker). Compared as plain
+# values they always differ: every deployment with an api_key was re-PATCHed on every run.
+_POPPED_PARAMS = frozenset(
+    {
+        "api_key",
+        "client_secret",
+        "vertex_credentials",
+        "vertex_ai_credentials",
+        "aws_access_key_id",
+        "aws_secret_access_key",
+    }
+)
+_MASKED_SEGMENTS = frozenset(
+    {
+        "password",
+        "secret",
+        "key",
+        "token",
+        "auth",
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "access",
+        "private",
+        "certificate",
+        "fingerprint",
+        "tenancy",
+    }
+)
+WRITE_ONLY_DIGEST_KEY = "llm_routing_write_only_digest"
+
+
+def _masked_name(name: Any) -> bool:
+    segments = str(name).lower().replace("-", "_").split("_")
+    return "cost" not in segments and any(segment in _MASKED_SEGMENTS for segment in segments)
+
+
+def _contains_masked(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_masked_name(k) or _contains_masked(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_contains_masked(item) for item in value)
+    return False
+
+
+def is_write_only_param(name: str, value: Any) -> bool:
+    """True when GET /model/info cannot show this litellm_param as it was written."""
+    return name in _POPPED_PARAMS or _masked_name(name) or _contains_masked(value)
 
 
 class ModelInfoFetchError(Exception):
@@ -746,7 +806,11 @@ class ModelRegistrySync:
         ]
 
     def build_ollama_models(self) -> list[dict[str, Any]]:
-        """Build model definitions for Ollama Cloud models."""
+        """Build model definitions for Ollama Cloud models.
+
+        Prices are litellm_params: LiteLLM drops pricing from model_info on /model/new and
+        PATCH (checked on v1.108.0), so a model_info price was never stored and showed as drift.
+        """
         return [
             {
                 "model_name": "ollama-deepseek-v4-pro",
@@ -755,13 +819,13 @@ class ModelRegistrySync:
                     "api_base": self.ollama_api_base,
                     "api_key": "os.environ/OLLAMA_API_KEY",
                     "request_timeout": 120,
+                    "input_cost_per_token": 0.00000174,
+                    "output_cost_per_token": 0.00000348,
                 },
                 "model_info": {
                     "mode": "chat",
                     "max_tokens": 524288,
                     "max_input_tokens": 524288,
-                    "input_cost_per_token": 0.00000174,
-                    "output_cost_per_token": 0.00000348,
                     "supports_vision": True,
                     "supports_reasoning": True,
                     "supports_function_calling": True,
@@ -775,13 +839,13 @@ class ModelRegistrySync:
                     "api_base": self.ollama_api_base,
                     "api_key": "os.environ/OLLAMA_API_KEY",
                     "request_timeout": 120,
+                    "input_cost_per_token": 0.00000014,
+                    "output_cost_per_token": 0.00000028,
                 },
                 "model_info": {
                     "mode": "chat",
                     "max_tokens": 524288,
                     "max_input_tokens": 524288,
-                    "input_cost_per_token": 0.00000014,
-                    "output_cost_per_token": 0.00000028,
                     "supports_vision": True,
                     "supports_reasoning": True,
                     "supports_function_calling": True,
@@ -832,6 +896,19 @@ class ModelRegistrySync:
         """Legacy aliases removed: all clients use canonical provider-model names."""
         return []
 
+    def write_only_digest(self, litellm_params: dict[str, Any]) -> str | None:
+        """HMAC-SHA256 of the write-only params of a desired spec, or None when it has none.
+
+        Keyed with the master key, so the stored value reveals nothing about the credentials it
+        covers. Rotating the master key changes every digest: one re-PATCH per deployment.
+        """
+        hidden = {k: v for k, v in litellm_params.items() if is_write_only_param(k, v)}
+        if not hidden:
+            return None
+        canonical = json.dumps(hidden, sort_keys=True, separators=(",", ":"), default=str)
+        mac = hmac.new(self.master_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+        return f"hmac-sha256:{mac}"
+
     async def upsert_model(
         self,
         payload: dict[str, Any],
@@ -841,13 +918,19 @@ class ModelRegistrySync:
         client = await self._get_client()
         name = payload["model_name"]
         deployments = existing_grouped.get(name, [])
+        new_params = payload.get("litellm_params") or {}
+        new_info = payload.get("model_info") or {}
+        digest = self.write_only_digest(new_params)
 
         if not deployments:
+            new_payload = payload
+            if digest is not None:
+                new_payload = {**payload, "model_info": {**new_info, WRITE_ONLY_DIGEST_KEY: digest}}
             try:
                 resp = await client.post(
                     f"{self.litellm_url}/model/new",
                     headers=self.headers,
-                    json=payload,
+                    json=new_payload,
                     timeout=10.0,
                 )
                 if resp.status_code in (200, 201):
@@ -869,26 +952,29 @@ class ModelRegistrySync:
             return ("unchanged", False)
 
         current_params = existing_dep.get("litellm_params") or {}
-        new_params = payload.get("litellm_params") or {}
-        current_info = existing_dep.get("model_info") or {}
-        new_info = payload.get("model_info") or {}
 
-        # Compare all configured litellm_params
-        params_drift = any(current_params.get(k) != new_params.get(k) for k in new_params)
+        # Compare the litellm_params /model/info shows. The write-only ones never come back, so
+        # the digest of what was last written stands in for them: a changed key is still applied.
+        params_drift = any(current_params.get(k) != v for k, v in new_params.items() if not is_write_only_param(k, v))
+        digest_drift = digest is not None and model_info.get(WRITE_ONLY_DIGEST_KEY) != digest
 
         # Compare every configured field, excluding identity and volatile server fields.
         volatile_info = {"id", "db_model", "created_at", "updated_at"}
-        info_changes = {k: v for k, v in new_info.items() if k not in volatile_info and current_info.get(k) != v}
+        info_changes = {k: v for k, v in new_info.items() if k not in volatile_info and model_info.get(k) != v}
         info_drift = bool(info_changes)
 
-        if not params_drift and not info_drift:
+        if not params_drift and not digest_drift and not info_drift:
             return ("unchanged", False)
 
         # Supported partial PATCH merges metadata without replacing provenance or
-        # unrelated fields. Never send existing secrets back from /model/info.
+        # unrelated fields. Never send existing secrets back from /model/info: the
+        # params sent are the desired spec, write-only ones included.
+        update_info: dict[str, Any] = {"id": model_id, **info_changes}
+        if digest is not None:
+            update_info[WRITE_ONLY_DIGEST_KEY] = digest
         update_payload = {
             "litellm_params": new_params,
-            "model_info": {"id": model_id, **info_changes},
+            "model_info": update_info,
         }
 
         try:
