@@ -15,6 +15,11 @@ Unified startup and credential extraction script for the systemd Quadlet-managed
 - Quadlet templates live in `quadlets/`; rendered owner-only units use environment-specific namespaces: dev under `~/.config/containers/systemd/llm-routing-dev/` and prod under `~/.config/containers/systemd/llm-routing-prod/`. Dev uses `llm-routing-dev-pod.service`; prod uses `llm-routing-prod-pod.service`. Use the matching `systemctl --user status <namespace>-pod.service --no-pager` and `journalctl --user -u <namespace>-router.service --no-pager` for lifecycle diagnostics.
 - Before rendering, the script writes the merged `.env` plus optional `.env.dev` overlay to `${DATA_ROOT}/effective.env` (mode `600`). Router and LiteLLM mount this generated file as `/config/.env`; the source `.env` remains unchanged.
 
+### `scripts/upgrade-prod.sh`
+Release-driven prod upgrade: `scripts/upgrade-prod.sh [--dry-run] [<tag>]` clones the release tag, syncs the runtime files into `~/prod/LLM-Routing` and redeploys with `start-stack.sh --pull`.
+- Host units that run synced files (`HOST_UNITS`: `agy-daemon.service` runs `scripts/host_agy_daemon.py`) are restarted when their script or unit file changed: right after the sync, and after the redeploy for a unit file `start-stack.sh` regenerated (`daemon-reload` first, no second restart). Digests in `~/prod/LLM-Routing/.host-units.sha256` advance only once the unit runs the new content, so a failed run is completed by the next one and a repeated run restarts nothing. Details: [README §5.4](../README.md#4-upgrading-production-scriptsupgrade-prodsh).
+- Tests: `tests/test_upgrade_prod_host_units.py` runs the script in a temporary `PROD_DIR` against recording stubs (git, systemctl, the release's `start-stack.sh`).
+
 ### `scripts/backup.sh`
 Automated database backup script that runs before every stack deployment. Uses `pg_isready` to safely wait for database connections and manages timestamped backups under `backups/`.
 
