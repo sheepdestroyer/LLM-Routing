@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import uuid
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -547,8 +547,8 @@ def _make_prop_ctx(session_id, user_id):
 
     Returns a context manager (entered by the caller) or None if
     propagate_attributes is unavailable or no session/user data is provided.
-    DRY-consolidates the 4 duplicate condition+builder blocks across streaming
-    generators and the non-streaming init path.
+    chat_completions enters it before starting its spans, for streaming and
+    non-streaming requests alike, and exits it in the same task.
     """
     if propagate_attributes is None or not (session_id or user_id):
         return None
@@ -3439,14 +3439,14 @@ async def chat_completions(request: Request):
     if lf:
         try:
             langfuse_trace_id = lf.create_trace_id(seed=str(uuid.uuid4()))
-            # Propagate session_id/user_id via Langfuse's native session mechanism.
-            # For non-streaming: enter here (same asyncio task, contextvars work).
-            # For streaming: each generator creates its own context in its own task
-            # because OpenTelemetry contextvars are task-isolated.
-            if not _is_streaming:
-                _prop_ctx = _make_prop_ctx(_trace_session_id, _trace_user_id)
-                if _prop_ctx is not None:
-                    _prop_ctx.__enter__()
+            # Trace-level session_id/user_id via Langfuse's propagate_attributes: only spans
+            # started inside the context carry them (triage, classifier, litellm-proxy), so it
+            # is entered here for streaming requests too. It is exited in this task, before
+            # chat_completions returns (the finally below), never in the stream generator:
+            # OpenTelemetry contextvars are task-isolated, and the generator starts no span.
+            _prop_ctx = _make_prop_ctx(_trace_session_id, _trace_user_id)
+            if _prop_ctx is not None:
+                _prop_ctx.__enter__()
             metadata = {
                 "client_model": client_model,
                 "environment": os.getenv("ENVIRONMENT", "production"),
@@ -3469,8 +3469,7 @@ async def chat_completions(request: Request):
             logger.warning(f"Langfuse trace init failed (non-fatal): {e}")
             langfuse_trace_id = None
             parent_obs = None
-            if _prop_ctx:
-                _prop_ctx = _close_prop_ctx(_prop_ctx)
+            _prop_ctx = _close_prop_ctx(_prop_ctx)
 
     try:
         _non_streaming_finalized = False
@@ -3745,8 +3744,6 @@ async def chat_completions(request: Request):
                             sse_buffer = ""
                             decoder = codecs.getincrementaldecoder("utf-8")()
                             finalized = False
-                            _litellm_gen_prop = _make_prop_ctx(_trace_session_id, _trace_user_id) or nullcontext()
-                            _litellm_gen_prop.__enter__()
                             try:
                                 async for chunk in r.aiter_bytes():
                                     yield chunk
@@ -3804,7 +3801,6 @@ async def chat_completions(request: Request):
                                     },
                                     metadata={"latency_ms": proxy_latency, "completion_tokens": completion_chars // 4},
                                 )
-                                _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                             except Exception as ex:
                                 if hasattr(ex, "status_code") and ex.status_code == 429:
@@ -3823,7 +3819,6 @@ async def chat_completions(request: Request):
                                     parent_obs,
                                     output={"error": type(ex).__name__, "route": "litellm_fallback", "stream": True},
                                 )
-                                _close_prop_ctx(_litellm_gen_prop)
                                 finalized = True
                                 if model_name.startswith("ollama-"):
                                     global _ollama_cooldown_until
@@ -3846,7 +3841,6 @@ async def chat_completions(request: Request):
                                         parent_obs,
                                         output={"error": "cancelled", "route": "litellm_fallback", "stream": True},
                                     )
-                                    _close_prop_ctx(_litellm_gen_prop)
                                 await r.aclose()
 
                         resp_headers = {}
@@ -4076,8 +4070,11 @@ async def chat_completions(request: Request):
                 _non_streaming_finalized = True
                 raise
     finally:
-        if not _is_streaming and not _non_streaming_finalized:
-            _end_parent_obs(parent_obs, output={"error": "cancelled", "route": "non_streaming"})
+        # _non_streaming_finalized: an error path already ended parent_obs and closed _prop_ctx.
+        # A returned StreamingResponse ends parent_obs from its generator, so only close here.
+        if not _non_streaming_finalized:
+            if not _is_streaming:
+                _end_parent_obs(parent_obs, output={"error": "cancelled", "route": "non_streaming"})
             _prop_ctx = _close_prop_ctx(_prop_ctx)
 
 
