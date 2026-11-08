@@ -280,7 +280,9 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 240K |
 | `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 240K |
 | `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 240K |
-| `agent-simple-core` | ❌ | — | LiteLLM fallback chain | 240K |
+| `agent-simple-core` | ❌ | — | LiteLLM fallback chain | 32K (32,768 tok) |
+
+The context lengths of the `agent-*-core` tiers are the router's own limits (`ROUTER_CONTEXT_LIMITS` in `router/main.py`): the completion pre-screen rejects a longer prompt with HTTP 400, and `/v1/models` never advertises more (v0.1.94). Each tier mixes the `config.yaml` bootstrap deployment (local Qwen, 240,896) with free OpenRouter models (65,536 to 1,000,000), and LiteLLM lists a group's widest *configured* limit, which said 1,048,576 while the roster sync wrote catalog limits and 240,896 since #738.
 
 > [!TIP]
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).

@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 
 import router.main as rm
 from router.model_metadata import CATALOG_URL, OpenRouterMetadataSync
-from router.model_sync import ModelRegistrySync
+from router.model_sync import WRITE_ONLY_DIGEST_KEY, ModelRegistrySync
 
 
 @pytest.fixture(autouse=True)
@@ -332,7 +332,11 @@ async def test_legacy_explicit_openrouter_fields_not_overwritten_on_registry_dri
         ]
     }
     assert await sync.upsert_model(target, existing) == ("updated", True)
-    assert client.patch.call_args.kwargs["json"]["model_info"] == {"id": "existing"}
+    # Only the write-only digest (api_key) joins the id: legacy fields and metadata are untouched.
+    assert client.patch.call_args.kwargs["json"]["model_info"] == {
+        "id": "existing",
+        WRITE_ONLY_DIGEST_KEY: sync.write_only_digest(target["litellm_params"]),
+    }
     assert existing[target["model_name"]][0]["model_info"] == legacy
 
 
