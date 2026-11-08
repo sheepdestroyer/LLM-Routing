@@ -526,6 +526,33 @@ Uvicorn's log level follows the same env var via `${LOG_LEVEL:-warning}` in the 
 
 Unit file location: `~/.config/systemd/user/agy-daemon.service`
 
+### 4. Upgrading Production (`scripts/upgrade-prod.sh`)
+
+Prod runs a release, never the dev clone. `scripts/upgrade-prod.sh <tag>` (default: the latest release; `--dry-run`
+lists what would change) clones the tag, syncs the runtime files into `~/prod/LLM-Routing` (`.env`, `data/` and
+`backups/` are never touched) and redeploys with `start-stack.sh --pull`.
+
+Host units are restarted when their files change. `agy-daemon.service` runs `scripts/host_agy_daemon.py` on the host,
+outside the pod, and keeps the code it started with (`HOST_UNITS` in the script lists the units and their files):
+
+- Right after the sync, a unit whose script or unit file differs from the content it last started with is restarted
+  (`♻️  Restarting agy-daemon.service (changed: scripts/host_agy_daemon.py)`), then checked: still active with the same
+  PID 3 s later. The daemon therefore never runs old code next to new files, and it is up before the pod comes back.
+- After `start-stack.sh`, a unit file it regenerated gets `systemctl --user daemon-reload` (when systemd reports
+  `NeedDaemonReload=yes`) and a restart. The restart is skipped only when `start-stack.sh` restarted the unit after
+  the new definition was loaded. This pass also runs when the redeploy failed, and it decides the exit status.
+- The digests are kept in `~/prod/LLM-Routing/.host-units.sha256`. They advance only once a unit runs the new content
+  (active and settled, or stopped), so the next run completes an upgrade that stopped or failed before that, and a
+  second run of the same release restarts nothing. Without a recorded digest (first run, lost state), a unit that
+  became active before its file was last written, for example after a release deployed by an older script, counts as
+  changed and is restarted.
+- The restart step never starts a stopped unit. `start-stack.sh` still starts `agy-daemon.service` when it is not
+  running, as before, and that start loads the new files.
+- The root copy `~/prod/LLM-Routing/upgrade-prod.sh`, when present, is refreshed from the release.
+
+Releases before v0.1.91 do not restart host units: after deploying one (a rollback, for example), run
+`systemctl --user restart agy-daemon.service`.
+
 ---
 
 ## 6. Verification & Testing

@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import errno
 import fcntl
+import inspect
 import json
 import os
 import re
@@ -925,11 +926,11 @@ async def _execute_agy_stream_json(
         # Real process / line-by-line streaming mode
         if proc.stdin and hasattr(proc.stdin, "write"):
             proc.stdin.write(input_msg.encode("utf-8"))
-            if hasattr(proc.stdin, "drain") and asyncio.iscoroutinefunction(proc.stdin.drain):
+            if hasattr(proc.stdin, "drain") and inspect.iscoroutinefunction(proc.stdin.drain):
                 await proc.stdin.drain()
             if hasattr(proc.stdin, "close"):
                 proc.stdin.close()
-            if hasattr(proc.stdin, "wait_closed") and asyncio.iscoroutinefunction(proc.stdin.wait_closed):
+            if hasattr(proc.stdin, "wait_closed") and inspect.iscoroutinefunction(proc.stdin.wait_closed):
                 try:
                     await proc.stdin.wait_closed()
                 except Exception:
@@ -977,7 +978,7 @@ async def _execute_agy_stream_json(
                             if hasattr(proc, "kill"):
                                 try:
                                     proc.kill()
-                                    if hasattr(proc, "wait") and asyncio.iscoroutinefunction(proc.wait):
+                                    if hasattr(proc, "wait") and inspect.iscoroutinefunction(proc.wait):
                                         await proc.wait()
                                 except Exception:
                                     pass
@@ -1017,7 +1018,7 @@ async def _execute_agy_stream_json(
             except Exception:
                 continue
 
-        if hasattr(proc, "wait") and asyncio.iscoroutinefunction(proc.wait):
+        if hasattr(proc, "wait") and inspect.iscoroutinefunction(proc.wait):
             await proc.wait()
         try:
             await stderr_task
