@@ -483,6 +483,19 @@
             opacity: 0.5;
         }
 
+        .metadata-controls { display: flex; flex-direction: column; gap: 12px; }
+        .metadata-controls p { font-size: 13px; line-height: 1.5; color: #cbd5e1; }
+        #metadata-admin-key {
+            width: 100%; padding: 12px; border-radius: 8px;
+            border: 1px solid var(--glass-border); background: var(--slate-900); color: #fff;
+        }
+        #metadata-admin-key:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+        #metadata-refresh-button { cursor: pointer; justify-content: center; }
+        #metadata-refresh-button:disabled { cursor: wait; opacity: 0.6; transform: none; }
+        #metadata-refresh-result[data-state="success"] { color: #6ee7b7; }
+        #metadata-refresh-result[data-state="warning"] { color: #fde68a; }
+        #metadata-refresh-result[data-state="error"] { color: #fda4af; }
+
         /* Responsive */
         @media (max-width: 600px) {
             .metrics-grid {
@@ -604,6 +617,104 @@
             }).catch(err => console.error("Failed to copy to clipboard:", err));
         }
 
+        // This privileged action is separate from public telemetry polling. Never retain
+        // credentials or render server-supplied errors (which could contain secrets).
+        async function refreshModelMetadata(event) {
+            event.preventDefault();
+            const form = document.getElementById("metadata-refresh-form");
+            const input = document.getElementById("metadata-admin-key");
+            const button = document.getElementById("metadata-refresh-button");
+            const result = document.getElementById("metadata-refresh-result");
+            if (button.disabled) return;
+            const show = (state, text) => {
+                result.dataset.state = state;
+                result.textContent = text;
+            };
+            let key = input.value;
+            input.value = "";
+            if (!key.trim()) {
+                key = "";
+                show("error", "Enter an admin key. Dashboard access does not grant admin privileges.");
+                input.focus();
+                return;
+            }
+            button.disabled = true;
+            input.disabled = true;
+            form.setAttribute("aria-busy", "true");
+            show("busy", "Refreshing model metadata… This may take up to 120 seconds.");
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 120000);
+            try {
+                const basePath = window.location.pathname.endsWith('/') ? '../' : './';
+                const url = new URL(basePath + "admin/sync-models", window.location.href);
+                url.searchParams.set("metadata_only", "true");
+                url.searchParams.set("force_catalog_refresh", "true");
+                // Reject redirects and cross-origin requests before transmitting a key.
+                if (url.origin !== window.location.origin) throw new Error("Unsafe origin");
+                const pending = fetch(url, {
+                    method: "POST", mode: "same-origin", credentials: "omit",
+                    redirect: "error", cache: "no-store",
+                    headers: { "Authorization": "Bearer " + key, "Accept": "application/json" },
+                    signal: controller.signal
+                });
+                key = "";
+                const response = await pending;
+                if (response.status === 401 || response.status === 403) {
+                    show("error", "Authentication failed (" + response.status + "). Enter a valid ROUTER_API_KEY or LITELLM_MASTER_KEY; dashboard access alone is not authorization.");
+                    return;
+                }
+                if (!response.ok) {
+                    show("error", "Metadata refresh failed (HTTP " + response.status + "). Enter your key again to retry.");
+                    return;
+                }
+                let data;
+                try {
+                    data = await response.json();
+                    const report = data.metadata;
+                    const names = ["updated", "unchanged", "unresolved", "failed"];
+                    if (data.status !== "ok" || !report || report.dry_run !== false ||
+                        !report.counts || !names.every(name => Number.isSafeInteger(report.counts[name]) && report.counts[name] >= 0) ||
+                        !Array.isArray(report.deployments) || !Array.isArray(report.errors) ||
+                        !report.errors.every(error => typeof error === "string") ||
+                        !report.deployments.every(deployment => deployment && typeof deployment === "object" &&
+                            (!deployment.provenance || (Array.isArray(deployment.provenance.overrides) &&
+                                deployment.provenance.overrides.every(value => typeof value === "string"))))) {
+                        throw new Error("Invalid report");
+                    }
+                } catch {
+                    if (controller.signal.aborted) throw new Error("Timeout");
+                    show("error", "Invalid metadata refresh response. The operation may have run; check admin status before retrying.");
+                    return;
+                }
+                const report = data.metadata;
+                const counts = report.counts;
+                const overrides = report.deployments.reduce((total, deployment) =>
+                    total + (deployment.provenance ? deployment.provenance.overrides.length : 0), 0);
+                const catalogUnavailable = report.errors.some(error => error.startsWith("catalog:")) ||
+                    report.deployments.some(deployment => Array.isArray(deployment.provenance?.unresolved) &&
+                        deployment.provenance.unresolved.includes("catalog_unavailable"));
+                const warning = counts.failed > 0 || counts.unresolved > 0 || report.errors.length > 0 || catalogUnavailable;
+                let summary = (warning ? "Completed with warnings. " : "Metadata refresh complete. ") +
+                    "Updated: " + counts.updated + "; unchanged: " + counts.unchanged +
+                    "; unresolved: " + counts.unresolved + "; failed: " + counts.failed +
+                    "; overrides preserved: " + overrides + ".";
+                if (catalogUnavailable) summary += " Catalog unavailable; cached metadata may be used. Server retry backoff still applies to forced refreshes.";
+                if (report.errors.length && !catalogUnavailable) summary += " Some refresh steps could not complete.";
+                show(warning ? "warning" : "success", summary);
+            } catch {
+                show("error", controller.signal.aborted ?
+                    "Metadata refresh timed out after 120 seconds. The server may still be running; check admin status before retrying." :
+                    "Network error: metadata refresh could not be confirmed. Check connectivity and admin status before retrying.");
+            } finally {
+                key = "";
+                input.value = "";
+                clearTimeout(timer);
+                button.disabled = false;
+                input.disabled = false;
+                form.setAttribute("aria-busy", "false");
+            }
+        }
+
         // Initialize on load and set periodic polling with visibility guard
         window.addEventListener("DOMContentLoaded", () => {
             const basePath = window.location.pathname.endsWith('/') ? '../' : './';
@@ -611,6 +722,7 @@
             if (visLink) {
                 visLink.href = basePath + "visualizer";
             }
+            document.getElementById("metadata-refresh-form").addEventListener("submit", refreshModelMetadata);
             refreshStats();
         });
 
@@ -789,6 +901,19 @@
                     </span>
                 </div>
             </div>
+
+            <!-- Explicit, authenticated metadata-only action; never registry synchronization. -->
+            <section class="glass-card" aria-labelledby="metadata-refresh-title">
+                <h2 class="section-title" id="metadata-refresh-title">Model metadata</h2>
+                <form id="metadata-refresh-form" class="metadata-controls" autocomplete="off" aria-busy="false">
+                    <p id="metadata-refresh-help">After changing a LiteLLM model manually, refresh its catalog metadata. This does not create or delete models, change routing targets, or replace explicit overrides. Catalog refresh respects server retry backoff.</p>
+                    <label for="metadata-admin-key">Admin key (ROUTER_API_KEY or LITELLM_MASTER_KEY)</label>
+                    <input id="metadata-admin-key" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="metadata-key-help">
+                    <p id="metadata-key-help">LAN dashboard access is not admin authorization. Your key is sent only for this request and is not saved. Enter it again for each refresh.</p>
+                    <button id="metadata-refresh-button" class="btn" type="submit" aria-describedby="metadata-refresh-help">Refresh model metadata</button>
+                    <p id="metadata-refresh-result" role="status" aria-live="polite" aria-atomic="true" data-state="idle">No metadata refresh requested.</p>
+                </form>
+            </section>
 
             <!-- Global Token Tracker -->
             <div class="glass-card">
