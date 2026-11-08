@@ -33,7 +33,8 @@ cleanup() {
 trap cleanup EXIT
 
 REPO="sheepdestroyer/LLM-Routing"
-PROD_DIR="${PROD_DIR:-$HOME/prod/LLM-Routing}"
+# Absolute: the redeploy runs from inside it, and the host-unit state is keyed by path.
+PROD_DIR="$(realpath -m -- "${PROD_DIR:-$HOME/prod/LLM-Routing}")"
 TEMP_DIR=""
 DRY_RUN=false
 TAG=""
@@ -44,9 +45,9 @@ TAG=""
 # start-stack.sh, prod namespace) changed. Entry: "<unit>:<file>[,<file>...]", relative to PROD_DIR.
 HOST_UNITS=("agy-daemon.service:scripts/host_agy_daemon.py")
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-# "<sha256> <path>" per tracked file: the content its unit last started with. A digest is replaced
-# only once the unit runs the new content (restarted, or stopped and starting with it later), so a
-# run that stops or fails before the restart is completed by the next one.
+# "<sha256> <path>" per tracked file: the content its unit last started with ("unknown": a running
+# unit older than the file). A digest advances only once the unit runs the new content (restarted
+# and settled, or stopped), so the next run completes a run that failed or stopped before that.
 HOST_UNITS_STATE="$PROD_DIR/.host-units.sha256"
 declare -A HOST_UNIT_MARK=()
 RESTARTED_UNITS=()
@@ -88,32 +89,30 @@ recorded_digest() {
     done < "$HOST_UNITS_STATE"
 }
 
-# Record the digest of a path (the state file is replaced atomically).
+# Record the digest of a path (the state file is replaced atomically); fails when it cannot be written.
 record_digest() {
     local tmp digest path
-    tmp=$(mktemp "$HOST_UNITS_STATE.XXXXXX")
+    tmp=$(mktemp "$HOST_UNITS_STATE.XXXXXX") || return 1
     if [ -f "$HOST_UNITS_STATE" ]; then
         while read -r digest path; do
             if [ "$path" != "$1" ]; then
                 printf '%s %s\n' "$digest" "$path"
             fi
-        done < "$HOST_UNITS_STATE" > "$tmp"
+        done < "$HOST_UNITS_STATE" > "$tmp" || { rm -f "$tmp"; return 1; }
     fi
-    printf '%s %s\n' "$2" "$1" >> "$tmp"
-    mv -f "$tmp" "$HOST_UNITS_STATE"
+    if printf '%s %s\n' "$2" "$1" >> "$tmp" && mv -f "$tmp" "$HOST_UNITS_STATE"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
 }
 
-# Before the sync: a path without a recorded digest gets the one of its current file. Recorded
-# digests are kept: they may be from a run that stopped before restarting the unit.
-snapshot_host_units() {
-    local entry path
-    for entry in "${HOST_UNITS[@]}"; do
-        while IFS= read -r path; do
-            if [ -z "$(recorded_digest "$path")" ]; then
-                record_digest "$path" "$(file_digest "$path")"
-            fi
-        done < <(host_unit_paths "$entry")
-    done
+# Record the current digests of every path of a HOST_UNITS entry.
+record_unit_digests() {
+    local path
+    while IFS= read -r path; do
+        record_digest "$path" "$(file_digest "$path")" || return 1
+    done < <(host_unit_paths "$1")
 }
 
 # One property of a user unit, empty when the user manager cannot be asked.
@@ -121,7 +120,53 @@ unit_property() {
     systemctl --user show "$1" --property="$2" --value --no-pager 2>/dev/null || true
 }
 
-# Remember when each unit last became active: a later activation runs the files synced before.
+# When a unit last became active, in seconds since the epoch; empty when unknown.
+unit_active_since() {
+    local since
+    since=$(systemctl --user show "$1" --property=ActiveEnterTimestamp --value --timestamp=unix --no-pager 2>/dev/null) || true
+    since="${since#@}"
+    if [[ "$since" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$since"
+    fi
+}
+
+# The digest a path without a record starts from: its current content when the unit is stopped or
+# became active after the file was last written; else "unknown" (the unit may run older code, e.g.
+# after a release deployed without a restart), so the unit is restarted.
+baseline_digest() {
+    local since
+    case "$(unit_property "$1" ActiveState)" in
+        active | reloading)
+            if [ -f "$2" ]; then
+                since=$(unit_active_since "$1")
+                if [ -z "$since" ] || [ "$since" -lt "$(stat -c %Y "$2")" ]; then
+                    echo unknown
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+    file_digest "$2"
+}
+
+# Before the sync: seed the paths without a recorded digest (first run, lost state). Recorded
+# digests are kept: they may be from a run that stopped before its unit ran the new files.
+snapshot_host_units() {
+    local entry unit path digest
+    for entry in "${HOST_UNITS[@]}"; do
+        unit="${entry%%:*}"
+        while IFS= read -r path; do
+            [ -z "$(recorded_digest "$path")" ] || continue
+            digest=$(baseline_digest "$unit" "$path")
+            if [ "$digest" = unknown ]; then
+                echo "ℹ️  $unit became active before ${path#"$PROD_DIR"/} was last written: it may run older code"
+            fi
+            record_digest "$path" "$digest" || return 1
+        done < <(host_unit_paths "$entry")
+    done
+}
+
+# Remember when each unit last became active (monotonic): a later activation ran the synced files.
 mark_host_units() {
     local entry unit
     for entry in "${HOST_UNITS[@]}"; do
@@ -145,23 +190,26 @@ unit_settled() {
     [ "$(unit_property "$1" ActiveState)" = "active" ] && [ "$(unit_property "$1" MainPID)" = "$pid" ]
 }
 
-# Restart each unit whose files differ from the digests it last started with, then record them.
+# Restart each unit whose files differ from the digests it last started with, and record the new
+# digests once it runs them. Fails when a unit is left on old files, is not running, or the state
+# cannot be written.
 restart_changed_host_units() {
-    local entry unit path state status=0
-    local -a paths changed
+    local entry unit path state reloaded status=0
+    local -a changed
     for entry in "${HOST_UNITS[@]}"; do
         unit="${entry%%:*}"
-        mapfile -t paths < <(host_unit_paths "$entry")
         changed=()
-        for path in "${paths[@]}"; do
+        while IFS= read -r path; do
             if [ "$(file_digest "$path")" != "$(recorded_digest "$path")" ]; then
                 changed+=("${path#"$PROD_DIR"/}")
             fi
-        done
+        done < <(host_unit_paths "$entry")
         if [ ${#changed[@]} -eq 0 ]; then
             echo "✓ $unit: unchanged, not restarted"
             continue
         fi
+        # Load a unit file changed on disk first; an activation before that used the old definition.
+        reloaded=false
         if [ "$(unit_property "$unit" NeedDaemonReload)" = "yes" ]; then
             echo "🔄 $unit: unit file changed on disk, running systemctl --user daemon-reload"
             if ! systemctl --user daemon-reload --no-pager; then
@@ -169,17 +217,14 @@ restart_changed_host_units() {
                 status=1
                 continue
             fi
+            reloaded=true
         fi
         state=$(unit_property "$unit" ActiveState)
         case "$state" in
-            "")
-                echo "❌ Cannot read the state of $unit (no systemd user manager?): not restarted" >&2
-                status=1
-                continue
-                ;;
             active | reloading)
-                if restarted_since_mark "$unit"; then
-                    echo "✓ $unit already restarted during this upgrade (changed: ${changed[*]})"
+                if ! $reloaded && restarted_since_mark "$unit"; then
+                    echo "✓ $unit already restarted after the sync, by start-stack.sh (changed: ${changed[*]})"
+                    RESTARTED_UNITS+=("$unit (by start-stack.sh)")
                 else
                     echo "♻️  Restarting $unit (changed: ${changed[*]})"
                     if ! systemctl --user restart "$unit" --no-pager; then
@@ -188,22 +233,33 @@ restart_changed_host_units() {
                         continue
                     fi
                     RESTARTED_UNITS+=("$unit")
-                    if unit_settled "$unit"; then
-                        echo "✓ Restarted $unit: active, PID $(unit_property "$unit" MainPID)"
-                    else
-                        # It now runs the new files: restarting again would not help.
-                        echo "❌ $unit is not running after the restart: journalctl --user -u $unit -n 50 --no-pager" >&2
-                        status=1
-                    fi
                 fi
+                # Recorded only once it runs: a unit crashing on its new files is retried next run.
+                if ! unit_settled "$unit"; then
+                    echo "❌ $unit is not running after the restart: see journalctl --user -u $unit -n 50 --no-pager" >&2
+                    status=1
+                    continue
+                fi
+                echo "✓ $unit: active, PID $(unit_property "$unit" MainPID)"
+                ;;
+            inactive)
+                echo "ℹ️  $unit is stopped: it runs the new files when it starts (changed: ${changed[*]})"
+                ;;
+            "")
+                echo "❌ Cannot read the state of $unit (no systemd user manager?): not restarted" >&2
+                status=1
+                continue
                 ;;
             *)
-                echo "ℹ️  $unit is $state: it runs the new files when it starts (changed: ${changed[*]})"
+                echo "❌ $unit is $state, not running: see journalctl --user -u $unit -n 50 --no-pager" >&2
+                status=1
+                continue
                 ;;
         esac
-        for path in "${paths[@]}"; do
-            record_digest "$path" "$(file_digest "$path")"
-        done
+        if ! record_unit_digests "$entry"; then
+            echo "❌ Cannot write $HOST_UNITS_STATE: the next run restarts $unit again" >&2
+            status=1
+        fi
     done
     return "$status"
 }
@@ -218,7 +274,7 @@ dry_run_host_units() {
         changed=()
         while IFS= read -r path; do
             before=$(recorded_digest "$path")
-            [ -n "$before" ] || before=$(file_digest "$path")
+            [ -n "$before" ] || before=$(baseline_digest "$unit" "$path")
             release="$path"
             case "$path" in
                 "$PROD_DIR"/*) release="$TEMP_DIR/${path#"$PROD_DIR"/}" ;;
@@ -348,7 +404,11 @@ fi
 # DATA_ROOT, not the source files being synced. start-stack.sh --pull
 # handles graceful shutdown (including pre-deploy backup) before redeploy.
 echo "📋 Syncing runtime files..."
-snapshot_host_units
+# Before anything changes: a run that cannot record the host-unit digests syncs nothing.
+if ! snapshot_host_units; then
+    echo "❌ Cannot write $HOST_UNITS_STATE: nothing synced" >&2
+    exit 1
+fi
 # Sync directories with --delete (clean stale files within each dir)
 rsync -a --delete "$TEMP_DIR/quadlets/" "$PROD_DIR/quadlets/"
 rsync -a --delete "$TEMP_DIR/litellm/" "$PROD_DIR/litellm/"
@@ -368,9 +428,8 @@ echo "✓ Runtime files synced from $TAG"
 
 # ── host units: restart before the redeploy, so they never run old code next to new files ──
 echo "🔁 Host units with changed files..."
-units_status=0
 mark_host_units
-restart_changed_host_units || units_status=1
+restart_changed_host_units || echo "⚠️  Host units not done yet: checked again after the redeploy"
 
 # ── redeploy ──
 echo "🚀 Redeploying with --pull (latest container images)..."
@@ -379,9 +438,11 @@ mark_host_units
 deploy_status=0
 bash start-stack.sh --pull || deploy_status=$?
 
-# ── host units again: unit files start-stack.sh regenerated (also after a failed redeploy) ──
+# ── host units again: unit files start-stack.sh regenerated, units left behind above ──
+# Also after a failed redeploy: the files are synced. This pass decides the units' outcome.
 echo "🔁 Host units after the redeploy..."
-restart_changed_host_units || units_status=1
+units_status=0
+restart_changed_host_units || units_status=$?
 if [ ${#RESTARTED_UNITS[@]} -gt 0 ]; then
     echo "♻️  Host units restarted by this upgrade: ${RESTARTED_UNITS[*]}"
 else
@@ -393,6 +454,6 @@ if [ "$deploy_status" -ne 0 ]; then
     exit "$deploy_status"
 fi
 if [ "$units_status" -ne 0 ]; then
-    echo "❌ Host units need attention (see above); a unit left on its old files is retried by the next run" >&2
+    echo "❌ Host units need attention (see above); one left on its old files is retried by the next run" >&2
     exit "$units_status"
 fi

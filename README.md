@@ -539,11 +539,15 @@ outside the pod, and keeps the code it started with (`HOST_UNITS` in the script 
   (`♻️  Restarting agy-daemon.service (changed: scripts/host_agy_daemon.py)`), then checked: still active with the same
   PID 3 s later. The daemon therefore never runs old code next to new files, and it is up before the pod comes back.
 - After `start-stack.sh`, a unit file it regenerated gets `systemctl --user daemon-reload` (when systemd reports
-  `NeedDaemonReload=yes`) and a restart, unless `start-stack.sh` already restarted the unit. This step also runs when
-  the redeploy failed.
-- The digests are kept in `~/prod/LLM-Routing/.host-units.sha256`. They advance only once a unit runs the new content,
-  so the next run completes an upgrade that stopped or failed before the restart, and a second run of the same release
-  restarts nothing. A stopped unit is not started: it loads the new files when it starts.
+  `NeedDaemonReload=yes`) and a restart. The restart is skipped only when `start-stack.sh` restarted the unit after
+  the new definition was loaded. This pass also runs when the redeploy failed, and it decides the exit status.
+- The digests are kept in `~/prod/LLM-Routing/.host-units.sha256`. They advance only once a unit runs the new content
+  (active and settled, or stopped), so the next run completes an upgrade that stopped or failed before that, and a
+  second run of the same release restarts nothing. Without a recorded digest (first run, lost state), a unit that
+  became active before its file was last written, for example after a release deployed by an older script, counts as
+  changed and is restarted.
+- The restart step never starts a stopped unit. `start-stack.sh` still starts `agy-daemon.service` when it is not
+  running, as before, and that start loads the new files.
 - The root copy `~/prod/LLM-Routing/upgrade-prod.sh`, when present, is refreshed from the release.
 
 Releases before v0.1.91 do not restart host units: after deploying one (a rollback, for example), run

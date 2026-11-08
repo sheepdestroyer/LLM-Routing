@@ -35,18 +35,32 @@ def attribute_root(node: ast.expr) -> str | None:
     return node.id if isinstance(node, ast.Name) else None
 
 
+def asyncio_names(tree: ast.Module) -> set[str]:
+    """Names an import binds to asyncio or to something imported from it (aliases included)."""
+    names = {"asyncio"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "asyncio" or alias.name.startswith("asyncio."):
+                    names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "asyncio":
+            names.update(alias.asname or alias.name for alias in node.names)
+    return names
+
+
 def deprecated_calls(path: Path, root: Path = ROOT) -> list[str]:
     """Every use of asyncio's iscoroutinefunction in a Python file, as ``path:line``."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    names = asyncio_names(tree)
     hits = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr == "iscoroutinefunction":
-            if attribute_root(node.value) == "asyncio":
+            if attribute_root(node.value) in names:
                 hits.append(f"{path.relative_to(root)}:{node.lineno}")
-        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("asyncio"):
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "asyncio":
             if any(alias.name == "iscoroutinefunction" for alias in node.names):
                 hits.append(f"{path.relative_to(root)}:{node.lineno}")
-    return hits
+    return sorted(hits, key=lambda hit: int(hit.rsplit(":", 1)[1]))
 
 
 def test_no_source_uses_asyncio_iscoroutinefunction():
@@ -68,8 +82,21 @@ def test_the_scan_finds_the_deprecated_forms(tmp_path):
         "import inspect\n"
         "inspect.iscoroutinefunction(print)\n"
         f"text = '{old}'\n"
+        "import asyncio as aio\n"
+        "aio.iscoroutinefunction(print)\n"
+        "from asyncio import coroutines as co\n"
+        "co.iscoroutinefunction(print)\n"
+        "import asyncio.coroutines as aco\n"
+        "aco.iscoroutinefunction(print)\n"
     )
-    assert deprecated_calls(sample, root=tmp_path) == ["sample.py:2", "sample.py:3", "sample.py:4"]
+    assert deprecated_calls(sample, root=tmp_path) == [
+        "sample.py:2",
+        "sample.py:3",
+        "sample.py:4",
+        "sample.py:9",
+        "sample.py:11",
+        "sample.py:13",
+    ]
 
 
 class FakeStdin:

@@ -5,7 +5,7 @@ keeps the code it started with, and start-stack.sh restarts the daemon only when
 unit file, so a release that changed only the script left the old code running (prod ran 11-03
 code across several releases). These tests run the actual script in a temporary PROD_DIR against
 recording stubs: git (clone = copy a release tree), systemctl (a stateful fake user manager), sleep,
-and the release's start-stack.sh.
+mktemp (to fail state writes), and the release's start-stack.sh.
 """
 
 import hashlib
@@ -22,7 +22,10 @@ SCRIPT = ROOT / "scripts" / "upgrade-prod.sh"
 UNIT = "agy-daemon.service"
 DAEMON = "scripts/host_agy_daemon.py"
 RESTART = f"systemctl --user restart {UNIT} --no-pager"
+START = f"systemctl --user start {UNIT} --no-pager"
 RELOAD = "systemctl --user daemon-reload --no-pager"
+REAL_MKTEMP = shutil.which("mktemp")
+AFTER_EVERY_FILE = "4102444800"  # 2100-01-01: the unit became active after its files were written
 
 GIT_STUB = """#!/bin/sh
 printf 'git %s\\n' "$*" >> "$CALL_LOG"
@@ -31,28 +34,44 @@ for dest; do :; done
 cp -a "$RELEASE_DIR/." "$dest"
 """
 
-# The user manager: unit state in files under $SYSTEMCTL_STATE.
+# The user manager: unit state in files under $SYSTEMCTL_STATE ("unreachable": every call fails).
 SYSTEMCTL_STUB = """#!/bin/sh
 printf 'systemctl %s\\n' "$*" >> "$CALL_LOG"
 s="$SYSTEMCTL_STATE"
+[ -f "$s/unreachable" ] && exit 1
+activate() {
+    echo $(( $(cat "$s/since") + 1 )) > "$s/since"
+    echo $(( $(cat "$s/main_pid") + 1 )) > "$s/main_pid"
+    date +%s > "$s/active_since_epoch"
+    if [ -f "$s/crash" ]; then echo activating > "$s/active_state"; else echo active > "$s/active_state"; fi
+}
 case "$*" in
     *--property=ActiveState*) cat "$s/active_state" ;;
     *--property=ActiveEnterTimestampMonotonic*) cat "$s/since" ;;
+    *--property=ActiveEnterTimestamp*) printf '@%s\\n' "$(cat "$s/active_since_epoch")" ;;
     *--property=NeedDaemonReload*) cat "$s/need_reload" ;;
     *--property=MainPID*) cat "$s/main_pid" ;;
     *daemon-reload*) echo no > "$s/need_reload" ;;
     *" restart "*)
-        rc=$(cat "$s/restart_rc")
-        [ "$rc" = 0 ] || exit "$rc"
-        echo $(( $(cat "$s/since") + 1 )) > "$s/since"
-        echo $(( $(cat "$s/main_pid") + 1 )) > "$s/main_pid"
-        if [ -f "$s/crash" ]; then echo activating > "$s/active_state"; else echo active > "$s/active_state"; fi
+        failures=$(cat "$s/restart_failures")
+        if [ "$failures" -gt 0 ]; then echo $(( failures - 1 )) > "$s/restart_failures"; exit 1; fi
+        activate
         ;;
+    *" start "*) activate ;;
 esac
 """
 
+# Fails creating the state file's temp file once $MKTEMP_FAIL_FLAG exists (a full disk).
+MKTEMP_STUB = f"""#!/bin/sh
+case "$*" in
+    *host-units*) [ -n "$MKTEMP_FAIL_FLAG" ] && [ -e "$MKTEMP_FAIL_FLAG" ] && exit 1 ;;
+esac
+exec {REAL_MKTEMP} "$@"
+"""
+
 # The release's start-stack.sh: like the real one, it rewrites the agy-daemon unit when it differs,
-# then reloads and restarts it (each step can be switched off to model a swallowed failure).
+# then reloads and restarts it (each step can be switched off to model a swallowed failure), and
+# starts the daemon when it is not running.
 START_STACK_STUB = """#!/bin/bash
 printf 'start-stack.sh %s\\n' "$*" >> "$CALL_LOG"
 unit="$HOME/.config/systemd/user/agy-daemon.service"
@@ -62,6 +81,10 @@ if [ -n "${NEW_UNIT:-}" ] && [ "$(cat "$unit" 2>/dev/null)" != "$NEW_UNIT" ]; th
     [ "${START_STACK_RELOADS:-1}" = 1 ] && systemctl --user daemon-reload --no-pager
     [ "${START_STACK_RESTARTS:-1}" = 1 ] && systemctl --user restart agy-daemon.service --no-pager
 fi
+if [ "$(cat "$SYSTEMCTL_STATE/active_state" 2>/dev/null)" != active ]; then
+    systemctl --user start agy-daemon.service --no-pager
+fi
+[ -n "${START_STACK_TOUCH:-}" ] && touch "$START_STACK_TOUCH"
 exit "${START_STACK_RC:-0}"
 """
 
@@ -70,6 +93,7 @@ exit "${START_STACK_RC:-0}"
 OLD_CODE = "print('daemon v1')\n"
 NEW_CODE = "print('daemon v2, fixed')\n"
 OLD_UNIT = "[Service]\nExecStart=/usr/bin/python3 host_agy_daemon.py\n"
+NEW_UNIT = "[Service]\nExecStart=new"
 
 
 def sha256(text: str) -> str:
@@ -91,6 +115,7 @@ class Upgrade:
     """A prod directory, a release and a fake user manager; run() executes upgrade-prod.sh."""
 
     def __init__(self, tmp_path: Path):
+        self.tmp = tmp_path
         self.prod = tmp_path / "prod"
         self.release = tmp_path / "release"
         self.home = tmp_path / "home"
@@ -106,9 +131,17 @@ class Upgrade:
         self.unit.parent.mkdir(parents=True)
         self.unit.write_text(OLD_UNIT)
         self.manager.mkdir()
-        self.set_manager(active_state="active", since="100", need_reload="no", main_pid="4242", restart_rc="0")
+        self.set_manager(
+            active_state="active",
+            since="100",
+            active_since_epoch=AFTER_EVERY_FILE,
+            need_reload="no",
+            main_pid="4242",
+            restart_failures="0",
+        )
         self.bin.mkdir()
-        for name, body in (("git", GIT_STUB), ("systemctl", SYSTEMCTL_STUB), ("sleep", "#!/bin/sh\nexit 0\n")):
+        stubs = {"git": GIT_STUB, "systemctl": SYSTEMCTL_STUB, "mktemp": MKTEMP_STUB, "sleep": "#!/bin/sh\n"}
+        for name, body in stubs.items():
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
 
@@ -116,7 +149,7 @@ class Upgrade:
         for name, value in values.items():
             (self.manager / name).write_text(value + "\n")
 
-    def run(self, *args: str, **env: str) -> subprocess.CompletedProcess:
+    def run(self, *args: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         self.log.write_text("")
         full_env = {
             **{k: v for k, v in os.environ.items() if not k.startswith("UPGRADE_PROD_")},
@@ -131,6 +164,7 @@ class Upgrade:
         return subprocess.run(
             ["bash", str(SCRIPT), *(args or ("v9.9.9",))],
             env=full_env,
+            cwd=cwd,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -143,6 +177,9 @@ class Upgrade:
     def recorded(self) -> dict[str, str]:
         state = self.prod / ".host-units.sha256"
         return {path: digest for digest, path in (line.split(" ", 1) for line in state.read_text().splitlines())}
+
+    def recorded_daemon(self) -> str:
+        return self.recorded()[str(self.prod / DAEMON)]
 
 
 @pytest.fixture
@@ -159,8 +196,8 @@ def test_release_changing_only_the_daemon_script_restarts_it_before_the_redeploy
     # Restarted right after the sync: the daemon never runs old code next to the new files.
     assert calls.index(RESTART) < calls.index("start-stack.sh --pull")
     assert f"♻️  Restarting {UNIT} (changed: {DAEMON})" in res.stdout
-    assert f"✓ Restarted {UNIT}: active, PID 4243" in res.stdout
-    assert f"♻️  Host units restarted by this upgrade: {UNIT}" in res.stdout
+    assert f"✓ {UNIT}: active, PID 4243" in res.stdout
+    assert f"♻️  Host units restarted by this upgrade: {UNIT}\n" in res.stdout
     assert (upgrade.prod / DAEMON).read_text() == NEW_CODE
     assert upgrade.recorded() == {str(upgrade.unit): sha256(OLD_UNIT), str(upgrade.prod / DAEMON): sha256(NEW_CODE)}
 
@@ -176,34 +213,64 @@ def test_release_without_daemon_changes_does_not_restart_it(upgrade):
     write_tree(upgrade.release, OLD_CODE, SCRIPT.read_text())
     res = upgrade.run()
     assert res.returncode == 0, res.stderr
-    assert not [call for call in upgrade.calls() if " restart " in call or "daemon-reload" in call]
+    assert not [call for call in upgrade.calls() if call in (RESTART, START, RELOAD)]
     assert "✓ No host unit restarted by this upgrade" in res.stdout
+
+
+def test_daemon_older_than_its_files_is_restarted_on_the_first_run(upgrade):
+    # No state yet, and the daemon became active before its files were last written (a release
+    # deployed by an older upgrade-prod.sh, which never restarted it): it may run older code.
+    write_tree(upgrade.release, OLD_CODE, SCRIPT.read_text())
+    upgrade.set_manager(active_since_epoch="1")
+    dry = upgrade.run("--dry-run", "v9.9.9")
+    assert f"  {UNIT} would be restarted (changed: {upgrade.unit} {DAEMON})" in dry.stdout
+    res = upgrade.run()
+    assert res.returncode == 0, res.stderr
+    assert f"ℹ️  {UNIT} became active before {DAEMON} was last written: it may run older code" in res.stdout
+    assert upgrade.calls().count(RESTART) == 1
+    assert upgrade.recorded_daemon() == sha256(OLD_CODE)
+
+    again = upgrade.run()
+    assert again.returncode == 0, again.stderr
+    assert RESTART not in upgrade.calls()
 
 
 def test_unit_file_regenerated_without_reload_is_reloaded_and_restarted(upgrade):
     # start-stack.sh rewrote the unit, but its daemon-reload and restart failed silently (|| true).
     write_tree(upgrade.release, OLD_CODE, SCRIPT.read_text())
-    res = upgrade.run(NEW_UNIT="[Service]\nExecStart=new", START_STACK_RELOADS="0", START_STACK_RESTARTS="0")
+    res = upgrade.run(NEW_UNIT=NEW_UNIT, START_STACK_RELOADS="0", START_STACK_RESTARTS="0")
     assert res.returncode == 0, res.stderr
     calls = upgrade.calls()
     assert calls.index("start-stack.sh --pull") < calls.index(RELOAD) < calls.index(RESTART)
     assert calls.count(RESTART) == 1
     assert f"♻️  Restarting {UNIT} (changed: {upgrade.unit})" in res.stdout
-    assert upgrade.recorded()[str(upgrade.unit)] == sha256("[Service]\nExecStart=new\n")
+    assert upgrade.recorded()[str(upgrade.unit)] == sha256(NEW_UNIT + "\n")
+
+
+def test_restart_on_the_old_unit_definition_is_repeated_after_the_reload(upgrade):
+    # start-stack.sh restarted the daemon, but its daemon-reload failed: that activation used the
+    # old unit definition, so a restart after the reload is still needed.
+    write_tree(upgrade.release, OLD_CODE, SCRIPT.read_text())
+    res = upgrade.run(NEW_UNIT=NEW_UNIT, START_STACK_RELOADS="0")
+    assert res.returncode == 0, res.stderr
+    calls = upgrade.calls()
+    assert calls.count(RESTART) == 2
+    assert calls.index("start-stack.sh --pull") < calls.index(RELOAD) < len(calls) - calls[::-1].index(RESTART) - 1
+    assert "already restarted" not in res.stdout
 
 
 @pytest.mark.parametrize("daemon_code", [OLD_CODE, NEW_CODE])
 def test_restart_by_start_stack_is_not_repeated(upgrade, daemon_code):
     write_tree(upgrade.release, daemon_code, SCRIPT.read_text())
-    res = upgrade.run(NEW_UNIT="[Service]\nExecStart=new")
+    res = upgrade.run(NEW_UNIT=NEW_UNIT)
     assert res.returncode == 0, res.stderr
     calls = upgrade.calls()
     # One restart by start-stack.sh for the unit file, plus one before it when the script changed.
     assert calls.count(RESTART) == (2 if daemon_code == NEW_CODE else 1)
     assert calls[-1] != RESTART
-    assert f"✓ {UNIT} already restarted during this upgrade (changed: {upgrade.unit})" in res.stdout
-    assert RELOAD in calls  # start-stack.sh's own reload, none needed afterwards
-    assert calls.count(RELOAD) == 1
+    assert f"✓ {UNIT} already restarted after the sync, by start-stack.sh (changed: {upgrade.unit})" in res.stdout
+    assert calls.count(RELOAD) == 1  # start-stack.sh's own reload, none needed afterwards
+    assert f"{UNIT} (by start-stack.sh)\n" in res.stdout.split("♻️  Host units restarted by this upgrade: ")[1]
 
 
 def test_failed_redeploy_still_restarts_changed_units_and_fails(upgrade):
@@ -211,51 +278,73 @@ def test_failed_redeploy_still_restarts_changed_units_and_fails(upgrade):
     assert res.returncode == 3
     assert upgrade.calls().count(RESTART) == 1
     assert "start-stack.sh --pull failed (exit 3)" in res.stderr
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(NEW_CODE)
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
+
+
+def test_restart_failing_once_is_completed_after_the_redeploy(upgrade):
+    upgrade.set_manager(restart_failures="1")
+    res = upgrade.run()
+    assert res.returncode == 0, res.stderr
+    assert upgrade.calls().count(RESTART) == 2
+    assert "⚠️  Host units not done yet: checked again after the redeploy" in res.stdout
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
 
 
 def test_failed_restart_keeps_the_old_digest_and_the_next_run_restarts(upgrade):
-    upgrade.set_manager(restart_rc="1")
+    upgrade.set_manager(restart_failures="2")
     res = upgrade.run()
     assert res.returncode == 1
     # Tried before the redeploy and again after it.
     assert upgrade.calls().count(RESTART) == 2
     assert f"Failed to restart {UNIT}" in res.stderr
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(OLD_CODE)
+    assert upgrade.recorded_daemon() == sha256(OLD_CODE)
 
-    upgrade.set_manager(restart_rc="0")
     again = upgrade.run()
     assert again.returncode == 0, again.stderr
     assert upgrade.calls().count(RESTART) == 1
     assert f"♻️  Restarting {UNIT} (changed: {DAEMON})" in again.stdout
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(NEW_CODE)
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
 
 
-def test_unit_crashing_on_the_new_files_fails_the_upgrade(upgrade):
+def test_unit_crashing_on_the_new_files_fails_and_is_not_recorded(upgrade):
     (upgrade.manager / "crash").write_text("")
     res = upgrade.run()
     assert res.returncode == 1
-    assert upgrade.calls().count(RESTART) == 1  # restarting again would not help
+    assert upgrade.calls().count(RESTART) == 1
     assert f"{UNIT} is not running after the restart" in res.stderr
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(NEW_CODE)
+    assert f"{UNIT} is activating, not running" in res.stderr  # after start-stack.sh's start
+    assert upgrade.recorded_daemon() == sha256(OLD_CODE)  # retried by the next run
 
 
-def test_stopped_unit_is_not_started_by_the_upgrade(upgrade):
+def test_failed_unit_started_by_start_stack_is_recorded(upgrade):
+    # The daemon had failed before the upgrade: start-stack.sh starts it, on the new files.
+    upgrade.set_manager(active_state="failed")
+    res = upgrade.run()
+    assert res.returncode == 0, res.stderr
+    assert f"❌ {UNIT} is failed, not running" in res.stderr
+    assert RESTART not in upgrade.calls()
+    assert upgrade.calls().count(START) == 1
+    assert f"✓ {UNIT} already restarted after the sync, by start-stack.sh (changed: {DAEMON})" in res.stdout
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
+
+
+def test_stopped_unit_is_not_started_by_the_restart_step(upgrade):
     upgrade.set_manager(active_state="inactive")
     res = upgrade.run()
     assert res.returncode == 0, res.stderr
     assert RESTART not in upgrade.calls()
-    assert f"ℹ️  {UNIT} is inactive: it runs the new files when it starts (changed: {DAEMON})" in res.stdout
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(NEW_CODE)
+    assert f"ℹ️  {UNIT} is stopped: it runs the new files when it starts (changed: {DAEMON})" in res.stdout
+    # start-stack.sh starts agy-daemon when it is not running (as before), after the restart step.
+    assert upgrade.calls().index("start-stack.sh --pull") < upgrade.calls().index(START)
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
 
 
 def test_unreachable_user_manager_fails_and_keeps_the_old_digest(upgrade):
-    upgrade.set_manager(active_state="")
+    (upgrade.manager / "unreachable").write_text("")
     res = upgrade.run()
     assert res.returncode == 1
-    assert RESTART not in upgrade.calls()
     assert f"Cannot read the state of {UNIT}" in res.stderr
-    assert upgrade.recorded()[str(upgrade.prod / DAEMON)] == sha256(OLD_CODE)
+    assert upgrade.recorded_daemon() == sha256(OLD_CODE)
 
 
 def test_failed_daemon_reload_skips_the_restart(upgrade):
@@ -269,12 +358,41 @@ def test_failed_daemon_reload_skips_the_restart(upgrade):
     assert "daemon-reload failed" in res.stderr
 
 
+def test_unwritable_state_aborts_before_the_sync(upgrade):
+    flag = upgrade.tmp / "disk-full"
+    flag.write_text("")
+    res = upgrade.run(MKTEMP_FAIL_FLAG=str(flag))
+    assert res.returncode != 0
+    assert "nothing synced" in res.stderr
+    assert (upgrade.prod / DAEMON).read_text() == OLD_CODE
+    assert not [call for call in upgrade.calls() if call in (RESTART, "start-stack.sh --pull")]
+
+
+def test_state_write_failure_after_a_restart_fails_the_upgrade(upgrade):
+    flag = upgrade.tmp / "disk-full"
+    write_tree(upgrade.release, OLD_CODE, SCRIPT.read_text())
+    res = upgrade.run(NEW_UNIT=NEW_UNIT, MKTEMP_FAIL_FLAG=str(flag), START_STACK_TOUCH=str(flag))
+    assert res.returncode == 1
+    assert f"the next run restarts {UNIT} again" in res.stderr
+    assert upgrade.recorded()[str(upgrade.unit)] == sha256(OLD_UNIT)
+
+
+def test_relative_prod_dir_is_resolved(upgrade):
+    res = upgrade.run(cwd=upgrade.tmp, PROD_DIR="prod")
+    assert res.returncode == 0, res.stderr
+    assert upgrade.calls().count(RESTART) == 1
+    assert upgrade.recorded_daemon() == sha256(NEW_CODE)
+    assert not (upgrade.prod / "prod").exists()
+    again = upgrade.run(cwd=upgrade.tmp, PROD_DIR="prod")
+    assert f"✓ {UNIT}: unchanged, not restarted" in again.stdout
+
+
 def test_dry_run_reports_the_restart_and_changes_nothing(upgrade):
     res = upgrade.run("--dry-run", "v9.9.9")
     assert res.returncode == 0, res.stderr
     assert f"  {UNIT} would be restarted (changed: {DAEMON})" in res.stdout
     assert "  upgrade-prod.sh (root copy) differs" not in res.stdout  # no root copy in this prod
-    assert not [call for call in upgrade.calls() if call.startswith("systemctl")]
+    assert all(" show " in call for call in upgrade.calls() if call.startswith("systemctl"))
     assert (upgrade.prod / DAEMON).read_text() == OLD_CODE
     assert not (upgrade.prod / ".host-units.sha256").exists()
 

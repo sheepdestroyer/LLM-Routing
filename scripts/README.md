@@ -17,8 +17,8 @@ Unified startup and credential extraction script for the systemd Quadlet-managed
 
 ### `scripts/upgrade-prod.sh`
 Release-driven prod upgrade: `scripts/upgrade-prod.sh [--dry-run] [<tag>]` clones the release tag, syncs the runtime files into `~/prod/LLM-Routing` and redeploys with `start-stack.sh --pull`.
-- Host units that run synced files (`HOST_UNITS`: `agy-daemon.service` runs `scripts/host_agy_daemon.py`) are restarted when their script or unit file changed: right after the sync, and after the redeploy for a unit file `start-stack.sh` regenerated (`daemon-reload` first, no second restart). Digests in `~/prod/LLM-Routing/.host-units.sha256` advance only once the unit runs the new content, so a failed run is completed by the next one and a repeated run restarts nothing. Details: [README §5.4](../README.md#4-upgrading-production-scriptsupgrade-prodsh).
-- Tests: `tests/test_upgrade_prod_host_units.py` runs the script in a temporary `PROD_DIR` against recording stubs (git, systemctl, the release's `start-stack.sh`).
+- Host units that run synced files (`HOST_UNITS`: `agy-daemon.service` runs `scripts/host_agy_daemon.py`) are restarted when their script or unit file changed: right after the sync, and after the redeploy for a unit file `start-stack.sh` regenerated (`daemon-reload` first, no second restart unless that one ran on the old definition). Digests in `~/prod/LLM-Routing/.host-units.sha256` advance only once the unit runs the new content (active and settled), so a failed run is completed by the next one and a repeated run restarts nothing. Details: [README §5.4](../README.md#4-upgrading-production-scriptsupgrade-prodsh).
+- Tests: `tests/test_upgrade_prod_host_units.py` runs the script in a temporary `PROD_DIR` against recording stubs (git, systemctl, mktemp, the release's `start-stack.sh`).
 
 ### `scripts/backup.sh`
 Automated database backup script that runs before every stack deployment. Uses `pg_isready` to safely wait for database connections and manages timestamped backups under `backups/`.
