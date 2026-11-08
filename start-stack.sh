@@ -75,12 +75,16 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Load optional dev-environment overlay (set DEV_ENV_FILE before calling this script)
+# ENV_OVERLAY_FILE records which overlay was applied, so output can name where a value lives.
+ENV_OVERLAY_FILE=""
 if [ -n "${DEV_ENV_FILE:-}" ] && [ -f "$DEV_ENV_FILE" ]; then
+    ENV_OVERLAY_FILE="$DEV_ENV_FILE"
     set -a
     source "$DEV_ENV_FILE"
     set +a
 elif [[ "$WORKDIR" =~ /dev/ ]] && [ -f "${WORKDIR}/.env.dev" ]; then
     echo "ℹ️  Development worktree detected (${WORKDIR}); automatically applying .env.dev overlay."
+    ENV_OVERLAY_FILE="${WORKDIR}/.env.dev"
     set -a
     source "${WORKDIR}/.env.dev"
     set +a
@@ -844,6 +848,46 @@ print(os.environ.get("LLAMA_CLASSIFIER_URL") or f"{scheme}://llama-classifier.{h
     export PROXY_BASE_URL_DERIVED NEXTAUTH_URL_DERIVED LLAMA_SERVER_URL_DERIVED LLAMA_CLASSIFIER_URL_DERIVED
 }
 
+# ── Credential locations for user-facing output ──
+# Deploy output is kept in terminals, CI and upgrade logs and agent transcripts, so it names
+# where a credential lives (variable and file), never its value. The overlay wins, as in
+# the source order above; a variable in neither file came from the calling environment.
+env_var_source() {
+    local var="$1" file found=""
+    for file in "$ENV_FILE" "${ENV_OVERLAY_FILE:-}"; do
+        if [ -n "$file" ] && [ -f "$file" ] && grep -Eq "^[[:space:]]*(export[[:space:]]+)?${var}=" "$file"; then
+            found="$file"
+        fi
+    done
+    printf '%s\n' "${found:-the calling environment}"
+}
+
+print_success_banner() {
+    local headline="$1" ui_user ui_password
+    # LiteLLM Admin UI login: UI_USERNAME (default admin) / UI_PASSWORD, or the master key
+    # when UI_PASSWORD is unset (LiteLLM docs, proxy/ui).
+    if [ -n "${UI_USERNAME:-}" ]; then
+        ui_user="UI_USERNAME in $(env_var_source UI_USERNAME)"
+    else
+        ui_user="admin (UI_USERNAME unset)"
+    fi
+    if [ -n "${UI_PASSWORD:-}" ]; then
+        ui_password="UI_PASSWORD in $(env_var_source UI_PASSWORD)"
+    else
+        ui_password="LITELLM_MASTER_KEY in $(env_var_source LITELLM_MASTER_KEY) (UI_PASSWORD unset)"
+    fi
+    echo "========================================================================="
+    echo "🎉 SUCCESS: ${headline}"
+    echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
+    echo "   (local)          : ${LOCAL_BASE_URL}/v1"
+    echo "⚙️  Dashboard URL  : ${PUBLIC_BASE_URL}/dashboard"
+    echo "🔑 Gateway API key : a LiteLLM virtual key, or ROUTER_API_KEY in $(env_var_source ROUTER_API_KEY)"
+    echo "🔐 LiteLLM Admin UI: ${PROXY_BASE_URL_DERIVED}/ui/"
+    echo "   Username: ${ui_user}"
+    echo "   Password: ${ui_password}"
+    echo "========================================================================="
+}
+
 # Pre-deploy database backup (runs before any pod modification)
 # Skip if pod doesn't exist (e.g., after manual cleanup)
 if podman pod exists "${POD_NAME}" 2>/dev/null; then
@@ -1283,15 +1327,7 @@ if [[ "$STACK_OWNERSHIP" != "absent" ]]; then
 
         derive_external_service_urls
         echo ""
-        echo "========================================================================="
-        echo "🎉 SUCCESS: LLM Triage Gateway restarted!"
-        echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
-        echo "   (local)          : ${LOCAL_BASE_URL}/v1"
-        echo "⚙️  Dashboard URL  : ${PUBLIC_BASE_URL}/dashboard"
-        echo "🔑 Gateway API Key : gateway-pass"
-        echo "🔐 LiteLLM Admin UI: ${PROXY_BASE_URL_DERIVED}/ui/"
-        echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
-        echo "========================================================================="
+        print_success_banner "LLM Triage Gateway restarted!"
         exit 0
     fi
 else
@@ -1316,12 +1352,4 @@ fi
 
 
 derive_external_service_urls
-echo "========================================================================="
-echo "🎉 SUCCESS: LLM Triage Gateway successfully deployed!"
-echo "📍 Entry endpoint  : ${PUBLIC_BASE_URL}/v1"
-echo "   (local)          : ${LOCAL_BASE_URL}/v1"
-echo "⚙️  Dashboard URL : ${PUBLIC_BASE_URL}/dashboard"
-echo "🔑 Gateway API Key : gateway-pass"
-echo "🔐 LiteLLM Admin UI: ${PROXY_BASE_URL_DERIVED}/ui/"
-echo "   Username: admin  |  Password: $LITELLM_MASTER_KEY"
-echo "========================================================================="
+print_success_banner "LLM Triage Gateway successfully deployed!"
