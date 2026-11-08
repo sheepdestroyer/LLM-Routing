@@ -12,6 +12,14 @@ import pytest
 import host_agy_daemon
 
 
+def tool_guard_record(env: dict, name: str, args: dict, step: int = 2) -> None:
+    """What agy's PreToolUse hook (the daemon's tool-guard) records for a Path A tool step."""
+    host_agy_daemon.record_tool_call(
+        json.dumps({"stepIdx": step, "toolCall": {"name": name, "args": args}}),
+        env.get(host_agy_daemon.TOOL_RECORDS_ENV),
+    )
+
+
 def make_run_request(daemon_server, payload):
     return urllib.request.Request(
         f"{daemon_server}/run",
@@ -1456,6 +1464,7 @@ def test_map_native_tool_call():
 
 def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_server, monkeypatch):
     async def mock_exec(*args, **kwargs):
+        tool_guard_record(kwargs["env"], "run_command", {"CommandLine": "uptime; free -h"})
         mock_proc = AsyncMock()
         mock_proc.returncode = None
         mock_proc.kill = MagicMock()
@@ -1465,6 +1474,7 @@ def test_daemon_chat_completions_with_native_tool_interception_streaming(daemon_
                 {
                     "event": "step_update",
                     "step_update": {
+                        "step_index": 2,
                         "step_type": "tool",
                         "tool_name": "run_command",
                         "tool_info": {"name": "run_command", "parameters": {"CommandLine": "uptime; free -h"}},
@@ -1745,6 +1755,7 @@ async def test_execute_agy_stream_json_tool_interception(monkeypatch):
             {
                 "event": "step_update",
                 "step_update": {
+                    "step_index": 2,
                     "step_type": "tool",
                     "tool_name": "run_command",
                     "tool_info": {"parameters": {"CommandLine": "ls -la"}},
@@ -1762,7 +1773,12 @@ async def test_execute_agy_stream_json_tool_interception(monkeypatch):
     mock_proc.stdin.drain = AsyncMock()
     mock_proc.stdin.close = MagicMock()
     mock_proc.stdin.wait_closed = AsyncMock()
-    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+
+    async def fake_exec(*cmd, **kwargs):
+        tool_guard_record(kwargs["env"], "run_command", {"CommandLine": "ls -la"})
+        return mock_proc
+
+    monkeypatch.setattr(host_agy_daemon.asyncio, "create_subprocess_exec", fake_exec)
 
     tools = [{"type": "function", "function": {"name": "terminal"}}]
     res = await host_agy_daemon.execute_agy_stream_json("run ls", tools=tools, intercept_tools=True)

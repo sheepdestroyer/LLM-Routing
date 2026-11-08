@@ -57,7 +57,8 @@ ENV_PASSTHROUGH = (
 # Path A tool arguments. agy's stream-json tool summary (``tool_info.parameters``) is for display:
 # it cuts every string to 512 characters plus "…" and drops keys (write_file events carry only
 # Path). The PreToolUse hook receives the exact tool input: for spawns that intercept tool calls it
-# writes each call to a private directory of the run, and the daemon takes the arguments from there.
+# writes each call to a private directory of the run (and always denies it), and the daemon takes
+# the arguments from there. Without such a record the call is refused, never built from the summary.
 TOOL_RECORDS_ENV = "AGY_DAEMON_TOOL_RECORDS"
 TOOL_RECORDS_SUBDIR = "tool-calls"
 # The hook record lands just before or just after the tool step event (the guard takes ~80 ms).
@@ -107,8 +108,8 @@ class AuthRefreshError(RuntimeError):
     """agy could not refresh the host login (the message never contains token values)."""
 
 
-class TruncatedToolCallError(RuntimeError):
-    """agy's event summary cut a native tool argument and the hook recorded no exact copy."""
+class PartialToolCallError(RuntimeError):
+    """No exact hook record of a native tool call: only agy's summary, which cuts and drops arguments."""
 
 
 def log(msg: str, priority: int | None = None) -> None:
@@ -139,10 +140,15 @@ def tool_policy(autonomous: bool) -> str:
 
 
 def tool_guard_main(stdin: TextIO, stdout: TextIO, environ: Any) -> int:
-    """PreToolUse hook: record the exact call for Path A, then allow only when the spawn's policy is
-    'native'; deny otherwise (fail closed)."""
-    record_tool_call(stdin.read(), environ.get(TOOL_RECORDS_ENV))
-    if environ.get("AGY_DAEMON_TOOL_POLICY") == "native":
+    """PreToolUse hook: allow only when the spawn's policy is 'native'; deny otherwise (fail closed).
+
+    In a Path A spawn (record directory set) it records the exact call for the daemon and always
+    denies it: the client runs the returned call, so agy must never run it too (even with
+    AGY_DAEMON_NATIVE_TOOLS=all).
+    """
+    directory = environ.get(TOOL_RECORDS_ENV)
+    record_tool_call(stdin.read(), directory)
+    if environ.get("AGY_DAEMON_TOOL_POLICY") == "native" and not directory:
         return 0
     stdout.write(json.dumps({"decision": "deny", "reason": "native tools are disabled on this backend"}))
     return 0
@@ -891,7 +897,7 @@ async def _execute_agy_stream_json(
                         result_usage = res.get("usage")
                         if not res_conv_id:
                             res_conv_id = res.get("conversation_id")
-                except TruncatedToolCallError as exc:
+                except PartialToolCallError as exc:
                     return refused_tool_call_result(exc, res_conv_id)
                 except Exception:
                     continue
@@ -1006,7 +1012,7 @@ async def _execute_agy_stream_json(
                     result_usage = res.get("usage")
                     if not res_conv_id:
                         res_conv_id = res.get("conversation_id")
-            except TruncatedToolCallError as exc:
+            except PartialToolCallError as exc:
                 return refused_tool_call_result(exc, res_conv_id)
             except Exception:
                 continue
@@ -1221,63 +1227,64 @@ def find_truncated_argument(value: Any, path: str = "") -> str | None:
     return None
 
 
-def read_tool_record(directory: str, step: Any, name: str) -> dict | None:
-    """The exact arguments the tool-guard hook recorded for this tool step, or None."""
+def read_tool_records(directory: str, step: int, name: str) -> list[dict]:
+    """The arguments of every hook record of this tool step: same step index and tool name."""
     try:
         entries = sorted(os.listdir(directory))
     except OSError:
-        return None
+        return []
+    matches = []
     for entry in entries:
         if not (entry.startswith("call-") and entry.endswith(".json")):
             continue  # temp files of a record still being written
         record = read_token(os.path.join(directory, entry)) or {}  # any JSON object file
         args = record.get("args")
-        if isinstance(args, dict) and record.get("name") == name and (step is None or record.get("step") == step):
-            return args
-    return None
+        if isinstance(args, dict) and record.get("step") == step and record.get("name") == name:
+            matches.append(args)
+    return matches
 
 
 async def wait_for_tool_record(directory: str | None, step: Any, name: str, wait: float) -> dict | None:
-    """Poll up to ``wait`` seconds for the hook record of a tool step (None at once without a directory)."""
-    if not directory:
+    """The exact arguments of a tool step, polling up to ``wait`` seconds for the hook record.
+
+    None without a record directory or step index, without a record in time, or when the records
+    of the step disagree (ambiguous: the call is refused, never guessed).
+    """
+    if not directory or step is None:
         return None
     deadline = time.monotonic() + wait
     while True:
-        args = read_tool_record(directory, step, name)
-        if args is not None or time.monotonic() >= deadline:
-            return args
+        matches = read_tool_records(directory, step, name)
+        if matches:
+            return matches[0] if all(args == matches[0] for args in matches) else None
+        if time.monotonic() >= deadline:
+            return None
         await asyncio.sleep(TOOL_RECORD_POLL)
 
 
 async def resolve_native_tool_call(step_update: dict, tools: list, record_dir: str | None) -> dict:
     """Map agy's first native tool step (Path A) to a client tool call, with the exact arguments.
 
-    The arguments come from the tool-guard hook's record of the call. Without a record, agy's event
-    summary is used, unless one of its strings was cut: then the call is refused (fail closed), so a
-    client never runs a truncated command or writes a truncated file.
+    The arguments come only from the tool-guard hook's record of that step. agy's event summary cuts
+    strings and drops keys, so without a record the call is refused (fail closed): a client never runs
+    a truncated command or writes a partial file.
     """
     name = step_update.get("tool_name", "")
     args = await wait_for_tool_record(record_dir, step_update.get("step_index"), name, TOOL_RECORD_WAIT)
     if args is None:
-        params = step_update.get("tool_info", {}).get("parameters", {})
-        key = find_truncated_argument(params)
-        if key is not None:
-            log(
-                f"WARNING: refused native tool call {name!r}: agy truncated argument {key!r} "
-                "and the hook recorded no exact copy",
-                LOG_WARNING,
-            )
-            # No names in the client message: the quota check matches substrings ("generate_image").
-            raise TruncatedToolCallError(
-                "agy truncated a native tool argument and the hook recorded no exact copy; "
-                "refusing to return a partial tool call"
-            )
-        log(f"WARNING: native tool call {name!r}: no hook record, using agy's event summary", LOG_WARNING)
-        args = params
+        info = step_update.get("tool_info")
+        key = find_truncated_argument(info.get("parameters") if isinstance(info, dict) else None)
+        detail = f"agy truncated argument {key!r}" if key is not None else "agy's summary may omit arguments"
+        log(f"WARNING: refused native tool call {name!r}: no exact hook record ({detail})", LOG_WARNING)
+        # No names in the client message: the quota check matches substrings ("generate_image").
+        raise PartialToolCallError(
+            "agy gave no exact copy of the native tool call (its event summary cuts and drops arguments); "
+            "refusing to return a partial tool call"
+        )
     return map_native_tool_call(name, args, tools)
 
 
-def refused_tool_call_result(exc: TruncatedToolCallError, conversation_id: str | None) -> dict:
+def refused_tool_call_result(exc: PartialToolCallError, conversation_id: str | None) -> dict:
     """The failed run returned for a refused tool call (complete_chat answers it with HTTP 502)."""
     return {
         "returncode": 1,
@@ -2035,7 +2042,7 @@ class AgyDaemonHandler(BaseHTTPRequestHandler):
                             su = event_obj.get("step_update", {})
                             st = su.get("step_type")
                             if not is_sse_mode and tools and st == "tool":
-                                # A refused call (TruncatedToolCallError) ends the stream with an
+                                # A refused call (PartialToolCallError) ends the stream with an
                                 # error chunk and no [DONE], like a failed run; agy is stopped below.
                                 intercepted_tool_call = await resolve_native_tool_call(su, tools, record_dir)
                                 if proc.returncode is None:

@@ -1,9 +1,9 @@
-"""Path A never returns a truncated native tool argument.
+"""Path A never returns a truncated or partial native tool call.
 
 agy 1.5 stream-json tool summaries (``tool_info.parameters``) cut every string to 512 characters
 plus "…" and drop keys; the PreToolUse hook gets the exact tool input. The tool-guard records it
-for the daemon, which returns those arguments, or refuses the call when the summary is cut and no
-record exists.
+for the daemon, which returns those arguments, or refuses the call when no record of the step
+exists (the warning names the cut key, if any).
 """
 
 import asyncio
@@ -36,6 +36,7 @@ TERMINAL = [
         },
     }
 ]
+REFUSED = "refusing to return a partial tool call"
 
 
 def cut(text: str) -> str:
@@ -43,8 +44,11 @@ def cut(text: str) -> str:
     return text[:512] + "\u2026"
 
 
-def hook_payload(name: str, args, step: int = 2) -> str:
-    return json.dumps({"stepIdx": step, "conversationId": "conv-1", "toolCall": {"name": name, "args": args}})
+def hook_payload(name: str, args, step: int | None = 2) -> str:
+    payload = {"conversationId": "conv-1", "toolCall": {"name": name, "args": args}}
+    if step is not None:
+        payload["stepIdx"] = step
+    return json.dumps(payload)
 
 
 def write_record(directory: str, entry: str, record) -> None:
@@ -53,7 +57,19 @@ def write_record(directory: str, entry: str, record) -> None:
         f.write(record if isinstance(record, str) else json.dumps(record))
 
 
-# ── truncation detection ─────────────────────────────────────────────────────
+def tool_step(name: str, parameters, step: int | None = 2) -> dict:
+    su = {
+        "state": "ACTIVE",
+        "step_type": "tool",
+        "tool_name": name,
+        "tool_info": {"name": name, "parameters": parameters},
+    }
+    if step is not None:
+        su["step_index"] = step
+    return su
+
+
+# ── truncation detection (names the cut key in the warning) ─────────────────
 
 
 @pytest.mark.parametrize(
@@ -75,6 +91,7 @@ def write_record(directory: str, entry: str, record) -> None:
         ({"Count": 3, "Flag": True, "Nothing": None, "Ratio": 0.5}, None),
         ({}, None),
         ("short", None),
+        (None, None),
     ],
 )
 def test_find_truncated_argument(params, expected):
@@ -98,12 +115,25 @@ def test_tool_guard_records_the_exact_call_then_denies(tmp_path):
     assert stat.S_IMODE(records.stat().st_mode) == 0o700
 
 
-def test_tool_guard_records_native_calls_too(tmp_path):
+def test_path_a_hook_denies_even_with_native_policy(tmp_path):
+    # AGY_DAEMON_NATIVE_TOOLS=all gives every spawn the native policy; a Path A call goes back to
+    # the client, so agy must not run it on the host as well.
     out = io.StringIO()
     environ = {"AGY_DAEMON_TOOL_POLICY": "native", d.TOOL_RECORDS_ENV: str(tmp_path)}
-    assert d.tool_guard_main(io.StringIO(hook_payload("view_file", {"Path": "/a"})), out, environ) == 0
+    args = {"AbsolutePath": "/etc/hostname"}
+    assert d.tool_guard_main(io.StringIO(hook_payload("view_file", args, step=4)), out, environ) == 0
+    assert json.loads(out.getvalue())["decision"] == "deny"
+    (entry,) = os.listdir(tmp_path)
+    assert json.load(open(tmp_path / entry)) == {"step": 4, "name": "view_file", "args": args}
+
+
+def test_tool_guard_allows_native_policy_outside_path_a(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = io.StringIO()
+    environ = {"AGY_DAEMON_TOOL_POLICY": "native"}
+    assert d.tool_guard_main(io.StringIO(hook_payload("view_file", {"AbsolutePath": "/a"})), out, environ) == 0
     assert out.getvalue() == ""
-    assert len(os.listdir(tmp_path)) == 1
+    assert os.listdir(tmp_path) == []
 
 
 @pytest.mark.parametrize(
@@ -150,23 +180,22 @@ def test_spawn_env_record_directory_only_for_path_a():
 # ── reading the record ───────────────────────────────────────────────────────
 
 
-def test_read_tool_record_picks_the_matching_call(tmp_path):
+def test_read_tool_records_match_step_and_name(tmp_path):
     records = str(tmp_path)
     write_record(records, ".tmp-partial", '{"step": 2, "name": "run_command", "args": {"CommandLine": "partial"}}')
-    write_record(records, "call-0.json", {"step": 2, "name": "view_file", "args": {"Path": "/other"}})
+    write_record(records, "call-0.json", {"step": 2, "name": "view_file", "args": {"AbsolutePath": "/other"}})
     write_record(records, "call-1.json", {"step": 3, "name": "run_command", "args": {"CommandLine": "later step"}})
     write_record(records, "call-2.json", "not json")
     write_record(records, "call-3.json", {"step": 2, "name": "run_command", "args": "not an object"})
-    write_record(records, "call-4.json", {"step": 2, "name": "run_command", "args": {"CommandLine": LONG_COMMAND}})
-    assert d.read_tool_record(records, 2, "run_command") == {"CommandLine": LONG_COMMAND}
-    assert d.read_tool_record(records, 3, "run_command") == {"CommandLine": "later step"}
-    # An event without step_index matches on the tool name alone (the first record, by file name).
-    assert d.read_tool_record(records, None, "view_file") == {"Path": "/other"}
-    assert d.read_tool_record(records, 2, "write_file") is None
+    write_record(records, "call-4.json", {"name": "run_command", "args": {"CommandLine": "no step"}})
+    write_record(records, "call-5.json", {"step": 2, "name": "run_command", "args": {"CommandLine": LONG_COMMAND}})
+    assert d.read_tool_records(records, 2, "run_command") == [{"CommandLine": LONG_COMMAND}]
+    assert d.read_tool_records(records, 3, "run_command") == [{"CommandLine": "later step"}]
+    assert d.read_tool_records(records, 2, "write_file") == []
 
 
-def test_read_tool_record_missing_directory(tmp_path):
-    assert d.read_tool_record(str(tmp_path / "absent"), 2, "run_command") is None
+def test_read_tool_records_missing_directory(tmp_path):
+    assert d.read_tool_records(str(tmp_path / "absent"), 2, "run_command") == []
 
 
 @pytest.mark.asyncio
@@ -188,25 +217,27 @@ async def test_wait_for_tool_record_gives_up(tmp_path):
     started = time.monotonic()
     assert await d.wait_for_tool_record(str(tmp_path), 2, "run_command", 0.1) is None
     assert time.monotonic() - started >= 0.1
-    # Without a record directory (not a Path A spawn) it does not wait at all.
+    # No record directory (not a Path A spawn) or no step index to match: no wait at all.
+    write_record(str(tmp_path), "call-0.json", {"name": "run_command", "args": {"CommandLine": "ls"}})
     started = time.monotonic()
     assert await d.wait_for_tool_record(None, 2, "run_command", 5.0) is None
+    assert await d.wait_for_tool_record(str(tmp_path), None, "run_command", 5.0) is None
     assert time.monotonic() - started < 1.0
 
 
+@pytest.mark.asyncio
+async def test_wait_for_tool_record_refuses_disagreeing_records(tmp_path):
+    records = str(tmp_path)
+    write_record(records, "call-a.json", {"step": 2, "name": "run_command", "args": {"CommandLine": "ls"}})
+    write_record(records, "call-b.json", {"step": 2, "name": "run_command", "args": {"CommandLine": "ls"}})
+    assert await d.wait_for_tool_record(records, 2, "run_command", 0.0) == {"CommandLine": "ls"}
+    write_record(records, "call-c.json", {"step": 2, "name": "run_command", "args": {"CommandLine": "rm -rf x"}})
+    started = time.monotonic()
+    assert await d.wait_for_tool_record(records, 2, "run_command", 5.0) is None
+    assert time.monotonic() - started < 1.0  # refused at once, not after the wait
+
+
 # ── resolving the intercepted call ───────────────────────────────────────────
-
-
-def tool_step(name: str, parameters, step: int | None = 2) -> dict:
-    su = {
-        "state": "ACTIVE",
-        "step_type": "tool",
-        "tool_name": name,
-        "tool_info": {"name": name, "parameters": parameters},
-    }
-    if step is not None:
-        su["step_index"] = step
-    return su
 
 
 @pytest.mark.asyncio
@@ -237,36 +268,49 @@ async def test_resolve_passes_full_arguments_through(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("parameters", "key"),
+    ("step_update", "detail"),
     [
-        ({"CommandLine": cut(LONG_COMMAND)}, "CommandLine"),
-        ({"Path": "/f", "Edits": [{"Content": CUT}]}, "Edits[0].Content"),
-        ({"Arguments": CUT}, "Arguments"),
+        (tool_step("run_command", {"CommandLine": cut(LONG_COMMAND)}), "agy truncated argument 'CommandLine'"),
+        (
+            tool_step("run_command", {"Path": "/f", "Edits": [{"Content": CUT}]}),
+            "agy truncated argument 'Edits[0].Content'",
+        ),
+        (tool_step("run_command", {"Arguments": CUT}), "agy truncated argument 'Arguments'"),
+        # Uncut but unverified: a write_file summary has no Content, a run_command one no options.
+        (tool_step("write_file", {"Path": "/w/notes.txt"}), "agy's summary may omit arguments"),
+        (tool_step("run_command", {"CommandLine": "uptime"}), "agy's summary may omit arguments"),
+        (
+            {"step_index": 2, "step_type": "tool", "tool_name": "run_command", "tool_info": None},
+            "agy's summary may omit arguments",
+        ),
     ],
 )
 @pytest.mark.asyncio
-async def test_resolve_refuses_a_cut_summary_without_record(tmp_path, capsys, parameters, key):
-    with pytest.raises(d.TruncatedToolCallError, match="refusing to return a partial tool call"):
-        await d.resolve_native_tool_call(tool_step("run_command", parameters), TERMINAL, str(tmp_path))
+async def test_resolve_refuses_without_a_record(tmp_path, capsys, step_update, detail):
+    with pytest.raises(d.PartialToolCallError, match=REFUSED):
+        await d.resolve_native_tool_call(step_update, TERMINAL, str(tmp_path))
     err = capsys.readouterr().err
-    assert err.startswith(f"<{d.LOG_WARNING}>agy-daemon: WARNING: refused native tool call 'run_command'")
-    assert f"agy truncated argument {key!r}" in err
-    assert "xxxxxxxxxx" not in err and "line 000" not in err  # never the value
+    name = step_update["tool_name"]
+    assert (
+        err
+        == f"<{d.LOG_WARNING}>agy-daemon: WARNING: refused native tool call {name!r}: no exact hook record ({detail})\n"
+    )
 
 
 @pytest.mark.asyncio
-async def test_resolve_falls_back_to_an_uncut_summary(tmp_path, capsys):
-    call = await d.resolve_native_tool_call(
-        tool_step("run_command", {"CommandLine": "uptime"}, step=None), TERMINAL, None
-    )
-    assert json.loads(call["function"]["arguments"]) == {"command": "uptime"}
-    assert "no hook record, using agy's event summary" in capsys.readouterr().err
+async def test_resolve_refuses_an_event_without_step_index(tmp_path):
+    # A record cannot be tied to an event without a step index: refused, not guessed.
+    d.record_tool_call(hook_payload("run_command", {"CommandLine": "ls"}), str(tmp_path))
+    with pytest.raises(d.PartialToolCallError):
+        await d.resolve_native_tool_call(
+            tool_step("run_command", {"CommandLine": "ls"}, step=None), TERMINAL, str(tmp_path)
+        )
 
 
 @pytest.mark.asyncio
 async def test_refusal_message_is_not_taken_for_a_quota_error(tmp_path):
     # The daemon maps errors mentioning "rate", "quota", ... to 429; generate_image contains "rate".
-    with pytest.raises(d.TruncatedToolCallError) as exc:
+    with pytest.raises(d.PartialToolCallError) as exc:
         await d.resolve_native_tool_call(tool_step("generate_image", {"Prompt": CUT}), TERMINAL, str(tmp_path))
     message = d.refused_tool_call_result(exc.value, None)["stderr"].lower()
     assert not any(x in message for x in ["quota", "rate", "429", "exhaust", "resource"])
@@ -304,7 +348,7 @@ async def test_communicate_branch(monkeypatch, recorded):
         assert json.loads(res["tool_calls"][0]["function"]["arguments"]) == {"command": LONG_COMMAND}
     else:
         assert res["returncode"] == 1 and res["tool_calls"] == []
-        assert "refusing to return a partial tool call" in res["stderr"]
+        assert REFUSED in res["stderr"]
         assert res["conversation_id"] == "conv-1"
 
 
@@ -394,29 +438,36 @@ def assert_stopped(pid_file: str) -> None:
 
 
 SCENARIOS_OK = [
-    # (summary agy prints, exact arguments the hook gets or None, command the client must get)
+    # (summary agy prints, exact arguments the hook gets, command the client must get)
     pytest.param(
         {"CommandLine": cut(LONG_COMMAND)},
         {"CommandLine": LONG_COMMAND, "WaitMsBeforeAsync": 5000},
         LONG_COMMAND,
-        id="cut-recorded",
+        id="cut-summary",
     ),
-    pytest.param({"CommandLine": "uptime"}, {"CommandLine": "uptime"}, "uptime", id="short-recorded"),
-    pytest.param({"CommandLine": "uptime"}, None, "uptime", id="short-no-record"),
+    pytest.param({"CommandLine": "uptime"}, {"CommandLine": "uptime"}, "uptime", id="short-summary"),
 ]
 SCENARIOS_REFUSED = [
-    # (native tool, summary agy prints with no hook record, key named in the warning)
-    pytest.param("run_command", {"CommandLine": cut(LONG_COMMAND)}, "CommandLine", id="cut-flat"),
-    pytest.param("write_file", {"Path": "/f", "Edits": [{"Content": CUT}]}, "Edits[0].Content", id="cut-nested"),
-    pytest.param("call_mcp_tool", {"Arguments": CUT}, "Arguments", id="cut-whole-arguments"),
-    pytest.param("generate_image", {"Prompt": CUT}, "Prompt", id="cut-name-with-rate"),
+    # (native tool, summary agy prints while no hook record appears, detail in the warning)
+    pytest.param(
+        "run_command", {"CommandLine": cut(LONG_COMMAND)}, "agy truncated argument 'CommandLine'", id="cut-flat"
+    ),
+    pytest.param(
+        "write_file",
+        {"Path": "/f", "Edits": [{"Content": CUT}]},
+        "agy truncated argument 'Edits[0].Content'",
+        id="cut-nested",
+    ),
+    pytest.param("call_mcp_tool", {"Arguments": CUT}, "agy truncated argument 'Arguments'", id="cut-whole-arguments"),
+    pytest.param("generate_image", {"Prompt": CUT}, "agy truncated argument 'Prompt'", id="cut-name-with-rate"),
+    pytest.param("run_command", {"CommandLine": "uptime"}, "agy's summary may omit arguments", id="uncut-unverified"),
 ]
 
 
 @pytest.mark.parametrize(("summary", "args", "command"), SCENARIOS_OK)
 def test_path_a_non_streaming_returns_exact_arguments(agy_server, monkeypatch, summary, args, command):
     url, install = agy_server
-    monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 5.0 if args is not None else 0.3)
+    monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 5.0)
     pid_file = install("run_command", summary, args)
     started = time.monotonic()
     with chat(url, stream=False) as resp:
@@ -433,7 +484,7 @@ def test_path_a_non_streaming_returns_exact_arguments(agy_server, monkeypatch, s
 @pytest.mark.parametrize(("summary", "args", "command"), SCENARIOS_OK)
 def test_path_a_streaming_returns_exact_arguments(agy_server, monkeypatch, summary, args, command):
     url, install = agy_server
-    monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 5.0 if args is not None else 0.3)
+    monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 5.0)
     pid_file = install("run_command", summary, args)
     with chat(url, stream=True) as resp:
         raw = resp.read().decode()
@@ -445,8 +496,8 @@ def test_path_a_streaming_returns_exact_arguments(agy_server, monkeypatch, summa
     assert_stopped(pid_file)
 
 
-@pytest.mark.parametrize(("name", "summary", "key"), SCENARIOS_REFUSED)
-def test_path_a_non_streaming_refuses_a_truncated_argument(agy_server, monkeypatch, capsys, name, summary, key):
+@pytest.mark.parametrize(("name", "summary", "detail"), SCENARIOS_REFUSED)
+def test_path_a_non_streaming_refuses_without_a_record(agy_server, monkeypatch, capsys, name, summary, detail):
     url, install = agy_server
     monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 0.3)
     pid_file = install(name, summary, None)
@@ -455,15 +506,15 @@ def test_path_a_non_streaming_refuses_a_truncated_argument(agy_server, monkeypat
     assert exc.value.code == 502
     error = json.loads(exc.value.read())["error"]
     assert error["type"] == "api_error"
-    assert "refusing to return a partial tool call" in error["message"]
+    assert REFUSED in error["message"]
     assert_stopped(pid_file)
     err = capsys.readouterr().err
-    assert f"<4>agy-daemon: WARNING: refused native tool call {name!r}: agy truncated argument {key!r}" in err
-    assert "xxxxxxxxxx" not in err and "line 000" not in err
+    assert f"<4>agy-daemon: WARNING: refused native tool call {name!r}: no exact hook record ({detail})" in err
+    assert "xxxxxxxxxx" not in err and "line 000" not in err and "uptime" not in err  # never the value
 
 
-@pytest.mark.parametrize(("name", "summary", "key"), SCENARIOS_REFUSED)
-def test_path_a_streaming_refuses_a_truncated_argument(agy_server, monkeypatch, capsys, name, summary, key):
+@pytest.mark.parametrize(("name", "summary", "detail"), SCENARIOS_REFUSED)
+def test_path_a_streaming_refuses_without_a_record(agy_server, monkeypatch, capsys, name, summary, detail):
     url, install = agy_server
     monkeypatch.setattr(d, "TOOL_RECORD_WAIT", 0.3)
     pid_file = install(name, summary, None)
@@ -471,12 +522,12 @@ def test_path_a_streaming_refuses_a_truncated_argument(agy_server, monkeypatch, 
         raw = resp.read().decode()
     (event,) = sse_events(raw)
     assert event["error"]["code"] == 502 and event["error"]["type"] == "api_error"
-    assert "refusing to return a partial tool call" in event["error"]["message"]
+    assert REFUSED in event["error"]["message"]
     assert "tool_calls" not in raw and "[DONE]" not in raw
     assert_stopped(pid_file)
     err = capsys.readouterr().err
-    assert f"<4>agy-daemon: WARNING: refused native tool call {name!r}: agy truncated argument {key!r}" in err
-    assert "xxxxxxxxxx" not in err and "line 000" not in err
+    assert f"<4>agy-daemon: WARNING: refused native tool call {name!r}: no exact hook record ({detail})" in err
+    assert "xxxxxxxxxx" not in err and "line 000" not in err and "uptime" not in err
 
 
 def test_hook_command_is_the_daemon_tool_guard():
