@@ -122,7 +122,14 @@ def _credential_names() -> set[str]:
     names = set(re.findall(r'"([A-Z0-9_]+)"', allowlist))
     secret = {n for n in names if re.search(r"KEY|PASSWORD|SECRET|SALT|AUTH|TOKEN", n) and not n.endswith("_URL")}
     assert {"LITELLM_MASTER_KEY", "UI_PASSWORD", "POSTGRES_PASSWORD", "ROUTER_API_KEY"} <= secret
-    return secret | {"escaped_key", "rand_key", "ACTIVE_OAUTH", "verifier", "PGPASSWORD", "PG_NEW_VERIFIER"}
+    # Kept out of the allowlist on purpose (Podman secrets of the LiteLLM container only).
+    litellm_secrets = {"LITELLM_SALT_KEY", "LITELLM_MIGRATE_FROM_MASTER_KEY"}
+    assert not names & litellm_secrets
+    return (
+        secret
+        | litellm_secrets
+        | {"escaped_key", "rand_key", "ACTIVE_OAUTH", "verifier", "PGPASSWORD", "PG_NEW_VERIFIER"}
+    )
 
 
 def test_no_output_statement_expands_a_credential():

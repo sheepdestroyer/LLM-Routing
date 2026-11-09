@@ -31,6 +31,12 @@ Environment=SERVER_ROOT_PATH=SERVER_ROOT_PATH_PLACEHOLDER
 Environment=PROXY_BASE_URL=PROXY_BASE_URL_PLACEHOLDER
 Environment=LITELLM_PORT=LITELLM_PORT_PLACEHOLDER
 Environment=POSTGRES_PORT=POSTGRES_PORT_PLACEHOLDER
+# At-rest encryption of LiteLLM's stored values. start-stack.sh writes both Podman secrets from .env
+# (scripts/litellm_secrets.py) and renders a line only while its variable is set: LITELLM_SALT_KEY
+# always; LITELLM_MIGRATE_FROM_MASTER_KEY only for the one boot that re-encrypts the stored values
+# from that key to LITELLM_MASTER_KEY, with LITELLM_SALT_KEY unset (manual LLM-Routing.md §9o).
+Secret=LITELLM_SALT_KEY_SECRET_PLACEHOLDER,type=env,target=LITELLM_SALT_KEY
+Secret=LITELLM_MIGRATE_FROM_SECRET_PLACEHOLDER,type=env,target=LITELLM_MIGRATE_FROM_MASTER_KEY
 Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/config.yaml:/app/config.yaml
 Volume=DATA_ROOT_PLACEHOLDER/litellm-rendered/entrypoint.py:/app/entrypoint.py
 Volume=EFFECTIVE_ENV_FILE_PLACEHOLDER:/config/.env

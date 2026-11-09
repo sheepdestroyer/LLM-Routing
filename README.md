@@ -10,6 +10,10 @@ The gateway exposes a unified OpenAI-compatible endpoint that dynamically assess
 
 Stable client aliases can change their underlying model without a LiteLLM fork. The router reconciles OpenRouter database deployment metadata at startup and through periodic or authenticated manual scans, preserving deliberate overrides. See [OpenRouter model metadata refresh](docs/openrouter-model-metadata.md) for ownership, pricing, refresh bounds, admin commands and stock-LiteLLM limitations.
 
+## LiteLLM salt key
+
+LiteLLM encrypts what it stores in its database with `LITELLM_SALT_KEY` (from `.env`), which reaches the LiteLLM container only as the Podman secret `<namespace>-litellm-salt-key`. `start-stack.sh` refuses, before touching the running stack, any state that would leave LiteLLM unable to read its stored values, and changes the key only through LiteLLM's two-boot migration. See [LiteLLM salt key](docs/litellm-salt-key.md).
+
 ## 1. System Architecture
 
 The gateway runs as a rootless Podman pod (`prod-router-pod`) utilizing **Host Networking** (`hostNetwork: true`). This design eliminates complex container network bridges, allowing microservices to communicate with extremely low latency and bind directly to localhost ports, matching the behavior of your native services (such as your local GPU-accelerated `llama-server`).
@@ -419,7 +423,7 @@ systemctl --user status llm-routing-prod-pod.service --no-pager  # or llm-routin
 systemctl --user list-units 'llm-routing-*' --no-pager  # filter for dev/prod namespaces
 journalctl --user -u llm-routing-prod-router.service -n 100 --no-pager  # or llm-routing-dev-router.service
 ```
-*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing.*
+*Note: If running for the first time, the script will prompt you for your `OpenRouter API Key`, securely saving it inside `.env` with restrictive permissions (`chmod 600`). The script also automatically generates and persists secure random secrets (`LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and `ROUTER_API_KEY`) to this file on startup if they are missing, and `LITELLM_SALT_KEY` for a new, empty database ([LiteLLM salt key](docs/litellm-salt-key.md)).*
 
 ### 2. Verify Container Status
 Check that all **9 application containers** in `prod-router-pod` are up and running (the tenth pod infra container is Podman-managed):
@@ -640,6 +644,7 @@ Self-hosted Langfuse acts as your agentic telemetry server. The LiteLLM Gateway 
   * Secret Key: `sk-lf-gateway-token`
   * Host Address: `http://127.0.0.1:3001`
 * **Features**: View hierarchical execution graphs, latency profiles, exact inputs/outputs, cost estimations, and performance benchmarks for simple vs complex prompt splits over time.
+* **Reading traces**: LiteLLM and the router only write, so prod's `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` is an Ingestion key that Langfuse refuses for reads (403 `traces:read`). The host-side tools that read traces (`scripts/extract_prompts.py`, `extract_complex.py`, `extract_gapfill.py`, `scripts/verification/verify_canonical_endpoints.py`) use `LANGFUSE_READ_PUBLIC_KEY` / `LANGFUSE_READ_SECRET_KEY` from `.env` when both are set (a Viewer key), else the main pair (`scripts/langfuse_read_auth.py`). The read pair is never copied into `effective.env`, so no container holds it.
 
 ### Web Console & Dashboard Directory
 

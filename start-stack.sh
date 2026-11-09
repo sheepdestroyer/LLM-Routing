@@ -98,6 +98,7 @@ if [[ ! "$QUADLET_NAMESPACE" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
     exit 1
 fi
 export QUADLET_NAMESPACE
+QUADLET_DIR="${HOME}/.config/containers/systemd/${QUADLET_NAMESPACE}"
 
 # Port assignments — read from env (set by .env or .env.dev) with prod defaults
 POD_NAME="${POD_NAME:-prod-router-pod}"
@@ -453,6 +454,46 @@ if [ -z "${CLASSIFIER_INPUT_MAX_CHARS:-}" ]; then
     echo "✓ Set default CLASSIFIER_INPUT_MAX_CHARS=300 and saved to $ENV_FILE"
 fi
 
+# ── LiteLLM at-rest encryption key (LITELLM_SALT_KEY) ──
+# LiteLLM encrypts what it stores in its database with LITELLM_SALT_KEY, or with the master key when
+# no salt key is set, and a salt key cannot be changed in place. Both it and, for the one boot that
+# re-encrypts the stored values from an older key, LITELLM_MIGRATE_FROM_MASTER_KEY reach LiteLLM only
+# as Podman secrets (never effective.env, which the router reads too): scripts/litellm_secrets.py.
+# A stack that has never stored anything gets a salt key from the start, so its master key can be
+# rotated freely. Never on an existing database: values stored under the master key would become
+# unreadable (litellm_secrets.py warns instead).
+postgres_data_is_new() {
+    local entries
+    if [ ! -d "$1" ] || [ ! -r "$1" ] || [ ! -x "$1" ]; then
+        return 1
+    fi
+    entries="$(ls -A "$1")" || return 1
+    [ -z "$entries" ]
+}
+
+ensure_litellm_salt_key() {
+    if [ -z "${LITELLM_SALT_KEY:-}" ] && [ -z "${LITELLM_MIGRATE_FROM_MASTER_KEY:-}" ] \
+        && postgres_data_is_new "${DATA_ROOT}/postgres-data" \
+        && ! podman secret exists "${QUADLET_NAMESPACE}-litellm-salt-key" >/dev/null 2>&1; then
+        LITELLM_SALT_KEY="$(gen_hex 32)" || return 1
+        echo "LITELLM_SALT_KEY=\"$LITELLM_SALT_KEY\"" >> "$ENV_FILE"
+        echo "✓ Generated new LITELLM_SALT_KEY (new database) and saved to $ENV_FILE"
+    fi
+    export LITELLM_SALT_KEY LITELLM_MIGRATE_FROM_MASTER_KEY
+}
+
+ensure_litellm_salt_key || exit 1
+
+# Before anything changes: refuse a salt-key state that would leave LiteLLM unable to read what it
+# stored, then (re)create the secret from .env, value on stdin. --stop only stops the stack.
+if ! $STOP_MODE; then
+    if ! python3 "${WORKDIR}/scripts/litellm_secrets.py" apply --namespace "$QUADLET_NAMESPACE" \
+        --quadlet-dir "$QUADLET_DIR" --env-file "$ENV_FILE"; then
+        echo "❌ Error: LiteLLM salt-key check failed; the running stack was not changed" >&2
+        exit 1
+    fi
+fi
+
 # Persist only the application environment for bind-mounted container consumers.
 # Quote values as shell syntax so URLs, credentials, and special characters
 # survive the second `source` performed by the router/LiteLLM entrypoints.
@@ -461,7 +502,9 @@ import os
 import shlex
 import sys
 
-# Explicit allowlist: never copy unrelated host credentials into containers.
+# Explicit allowlist: never copy unrelated host credentials into containers. Left out on purpose:
+# LITELLM_SALT_KEY and LITELLM_MIGRATE_FROM_MASTER_KEY (Podman secrets of the LiteLLM container only)
+# and LANGFUSE_READ_PUBLIC_KEY / LANGFUSE_READ_SECRET_KEY (read by host-side trace tools only).
 APPLICATION_ENV = {
     "AGY_DAEMON_URL", "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
     "CLICKHOUSE_TCP_PORT", "DATA_ROOT", "LANGFUSE_INIT_USER_PASSWORD",
@@ -743,7 +786,6 @@ verify_stack_health() {
 # detection, lifecycle operations, and user-facing diagnostics.
 LLM_ROUTING_POD_UNIT="${QUADLET_NAMESPACE}-pod.service"
 LEGACY_LLM_ROUTING_POD_UNIT="llm-routing-pod.service"
-QUADLET_DIR="${HOME}/.config/containers/systemd/${QUADLET_NAMESPACE}"
 # Quadlet-managed pods carry PODMAN_SYSTEMD_UNIT on their infra container.
 # Consult that metadata rather than inferring ownership from active state: a
 # stopped or failed generated unit is still Quadlet-owned and must be reconciled
@@ -1037,6 +1079,7 @@ render_quadlets() {
     export LANGFUSE_INIT_USER_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD
     export OLLAMA_API_KEY OPENROUTER_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
     export CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
+    export LITELLM_SALT_KEY LITELLM_MIGRATE_FROM_MASTER_KEY
     export PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT
     export LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL
     export ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT
@@ -1159,6 +1202,16 @@ def extract_manifest_images():
 
 repl.update(extract_manifest_images())
 
+# Optional Podman secrets of the LiteLLM unit (scripts/litellm_secrets.py writes them from .env before
+# the render): a Secret= line is rendered only while its variable is set, and is dropped otherwise.
+optional_secrets = {
+    "LITELLM_SALT_KEY_SECRET_PLACEHOLDER": ("LITELLM_SALT_KEY", f"{namespace}-litellm-salt-key"),
+    "LITELLM_MIGRATE_FROM_SECRET_PLACEHOLDER": ("LITELLM_MIGRATE_FROM_MASTER_KEY", f"{namespace}-litellm-migrate-from"),
+}
+for placeholder, (variable, secret_name) in optional_secrets.items():
+    if os.environ.get(variable):
+        repl[placeholder] = secret_name
+
 
 templates = sorted(glob.glob(os.path.join(src_dir, "*.pod")) + glob.glob(os.path.join(src_dir, "*.container")))
 if not templates:
@@ -1170,6 +1223,9 @@ try:
     for tpl in templates:
         with open(tpl, "r", encoding="utf-8") as f:
             text = f.read()
+        for placeholder in optional_secrets:
+            if placeholder not in repl:
+                text = re.sub(r"(?m)^Secret=" + placeholder + r",.*(?:\n|\Z)", "", text)
         for ph, val in repl.items():
             text = text.replace(ph, str(val))
         # Quadlet generated unit names are global in the user systemd manager.
@@ -1228,6 +1284,11 @@ finally:
     shutil.rmtree(staging_dir, ignore_errors=True)
 PY
     echo "✓ Quadlets rendered to ${QUADLET_DIR}"
+    # The migrate-from secret holds the retired key: gone once LITELLM_MIGRATE_FROM_MASTER_KEY is unset.
+    if ! python3 "${WORKDIR}/scripts/litellm_secrets.py" prune --namespace "$QUADLET_NAMESPACE" \
+        --quadlet-dir "$QUADLET_DIR" --env-file "$ENV_FILE"; then
+        echo "⚠️  Could not remove the Podman secret ${QUADLET_NAMESPACE}-litellm-migrate-from; remove it by hand" >&2
+    fi
 }
 
 # Install quadlets and (re)generate systemd units; start or restart the stack.

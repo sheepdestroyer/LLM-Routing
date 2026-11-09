@@ -25,6 +25,7 @@ tar -czf "$OUTPUT_TAR" \
     litellm/entrypoint.py \
     router/config.yaml \
     scripts/backup.sh \
+    scripts/litellm_secrets.py \
     scripts/host_agy_daemon.py \
     .release_version \
     README.md

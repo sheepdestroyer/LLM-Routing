@@ -77,7 +77,7 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.13"
-files = ["router", "scripts/host_agy_daemon.py"]
+files = ["router", "scripts/host_agy_daemon.py", "scripts/litellm_secrets.py", "scripts/langfuse_read_auth.py"]
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_redundant_casts = true

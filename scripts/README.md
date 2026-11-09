@@ -14,6 +14,10 @@ Unified startup and credential extraction script for the systemd Quadlet-managed
   - `./start-stack.sh --full-rebuild` (Same as `--replace` + rebuild the triage router image; required for code changes in `router/`)
 - Quadlet templates live in `quadlets/`; rendered owner-only units use environment-specific namespaces: dev under `~/.config/containers/systemd/llm-routing-dev/` and prod under `~/.config/containers/systemd/llm-routing-prod/`. Dev uses `llm-routing-dev-pod.service`; prod uses `llm-routing-prod-pod.service`. Use the matching `systemctl --user status <namespace>-pod.service --no-pager` and `journalctl --user -u <namespace>-router.service --no-pager` for lifecycle diagnostics.
 - Before rendering, the script writes the merged `.env` plus optional `.env.dev` overlay to `${DATA_ROOT}/effective.env` (mode `600`). Router and LiteLLM mount this generated file as `/config/.env`; the source `.env` remains unchanged.
+- `LITELLM_SALT_KEY` (LiteLLM's at-rest encryption key) and, for one migration boot, `LITELLM_MIGRATE_FROM_MASTER_KEY` are not in `effective.env`: `scripts/litellm_secrets.py` writes them from `.env` into the Podman secrets `<namespace>-litellm-salt-key` / `<namespace>-litellm-migrate-from` (value on stdin) before anything changes, and the LiteLLM unit passes them with `Secret=`. A new database gets a generated salt key. Contract, refusal rules and the two-boot key change: [docs/litellm-salt-key.md](../docs/litellm-salt-key.md).
+
+### `scripts/litellm_secrets.py`
+Called by `start-stack.sh` only: `apply` (before the pre-deploy backup and the teardown) refuses a salt-key state that would leave LiteLLM unable to read what it stored, then writes the secret of the variable that is set; `prune` (after rendering) removes the migrate-from secret once its variable is unset. It prints names, never a value. Tests: `tests/test_litellm_secrets.py` (unit, and the real CLI through both migration boots against stub `podman`/`systemctl`/`journalctl`), `tests/test_salt_key_wiring.py` (template, renderer, call order, salt key of a new database).
 
 ### `scripts/upgrade-prod.sh`
 Release-driven prod upgrade: `scripts/upgrade-prod.sh [--dry-run] [<tag>]` clones the release tag, syncs the runtime files into `~/prod/LLM-Routing` and redeploys with `start-stack.sh --pull`.
@@ -65,6 +69,7 @@ These tools are used to benchmark the prompt classifier and extract datasets fro
 - **`chat_helpers.py`**: Shared defensive chat completion response parser (`parse_chat_response`) used by classifier scripts, verification scripts, and canonical endpoint checks. Safely extracts content and reasoning_content with full isinstance guards.
 - **`classify_direct.py`**: Takes a string prompt argument and prints the classification decision directly.
 - **`extract_prompts.py` / `extract_complex.py` / `extract_gapfill.py`**: Mines prompt datasets from Langfuse PG/ClickHouse database traces for fine-tuning.
+- **`langfuse_read_auth.py`**: The Langfuse pair of the tools that read traces (the three extract scripts and `verification/verify_canonical_endpoints.py`): `LANGFUSE_READ_PUBLIC_KEY` / `LANGFUSE_READ_SECRET_KEY` from `.env` when both are set, else `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`. The stack's own prod key is write-only (Langfuse 403 `traces:read`), so these tools need the read pair there; it is never copied into `effective.env`. Tests: `tests/test_langfuse_read_auth.py`.
 - **`reclassify_all.py`**: Re-evaluates prompt classifications against updated models.
 - **`retry_errors.py`**: Retries failed queries.
 
