@@ -31,6 +31,8 @@ def _check(deployment: dict, sampling: dict, thinking: dict, reasoning: bool) ->
     assert params["extra_body"] == thinking
     for key, value in sampling.items():
         assert params[key] == value, key
+    # Every other sampling parameter comes from the [Qwen3.8-27B-spec] preset (rule L1).
+    assert not ({"presence_penalty", "top_k", "min_p", "repeat_penalty"} - sampling.keys()) & params.keys()
     assert deployment["model_info"]["supports_reasoning"] is reasoning
 
 
@@ -47,7 +49,6 @@ def test_config_yaml_alias_params():
     for name, expected in EXPECTED.items():
         _check(deployments[name], *expected)
     assert "temperature" not in deployments["local-qwen"]["litellm_params"]
-    assert "presence_penalty" not in deployments["local-qwen-vl"]["litellm_params"]
 
 
 def test_model_sync_alias_params():
