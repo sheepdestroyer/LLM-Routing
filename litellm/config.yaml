@@ -553,6 +553,31 @@ router_settings:
       ContentPolicyViolationErrorRetries: 0
       NotFoundErrorRetries: 0
       DefaultRetries: 1
+    # The local vision profile gets the same policy (TASK-353): locallama-qwen-vl as the fallback of
+    # strata-qwen-vl, local-qwen-vl alone. LiteLLM looks the policy up per fallback hop, so without
+    # these the hop used num_retries: 1 and retried a timeout: three attempts in all, past the client's
+    # wait, with llama-router still reading after the client left. TimeoutErrorRetries must be set:
+    # an unset field falls through to DefaultRetries.
+    locallama-qwen-vl:
+      InternalServerErrorRetries: 1
+      ServiceUnavailableErrorRetries: 1
+      TimeoutErrorRetries: 0
+      RateLimitErrorRetries: 1
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+      NotFoundErrorRetries: 0
+      DefaultRetries: 1
+    local-qwen-vl:
+      InternalServerErrorRetries: 1
+      ServiceUnavailableErrorRetries: 1
+      TimeoutErrorRetries: 0
+      RateLimitErrorRetries: 1
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+      NotFoundErrorRetries: 0
+      DefaultRetries: 1
   routing_strategy: latency-based-routing
   enable_health_check_routing: false
 vector_store_settings:
