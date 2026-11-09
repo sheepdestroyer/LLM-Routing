@@ -14,7 +14,9 @@ How LiteLLM v1.108.0 resolves this (``Router.async_function_with_retries`` and
 - the field is picked by the exception's MRO, most specific first: ``litellm.Timeout`` reads
   ``TimeoutErrorRetries``; a field left unset falls through to ``DefaultRetries``, so the timeout
   field must be set to 0 explicitly;
-- connection errors reach the policy as ``InternalServerError`` or, unmapped, ``DefaultRetries``.
+- a connection reset or refusal reaches the policy as ``InternalServerError("Connection error.")``;
+  4xx codes LiteLLM leaves unmapped for openai-compatible providers (403, 413) are a plain ``APIError``
+  and read ``DefaultRetries``.
 """
 
 from pathlib import Path
@@ -66,13 +68,13 @@ def test_every_vision_group_never_retries_a_timeout():
         assert policies[group]["TimeoutErrorRetries"] == 0, group  # explicit: unset would mean DefaultRetries
 
 
-def test_transient_errors_are_still_retried_once_and_4xx_never():
+def test_transient_errors_are_still_retried_once_and_mapped_4xx_never():
     policies = _config()["router_settings"]["model_group_retry_policy"]
     for group in VISION_GROUPS:
         policy = policies[group]
-        assert policy["InternalServerErrorRetries"] == 1, group  # 5xx, mapped connection errors
+        assert policy["InternalServerErrorRetries"] == 1, group  # 5xx, connection reset or refused
         assert policy["ServiceUnavailableErrorRetries"] == 1, group  # 503 (llama-router busy or loading)
-        assert policy["DefaultRetries"] == 1, group  # unmapped errors such as a connection reset
+        assert policy["DefaultRetries"] == 1, group  # errors with no field, e.g. an unmapped 403 or 413
         assert policy["NotFoundErrorRetries"] == 0, group
         for field in FOUR_XX:
             assert policy[field] == 0, (group, field)

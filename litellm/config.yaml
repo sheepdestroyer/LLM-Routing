@@ -557,7 +557,8 @@ router_settings:
     # strata-qwen-vl, local-qwen-vl alone. LiteLLM looks the policy up per fallback hop, so without
     # these the hop used num_retries: 1 and retried a timeout: three attempts in all, past the client's
     # wait, with llama-router still reading after the client left. TimeoutErrorRetries must be set:
-    # an unset field falls through to DefaultRetries.
+    # an unset field falls through to DefaultRetries (which also covers 4xx codes LiteLLM leaves
+    # unmapped, such as 403 or 413).
     locallama-qwen-vl:
       InternalServerErrorRetries: 1
       ServiceUnavailableErrorRetries: 1
