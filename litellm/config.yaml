@@ -499,9 +499,10 @@ model_list:
     # The GX10 engine (Strata or Basalt) is always asked for its served name, strata-qwen.
     model: openai/strata-qwen
     # A page takes ~30-45 s on Strata (up to ~300 s with hidden reasoning, ~480 s when both
-    # Strata slots are busy). 540 s leaves the local fallback (~25 s/page) a chance to answer
-    # inside the 600 s client budget of the DIVORCE-IA page reader.
-    request_timeout: 540
+    # Strata slots are busy). 500 s leaves the local fallback, which reads with thinking on since
+    # 2026-11-09 (TASK-353: 24 s/page median, 87 s at most), time to answer inside the 600 s
+    # client budget of the DIVORCE-IA page reader (540 s did with thinking off, ~25 s/page).
+    request_timeout: 500
   model_name: strata-qwen-vl
   model_info:
     supports_vision: true
@@ -540,7 +541,7 @@ router_settings:
       ContentPolicyViolationErrorRetries: 0
       NotFoundErrorRetries: 0
       DefaultRetries: 1
-    # strata-qwen-vl: retry a connection error / 5xx once, never a timeout (a page that ran 540 s
+    # strata-qwen-vl: retry a connection error / 5xx once, never a timeout (a page that ran 500 s
     # would run as long again); then the locallama-qwen-vl fallback.
     strata-qwen-vl:
       InternalServerErrorRetries: 1

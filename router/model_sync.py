@@ -590,7 +590,7 @@ class ModelRegistrySync:
                     "model": "openai/strata-qwen",
                     "api_base": strata_base,
                     "api_key": "local-token",
-                    "request_timeout": 540,
+                    "request_timeout": 500,  # litellm/config.yaml: room for the local fallback
                 },
                 "model_info": {
                     "mode": "chat",

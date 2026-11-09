@@ -109,14 +109,19 @@ def test_strata_qwen_vl_has_no_other_fallback_path():
         assert "order" not in dep["litellm_params"], dep["model_name"]
 
 
+LOCAL_VL_THINKING_MAX_S = 90
+
+
 def test_strata_qwen_vl_retry_timeout_and_cooldown_policy():
     config = yaml.safe_load((Path(__file__).resolve().parents[1] / "litellm/config.yaml").read_text())
     policy = config["router_settings"]["model_group_retry_policy"]["strata-qwen-vl"]
     assert policy["InternalServerErrorRetries"] >= 1
-    assert policy["TimeoutErrorRetries"] == 0  # a 540 s page is never run twice on Strata
+    assert policy["TimeoutErrorRetries"] == 0  # a 500 s page is never run twice on Strata
     assert policy["BadRequestErrorRetries"] == 0 and policy["AuthenticationErrorRetries"] == 0
     (dep,) = [d for d in config["model_list"] if d["model_name"] == "strata-qwen-vl"]
-    assert dep["litellm_params"]["request_timeout"] < 600  # leaves the fallback time inside a 600 s client budget
+    # Leaves the local fallback time inside a 600 s client budget: locallama-qwen-vl reads with thinking
+    # on (TASK-353 rebench: at most 87 s per page on the 63-page set).
+    assert dep["litellm_params"]["request_timeout"] + LOCAL_VL_THINKING_MAX_S <= 600
     assert dep["model_info"]["allowed_fails_policy"]["InternalServerErrorAllowedFails"] >= 1
     assert dep["model_info"]["cooldown_time"] < config["router_settings"]["cooldown_time"]
     sampling = {"temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty"}
