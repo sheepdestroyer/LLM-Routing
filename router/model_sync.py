@@ -47,8 +47,11 @@ DEPRECATED_MODEL_NAMES = [
 # Per-alias sampling for the single Qwen3.8-27B llama-router instance (AGENTS.md L1 amendment,
 # 2026-10-30): one preset serves local-qwen, -hass and -vl, so the hass and vision profiles are
 # request defaults here. Must match the deployments in litellm/config.yaml.
+# hass: thinking off, the model card's non-thinking sampling. vl: thinking on since 2026-11-09
+# (owner decision, TASK-353 rebench), the model card's thinking-mode temperature / top_p (equal to
+# the preset's). Kept explicit: a PATCH of a DB copy merges, so a removed key would stay stored.
 HASS_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5}
-VL_SAMPLING: dict[str, Any] = {"temperature": 0.7, "top_p": 0.8, "seed": 3407}
+VL_SAMPLING: dict[str, Any] = {"temperature": 1.0, "top_p": 0.95, "seed": 3407}
 
 # LiteLLM's GET /model/info (remove_sensitive_info_from_deployment, checked on v1.108.0) pops these
 # litellm_params and masks every other key, at any depth, with one of _MASKED_SEGMENTS as an
@@ -431,7 +434,7 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
-                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
                     **VL_SAMPLING,
                 },
                 "model_info": {
@@ -439,7 +442,7 @@ class ModelRegistrySync:
                     "max_tokens": 65536,
                     "max_input_tokens": 65536,
                     "supports_vision": True,
-                    "supports_reasoning": False,
+                    "supports_reasoning": True,
                     "supports_function_calling": True,
                     "is_public_model_group": True,
                 },
@@ -451,7 +454,7 @@ class ModelRegistrySync:
                     "api_base": llama_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
-                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
                     **VL_SAMPLING,
                 },
                 "model_info": {
@@ -459,7 +462,7 @@ class ModelRegistrySync:
                     "max_tokens": 65536,
                     "max_input_tokens": 65536,
                     "supports_vision": True,
-                    "supports_reasoning": False,
+                    "supports_reasoning": True,
                     "supports_function_calling": True,
                     "is_public_model_group": True,
                 },

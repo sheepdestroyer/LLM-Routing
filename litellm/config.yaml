@@ -90,7 +90,7 @@ litellm_settings:
     - locallama-qwen
   # strata-qwen-vl: the canonical vision/OCR route (TASK-353, owner decision 2026-10-30).
   # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY locallama-qwen-vl: the vision alias of
-  # the single llama-router preset [Qwen3.8-27B-spec] (mmproj on), sent with thinking off and the
+  # the single llama-router preset [Qwen3.8-27B-spec] (mmproj on), sent with thinking on and the
   # vl sampling defaults set on that deployment (AGENTS.md L1 exception). Case pages must never
   # leave the LAN: locallama-qwen-vl / local-qwen-vl have no fallbacks of their own.
   - strata-qwen-vl:
@@ -281,17 +281,20 @@ model_list:
     model: openai/locallama-qwen-vl
     extra_body:
       chat_template_kwargs:
-        enable_thinking: false
+        enable_thinking: true
     # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
-    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults.
-    temperature: 0.7
-    top_p: 0.8
+    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults. Thinking
+    # on since 2026-11-09 (owner decision, TASK-353 rebench): the model card's thinking-mode
+    # temperature 1.0 / top_p 0.95 (= the preset's), not the 0.7 / 0.8 of non-thinking mode.
+    # Kept explicit: model_sync PATCHes DB copies and a PATCH cannot remove a key.
+    temperature: 1.0
+    top_p: 0.95
     seed: 3407
     request_timeout: 600
   model_name: locallama-qwen-vl
   model_info:
     supports_vision: true
-    supports_reasoning: false
+    supports_reasoning: true
     supports_function_calling: true
     mode: chat
     max_tokens: 65536
@@ -304,17 +307,20 @@ model_list:
     model: openai/local-qwen-vl
     extra_body:
       chat_template_kwargs:
-        enable_thinking: false
+        enable_thinking: true
     # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
-    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults.
-    temperature: 0.7
-    top_p: 0.8
+    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults. Thinking
+    # on since 2026-11-09 (owner decision, TASK-353 rebench): the model card's thinking-mode
+    # temperature 1.0 / top_p 0.95 (= the preset's), not the 0.7 / 0.8 of non-thinking mode.
+    # Kept explicit: model_sync PATCHes DB copies and a PATCH cannot remove a key.
+    temperature: 1.0
+    top_p: 0.95
     seed: 3407
     request_timeout: 600
   model_name: local-qwen-vl
   model_info:
     supports_vision: true
-    supports_reasoning: false
+    supports_reasoning: true
     supports_function_calling: true
     mode: chat
     max_tokens: 65536
