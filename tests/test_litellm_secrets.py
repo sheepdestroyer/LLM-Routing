@@ -312,8 +312,8 @@ def test_a_failed_prune_is_reported(stack):
 
 def test_stack_names():
     stack = ls.Stack("llm-routing-dev", Path("/q/llm-routing-dev"), ".env")
-    assert stack.salt_secret == "llm-routing-dev-litellm-salt-key"
-    assert stack.migrate_secret == "llm-routing-dev-litellm-migrate-from"
+    assert stack.salt_name == "llm-routing-dev-litellm-salt-key"
+    assert stack.migrate_name == "llm-routing-dev-litellm-migrate-from"
     assert stack.litellm_unit == "llm-routing-dev-litellm.service"
     assert stack.litellm_container == Path("/q/llm-routing-dev/llm-routing-dev-litellm.container")
     assert stack.dropin_dir == Path("/q/llm-routing-dev/llm-routing-dev-litellm.container.d")

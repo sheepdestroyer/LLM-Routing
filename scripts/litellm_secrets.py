@@ -93,11 +93,11 @@ class Stack:
     env_file: str
 
     @property
-    def salt_secret(self) -> str:
+    def salt_name(self) -> str:
         return f"{self.namespace}-litellm-salt-key"
 
     @property
-    def migrate_secret(self) -> str:
+    def migrate_name(self) -> str:
         return f"{self.namespace}-litellm-migrate-from"
 
     @property
@@ -143,7 +143,7 @@ def secret_exists(name: str, runner: Runner) -> bool:
 def salt_dropins(stack: Stack) -> list[tuple[Path, bool]]:
     """Each *.conf drop-in of the LiteLLM unit that sets LITELLM_SALT_KEY, and whether it does so
     exactly from the salt-key secret (the 2026-11-08 drop-in: Secret=<ns>-litellm-salt-key,...)."""
-    expected = f"{stack.salt_secret},type=env,target={SALT_VAR}"
+    expected = f"{stack.salt_name},type=env,target={SALT_VAR}"
     found = []
     for path in sorted(stack.dropin_dir.glob("*.conf")):
         try:
@@ -191,8 +191,8 @@ def rendered_master_key(stack: Stack) -> str | None:
 
 def _second_migration_boot(salt: str, stack: Stack, runner: Runner) -> str | None:
     """None when this is the second migration boot, else why it is not."""
-    if not secret_exists(stack.migrate_secret, runner):
-        return f"no migration boot ran (there is no Podman secret {stack.migrate_secret})"
+    if not secret_exists(stack.migrate_name, runner):
+        return f"no migration boot ran (there is no Podman secret {stack.migrate_name})"
     if not migration_finished(stack, runner):
         return (
             f"the running {stack.litellm_unit} has not logged that the migration finished; "
@@ -227,17 +227,17 @@ def plan(env: Mapping[str, str], stack: Stack, runner: Runner = run) -> Plan:
                 f"{dropins[0][0]} passes {SALT_VAR}, so LiteLLM would skip the migration: move it out of "
                 f"{stack.dropin_dir} for the migration boot ({MANUAL})"
             )
-        result.create, result.source = stack.migrate_secret, MIGRATE_VAR
+        result.create, result.source = stack.migrate_name, MIGRATE_VAR
         result.notes.append(
             f"ℹ️  Migration boot: LiteLLM re-encrypts the values stored under {MIGRATE_VAR} with {MASTER_VAR}. "
             f"Then set {SALT_VAR} to that {MASTER_VAR}, give {MASTER_VAR} another value and remove {MIGRATE_VAR}"
         )
         return result
-    current = secret_value(stack.salt_secret, runner)
+    current = secret_value(stack.salt_name, runner)
     if not salt:
         if current is not None:
             raise Refused(
-                f"{SALT_VAR} is not set in {where}, but the Podman secret {stack.salt_secret} exists: LiteLLM's "
+                f"{SALT_VAR} is not set in {where}, but the Podman secret {stack.salt_name} exists: LiteLLM's "
                 f"stored values are encrypted with it. Put {SALT_VAR} back into {where} ({MANUAL})"
             )
         result.notes.append(
@@ -253,27 +253,27 @@ def plan(env: Mapping[str, str], stack: Stack, runner: Runner = run) -> Plan:
     for path, from_secret in dropins:
         if not from_secret:
             raise Refused(
-                f"{path} sets {SALT_VAR} other than from the Podman secret {stack.salt_secret}: remove that "
+                f"{path} sets {SALT_VAR} other than from the Podman secret {stack.salt_name}: remove that "
                 f"line ({MANUAL})"
             )
         result.notes.append(
-            f"ℹ️  {path} is redundant: the LiteLLM unit passes {stack.salt_secret} itself (kept so that a "
+            f"ℹ️  {path} is redundant: the LiteLLM unit passes {stack.salt_name} itself (kept so that a "
             f"rollback to v0.1.95 or older keeps {SALT_VAR})"
         )
     if current is not None and current != salt:
         reason = _second_migration_boot(salt, stack, runner)
         if reason is not None:
             raise Refused(
-                f"{SALT_VAR} in {where} differs from the Podman secret {stack.salt_secret}, the key LiteLLM's "
+                f"{SALT_VAR} in {where} differs from the Podman secret {stack.salt_name}, the key LiteLLM's "
                 f"stored values are encrypted with, and {reason}. Replacing it would make them unreadable: "
                 f"change it with the two-boot migration ({MANUAL}). To put an older key back on purpose, "
-                f"run podman secret rm {stack.salt_secret} first"
+                f"run podman secret rm {stack.salt_name} first"
             )
         result.notes.append(
             f"ℹ️  Second migration boot: {SALT_VAR} is the master key the stored values were re-encrypted "
-            f"with, so {stack.salt_secret} is replaced"
+            f"with, so {stack.salt_name} is replaced"
         )
-    result.create, result.source = stack.salt_secret, SALT_VAR
+    result.create, result.source = stack.salt_name, SALT_VAR
     return result
 
 
@@ -291,12 +291,12 @@ def apply(env: Mapping[str, str], stack: Stack, runner: Runner = run) -> list[st
 
 def prune(env: Mapping[str, str], stack: Stack, runner: Runner = run) -> list[str]:
     """Remove the migrate-from secret once LITELLM_MIGRATE_FROM_MASTER_KEY is no longer set."""
-    if env.get(MIGRATE_VAR) or not secret_exists(stack.migrate_secret, runner):
+    if env.get(MIGRATE_VAR) or not secret_exists(stack.migrate_name, runner):
         return []
-    proc = runner(["podman", "secret", "rm", stack.migrate_secret], None)
+    proc = runner(["podman", "secret", "rm", stack.migrate_name], None)
     if proc.returncode != 0:
-        raise Refused(f"podman secret rm {stack.migrate_secret} failed (exit {proc.returncode})")
-    return [f"✓ Podman secret {stack.migrate_secret} removed ({MIGRATE_VAR} is no longer set)"]
+        raise Refused(f"podman secret rm {stack.migrate_name} failed (exit {proc.returncode})")
+    return [f"✓ Podman secret {stack.migrate_name} removed ({MIGRATE_VAR} is no longer set)"]
 
 
 def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = None, runner: Runner = run) -> int:
