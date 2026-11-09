@@ -1,23 +1,17 @@
 """Final gap-fill: deep extraction targeting complex + advanced tiers only."""
 
-import base64
 import json
 import time
 import urllib.request
 from pathlib import Path
 
-env = {}
-env_path = Path(__file__).resolve().parent.parent / ".env"
-with open(env_path) as f:
-    for line in f:
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
+try:
+    from langfuse_read_auth import trace_reader_auth
+except ImportError:  # run as python3 -m scripts.extract_complex
+    from scripts.langfuse_read_auth import trace_reader_auth
 
-pk = env["LANGFUSE_PUBLIC_KEY"]
-sk = env["LANGFUSE_SECRET_KEY"]
-auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
+# LANGFUSE_READ_PUBLIC_KEY/LANGFUSE_READ_SECRET_KEY when set: the stack's own pair may be write-only.
+auth = trace_reader_auth(Path(__file__).resolve().parent.parent / ".env")
 base_url = "http://localhost:3001"
 
 existing = set()

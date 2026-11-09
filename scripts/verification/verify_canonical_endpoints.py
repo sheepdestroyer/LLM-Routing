@@ -22,12 +22,15 @@ import httpx
 
 WORKDIR = Path(__file__).resolve().parent.parent.parent
 
-# Import shared chat response parser (also used by classifier scripts)
+# Shared chat response parser (also used by classifier scripts) and the Langfuse pair that may read
+# traces (the stack's own pair can be write-only).
 try:
     from scripts.chat_helpers import parse_chat_response
+    from scripts.langfuse_read_auth import MAIN_PAIR, READ_PAIR, read_pair
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from scripts.chat_helpers import parse_chat_response
+    from scripts.langfuse_read_auth import MAIN_PAIR, READ_PAIR, read_pair
 
 
 def load_env(dev: bool = False) -> dict:
@@ -65,6 +68,10 @@ def load_env(dev: bool = False) -> dict:
 
     print(f"  Loaded env files: {', '.join(loaded_files)}")
 
+    # Trace reads: LANGFUSE_READ_* when both are set, else the stack's own pair (shell env wins per variable).
+    langfuse_pair = read_pair({name: os.environ.get(name) or env.get(name) or "" for name in READ_PAIR + MAIN_PAIR})
+    langfuse_public, langfuse_secret = langfuse_pair or ("", "")
+
     # Resolve with defaults, respecting shell env overrides
     return {
         "router_port": os.environ.get("ROUTER_PORT") or env.get("ROUTER_PORT") or "5000",
@@ -75,8 +82,8 @@ def load_env(dev: bool = False) -> dict:
         "public_base_url": (os.environ.get("PUBLIC_BASE_URL") or env.get("PUBLIC_BASE_URL") or "").rstrip("/"),
         "minio_s3_port": os.environ.get("MINIO_S3_PORT") or env.get("MINIO_S3_PORT") or "9002",
         "clickhouse_http_port": os.environ.get("CLICKHOUSE_HTTP_PORT") or env.get("CLICKHOUSE_HTTP_PORT") or "8123",
-        "langfuse_public_key": os.environ.get("LANGFUSE_PUBLIC_KEY") or env.get("LANGFUSE_PUBLIC_KEY") or "",
-        "langfuse_secret_key": os.environ.get("LANGFUSE_SECRET_KEY") or env.get("LANGFUSE_SECRET_KEY") or "",
+        "langfuse_public_key": langfuse_public,
+        "langfuse_secret_key": langfuse_secret,
     }
 
 
@@ -500,7 +507,10 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     key = cfg["router_api_key"]
 
     if not pk or not sk:
-        print("\n── Langfuse session propagation — SKIPPED (LANGFUSE_PUBLIC_KEY/SECRET_KEY not set) ──")
+        print(
+            "\n── Langfuse session propagation — SKIPPED "
+            "(neither LANGFUSE_READ_PUBLIC_KEY/SECRET_KEY nor LANGFUSE_PUBLIC_KEY/SECRET_KEY set) ──"
+        )
         return 0, 0
 
     auth = (pk, sk)
@@ -545,6 +555,7 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
     session_trace_id = None
     step1_trace_ids = set()
     events_only_mode = False
+    read_denied = False
     _attempt = 0
     for _attempt in range(20):
         time.sleep(1)
@@ -556,6 +567,10 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
             )
             if resp.status_code == 404 and "events_only" in resp.text:
                 events_only_mode = True
+                break
+            if resp.status_code == 403:
+                # A write-only (Ingestion) key: polling longer cannot help.
+                read_denied = True
                 break
             if resp.status_code != 200:
                 continue
@@ -575,6 +590,14 @@ def test_langfuse_session_propagation(cfg: dict) -> tuple[int, int]:
 
     # Report session trace result
     total += 1
+    if read_denied:
+        passed += check(
+            "Trace has session+user",
+            False,
+            "Langfuse refused to list traces (HTTP 403): this key cannot read traces; set "
+            "LANGFUSE_READ_PUBLIC_KEY/LANGFUSE_READ_SECRET_KEY to a key that may (manual §9q)",
+        )
+        return passed, total
     if session_trace_id:
         passed += check(
             "Trace has session+user",
