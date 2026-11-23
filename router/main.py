@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -36,7 +37,13 @@ except ImportError:  # pragma: no cover
 try:
     from router.model_metadata import OpenRouterMetadataSync
     from router.model_sync import ModelRegistrySync
-    from router.sticky_qfn import CHAT_POOL_MODELS, HASS_POOL_MODEL, StickyQfnRouter, is_transient_status
+    from router.sticky_qfn import (
+        CHAT_POOL_MODELS,
+        HASS_POOL_MODEL,
+        StickyQfnRouter,
+        is_transient_status,
+        make_pin_session_key,
+    )
 except ImportError:  # pragma: no cover
     from model_metadata import OpenRouterMetadataSync  # type: ignore[no-redef]
     from model_sync import ModelRegistrySync  # type: ignore[no-redef]
@@ -45,6 +52,7 @@ except ImportError:  # pragma: no cover
         HASS_POOL_MODEL,
         StickyQfnRouter,
         is_transient_status,
+        make_pin_session_key,
     )
 from typing import Any, Literal
 
@@ -1522,7 +1530,7 @@ LANGFUSE_MANAGED_MODELS = [
     (
         "strata-qwen-model-def",
         "strata-qwen",
-        "(?i)^(openai/)?(strata-qwen|locallama-strata|gb10-strata|qwen3.8-flash-next)$",
+        "(?i)^(openai/)?(strata-qwen|strata-qwen-hass|locallama-strata|gb10-strata|qwen3.8-flash-next)$",
         "TOKENS",
         0.0,
         0.0,
@@ -3639,51 +3647,52 @@ async def chat_completions(request: Request):
             *,
             extra_response_headers: dict[str, str] | None = None,
             on_release: Callable[[], None] | None = None,
+            on_stream_error: Callable[[], None] | None = None,
         ):
             """Executes a proxy request to a backend model."""
             nonlocal _non_streaming_finalized
-            # Resolve backend connection parameters
-            backend_conf = backends.get(model_name)
-            if not backend_conf:
-                logger.info(f"Backend '{model_name}' not found in backends mapping, defaulting to LiteLLM proxy")
-                backend_conf = {
-                    "api_base": f"{LITELLM_URL}/v1",
-                    "api_key": "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER",
-                }
-
-            backend_api_base = backend_conf["api_base"]
-            raw_api_key = backend_conf.get("api_key", "")
-            if (
-                not raw_api_key
-                or raw_api_key in _INVALID_MASTER_KEYS
-                or raw_api_key == os.getenv("LITELLM_MASTER_KEY")
-                or "PLACEHOLDER" in str(raw_api_key).upper()
-            ):
-                backend_api_key = _validate_litellm_master_key()
-            else:
-                backend_api_key = raw_api_key
-
-            logger.info(f"Proxying to LiteLLM as model={model_name}")
-
-            # --- Langfuse child span: LiteLLM proxy ---
-            litellm_span_obj = None
-            if langfuse_trace_id:
-                lf_litellm = get_langfuse()
-                if lf_litellm:
-                    try:
-                        litellm_span_obj = lf_litellm.start_observation(
-                            trace_context={"trace_id": langfuse_trace_id},
-                            name="litellm-proxy",
-                            input=model_name,
-                            metadata={"model": model_name},
-                            level="DEFAULT",
-                        )
-                    except Exception:
-                        pass
-
-            client = get_http_client()
             handoff_to_stream = False
+            litellm_span_obj = None
             try:
+                # Resolve backend connection parameters
+                backend_conf = backends.get(model_name)
+                if not backend_conf:
+                    logger.info(f"Backend '{model_name}' not found in backends mapping, defaulting to LiteLLM proxy")
+                    backend_conf = {
+                        "api_base": f"{LITELLM_URL}/v1",
+                        "api_key": "DYNAMIC_LITELLM_MASTER_KEY_PLACEHOLDER",
+                    }
+
+                backend_api_base = backend_conf["api_base"]
+                raw_api_key = backend_conf.get("api_key", "")
+                if (
+                    not raw_api_key
+                    or raw_api_key in _INVALID_MASTER_KEYS
+                    or raw_api_key == os.getenv("LITELLM_MASTER_KEY")
+                    or "PLACEHOLDER" in str(raw_api_key).upper()
+                ):
+                    backend_api_key = _validate_litellm_master_key()
+                else:
+                    backend_api_key = raw_api_key
+
+                logger.info(f"Proxying to LiteLLM as model={model_name}")
+
+                # --- Langfuse child span: LiteLLM proxy ---
+                if langfuse_trace_id:
+                    lf_litellm = get_langfuse()
+                    if lf_litellm:
+                        try:
+                            litellm_span_obj = lf_litellm.start_observation(
+                                trace_context={"trace_id": langfuse_trace_id},
+                                name="litellm-proxy",
+                                input=model_name,
+                                metadata={"model": model_name},
+                                level="DEFAULT",
+                            )
+                        except Exception:
+                            pass
+
+                client = get_http_client()
                 headers = {"Authorization": f"Bearer {backend_api_key}"}
                 if _trace_session_id:
                     headers["x-session-id"] = _trace_session_id
@@ -3828,6 +3837,8 @@ async def chat_completions(request: Request):
                                         await maybe_trigger_roster_sync(force=True)
 
                                 logger.error(f"Stream error: {ex}")
+                                if on_stream_error is not None:
+                                    on_stream_error()
                                 # End child span before parent on stream error (CodeRabbit: missing finalization)
                                 _end_child_span(
                                     litellm_span_obj,
@@ -4097,21 +4108,32 @@ async def chat_completions(request: Request):
                     raise HTTPException(status_code=429, detail="Ollama backend rate limited/unavailable") from e
         elif sticky_qfn_router.enabled and (target_model in CHAT_POOL_MODELS or target_model == HASS_POOL_MODEL):
             is_chat_pool = target_model in CHAT_POOL_MODELS
+            pin_tenant = getattr(request.state, "auth_key_alias", None) or getattr(request.state, "auth_user_id", None)
+            pin_session_key = make_pin_session_key(_trace_session_id, pin_tenant) if is_chat_pool else None
             if is_chat_pool:
-                decision, release_primary = await sticky_qfn_router.reserve_chat_route(get_redis(), _trace_session_id)
+                decision, release_primary = await sticky_qfn_router.reserve_chat_route(get_redis(), pin_session_key)
             else:
                 decision = sticky_qfn_router.select_hass_route()
                 release_primary = sticky_qfn_router.acquire(decision.primary_host)
             fb_reason = "failover" if is_chat_pool else "hass_failover"
+
+            async def _finalize_success_pin(host: str, release_fn: Callable[[], None]) -> None:
+                try:
+                    await sticky_qfn_router.repin(get_redis(), "chat", pin_session_key, host)
+                except BaseException:
+                    release_fn()
+                    raise
+
             try:
                 try:
-                    return await execute_proxy(
+                    resp = await execute_proxy(
                         decision.primary_model,
                         extra_response_headers={
                             "X-LLM-Backend": decision.primary_host,
                             "X-LLM-Route-Reason": decision.reason,
                         },
                         on_release=release_primary,
+                        on_stream_error=partial(sticky_qfn_router.mark_transient_failure, decision.primary_host),
                     )
                 except HTTPException as primary_exc:
                     release_primary()
@@ -4127,6 +4149,7 @@ async def chat_completions(request: Request):
                                 "X-LLM-Route-Reason": fb_reason,
                             },
                             on_release=release_fallback,
+                            on_stream_error=partial(sticky_qfn_router.mark_transient_failure, decision.fallback_host),
                         )
                     except HTTPException as fb_exc:
                         release_fallback()
@@ -4136,10 +4159,13 @@ async def chat_completions(request: Request):
                                 return await execute_proxy("ollama-deepseek-v4-pro")
                         raise
                     if is_chat_pool:
-                        await sticky_qfn_router.repin(get_redis(), "chat", _trace_session_id, decision.fallback_host)
+                        await _finalize_success_pin(decision.fallback_host, release_fallback)
                     else:
                         sticky_qfn_router.record_hass_failover()
                     return resp
+                if is_chat_pool and decision.reason == "failover_cooldown":
+                    await _finalize_success_pin(decision.primary_host, release_primary)
+                return resp
             except HTTPException:
                 _end_parent_obs(parent_obs, output={"error": "all_backends_failed", "route": "sticky_qfn"})
                 _close_prop_ctx(_prop_ctx)

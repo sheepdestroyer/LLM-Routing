@@ -11,6 +11,7 @@ and fail over strictly within the LAN to x570 (``locallama-qwen-hass``).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -33,7 +34,7 @@ HASS_TARGETS: dict[str, str] = {
     "x570": "locallama-qwen-hass",
 }
 
-_TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+_TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})
 _FALSE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
 _ROUTE_REASONS: tuple[str, ...] = (
     "pinned",
@@ -44,6 +45,16 @@ _ROUTE_REASONS: tuple[str, ...] = (
     "hass_primary",
     "hass_failover",
 )
+
+
+def make_pin_session_key(session_id: str | None, tenant: object = None) -> str | None:
+    """Return a tenant-scoped opaque hash key for session pinning (never logs raw IDs)."""
+    if not session_id:
+        return None
+    tenant_str = str(tenant).strip() if tenant is not None else ""
+    tenant_tag = hashlib.sha256(tenant_str.encode("utf-8")).hexdigest()[:12] if tenant_str else "anon"
+    sess_tag = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+    return f"{tenant_tag}:{sess_tag}"
 
 
 def is_transient_status(status_code: int) -> bool:
@@ -167,7 +178,7 @@ class StickyQfnRouter:
                 if val in HOSTS:
                     return str(val)
             except Exception as exc:
-                logger.warning("Sticky QFN Redis get_pin failed (%s): %s", key, exc)
+                logger.warning("Sticky QFN Redis get_pin failed (pool=%s): %s", pool, type(exc).__name__)
         entry = self._local_pins.get(key)
         if entry is not None:
             host, exp = entry
@@ -197,7 +208,7 @@ class StickyQfnRouter:
             try:
                 await redis.setex(key, ttl, host)
             except Exception as exc:
-                logger.warning("Sticky QFN Redis set_pin failed (%s): %s", key, exc)
+                logger.warning("Sticky QFN Redis set_pin failed (pool=%s): %s", pool, type(exc).__name__)
 
     def _plan_chat_decision(self, pinned: str | None) -> tuple[RouteDecision, str | None, str]:
         if pinned is not None:
@@ -232,7 +243,12 @@ class StickyQfnRouter:
         release = self.acquire(decision.primary_host) if acquire_slot else None
         self.metrics[metric_key] += 1
         if pin_target is not None:
-            await self.set_pin(redis, "chat", session_id, pin_target)
+            try:
+                await self.set_pin(redis, "chat", session_id, pin_target)
+            except BaseException:
+                if release is not None:
+                    release()
+                raise
         return decision, release
 
     async def reserve_chat_route(self, redis: Any, session_id: str | None) -> tuple[RouteDecision, Callable[[], None]]:

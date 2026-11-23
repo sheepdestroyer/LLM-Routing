@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +14,13 @@ import yaml
 from httpx import ASGITransport
 
 import router.main as rm
-from router.sticky_qfn import CHAT_POOL_MODELS, HASS_POOL_MODEL, StickyQfnRouter, is_transient_status
+from router.sticky_qfn import (
+    CHAT_POOL_MODELS,
+    HASS_POOL_MODEL,
+    StickyQfnRouter,
+    is_transient_status,
+    make_pin_session_key,
+)
 
 
 class _SSEStream:
@@ -78,10 +86,18 @@ def test_env_helpers_and_transient_status(monkeypatch):
     monkeypatch.setenv("LOCAL_QWEN_HASS_PRIMARY", "cloud")
     assert qfn.hass_primary() == "gx10"
 
-    for code in (429, 500, 502, 503, 504):
+    for code in (408, 429, 500, 502, 503, 504):
         assert is_transient_status(code) is True
     for code in (200, 400, 401, 404):
         assert is_transient_status(code) is False
+
+    # Tenant-scoped opaque pin keys prevent cross-client session collisions
+    assert make_pin_session_key(None, "client-a") is None
+    assert make_pin_session_key("shared-id", None) == make_pin_session_key("shared-id", "")
+    key_a = make_pin_session_key("shared-id", "divorce-ia")
+    key_b = make_pin_session_key("shared-id", "hermes")
+    assert key_a is not None and key_b is not None and key_a != key_b
+    assert "shared-id" not in key_a and "divorce-ia" not in key_a
 
 
 def test_acquire_release_is_idempotent():
@@ -374,7 +390,7 @@ async def test_chat_pool_failover_repin_and_streaming():
     assert r.headers["x-llm-backend"] == "gx10"
     assert r.headers["x-llm-route-reason"] == "failover"
     assert rm.sticky_qfn_router.is_cooled_down("x570") is True
-    assert rm.sticky_qfn_router._local_pins["qfn:pin:chat:stream-failover"][0] == "gx10"
+    assert rm.sticky_qfn_router._local_pins[f"qfn:pin:chat:{make_pin_session_key('stream-failover')}"][0] == "gx10"
     assert rm.sticky_qfn_router._inflight == {"x570": 0, "gx10": 0}
 
 
@@ -508,6 +524,141 @@ def test_context_limits_and_litellm_fallback_contracts():
     fallbacks = {name: targets for entry in config["litellm_settings"]["fallbacks"] for name, targets in entry.items()}
     assert fallbacks["local-qwen"] == ["gb10-strata", "ollama-deepseek-v4-pro", "openrouter-auto"]
     assert fallbacks["local-qwen-hass"] == ["strata-qwen-hass"]
-    assert fallbacks["strata-qwen-hass"] == ["locallama-qwen-hass"]
+    assert "strata-qwen-hass" not in fallbacks
     assert "locallama-qwen-hass" not in fallbacks
     assert "strata-qwen-hass" in config["litellm_settings"]["public_model_groups"]
+
+    # Langfuse managed model definition includes strata-qwen-hass
+    strata_defs = [entry for entry in rm.LANGFUSE_MANAGED_MODELS if entry[0] == "strata-qwen-model-def"]
+    assert len(strata_defs) == 1
+    assert re.match(strata_defs[0][2], "strata-qwen-hass")
+    assert re.match(strata_defs[0][2], "openai/strata-qwen-hass")
+
+
+@pytest.mark.asyncio
+async def test_cancellation_setup_errors_cooldown_repin_and_stream_failure_coverage(monkeypatch):
+    qfn = StickyQfnRouter()
+    monkeypatch.setenv("LOCAL_QWEN_PRIMARY_MAX_SLOTS", "1")
+
+    # 1. Cancellation during set_pin releases acquired slot (and select_chat_route re-raises cleanly)
+    redis_cancel = AsyncMock()
+    redis_cancel.get.return_value = None
+    redis_cancel.setex.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await qfn.reserve_chat_route(redis_cancel, "cancel-sess-1")
+    assert qfn._inflight == {"x570": 0, "gx10": 0}
+    with pytest.raises(asyncio.CancelledError):
+        await qfn.select_chat_route(redis_cancel, "cancel-sess-2")
+
+    # 2. Mid-stream error marks host transient failure without leaking slot
+    class _BrokenSSE:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> bytes:
+            raise RuntimeError("mid-stream reset")
+
+    broken_stream = MagicMock(status_code=200)
+    broken_stream.aiter_bytes = lambda: _BrokenSSE()
+    broken_stream.aclose = AsyncMock()
+
+    http_stream_err = AsyncMock()
+    http_stream_err.build_request = MagicMock(return_value=MagicMock())
+    http_stream_err.send.return_value = broken_stream
+
+    r_stream_err = await _post_chat(http_stream_err, "strata-qwen", session_id="stream-err", stream=True)
+    assert r_stream_err.status_code == 200
+    assert rm.sticky_qfn_router.is_cooled_down("x570") is True
+    assert rm.sticky_qfn_router._inflight == {"x570": 0, "gx10": 0}
+
+    # 2b. Fallback mid-stream error marks fallback host cooled down cleanly too
+    rm.sticky_qfn_router.reset()
+    err_503 = MagicMock(status_code=503)
+    err_503.aread = AsyncMock(return_value=b"busy")
+    err_503.aclose = AsyncMock()
+    broken_fb_stream = MagicMock(status_code=200)
+    broken_fb_stream.aiter_bytes = lambda: _BrokenSSE()
+    broken_fb_stream.aclose = AsyncMock()
+    http_fb_stream_err = AsyncMock()
+    http_fb_stream_err.build_request = MagicMock(return_value=MagicMock())
+    http_fb_stream_err.send.side_effect = [err_503, broken_fb_stream]
+    r_fb_stream_err = await _post_chat(http_fb_stream_err, "strata-qwen", session_id="fb-stream-err", stream=True)
+    assert r_fb_stream_err.status_code == 200
+    assert rm.sticky_qfn_router.is_cooled_down("x570") is True
+    assert rm.sticky_qfn_router.is_cooled_down("gx10") is True
+    assert rm.sticky_qfn_router._inflight == {"x570": 0, "gx10": 0}
+
+    # 3. Non-sticky stream error covers False branch of on_stream_error check
+    http_non_sticky_err = AsyncMock()
+    http_non_sticky_err.build_request = MagicMock(return_value=MagicMock())
+    broken_stream_2 = MagicMock(status_code=200)
+    broken_stream_2.aiter_bytes = lambda: _BrokenSSE()
+    broken_stream_2.aclose = AsyncMock()
+    http_non_sticky_err.send.return_value = broken_stream_2
+    r_explicit_err = await _post_chat(http_non_sticky_err, "gb10-strata", session_id="exp-stream-err", stream=True)
+    assert r_explicit_err.status_code == 200
+
+    # 4. Pinned host in cooldown repins to peer upon cooldown failover success
+    rm.sticky_qfn_router.reset()
+    pin_key = make_pin_session_key("cool-repin")
+    assert pin_key is not None
+    await rm.sticky_qfn_router.set_pin(None, "chat", pin_key, "x570")
+    rm.sticky_qfn_router.mark_transient_failure("x570")
+    http_cool_ok = AsyncMock()
+    http_cool_ok.post.return_value = _json_ok("served on gx10")
+    r_cool = await _post_chat(http_cool_ok, "strata-qwen", session_id="cool-repin")
+    assert r_cool.status_code == 200
+    assert r_cool.headers["x-llm-backend"] == "gx10"
+    assert r_cool.headers["x-llm-route-reason"] == "failover_cooldown"
+    assert rm.sticky_qfn_router._local_pins[f"qfn:pin:chat:{pin_key}"][0] == "gx10"
+
+    # 5. Setup error inside execute_proxy before HTTP releases slot via outer finally
+    rm.sticky_qfn_router.reset()
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        transport = ASGITransport(app=rm.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with (
+                patch(
+                    "router.main._validate_litellm_master_key",
+                    side_effect=rm.HTTPException(status_code=500, detail="setup key error"),
+                ),
+                patch("router.main.get_redis", return_value=None),
+                patch("router.main.get_langfuse", return_value=None),
+                patch("router.main.save_persisted_stats", new=AsyncMock()),
+                patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
+            ):
+                r_setup = await client.post(
+                    "/v1/chat/completions",
+                    json={"model": "strata-qwen", "messages": [{"role": "user", "content": "hi"}]},
+                    headers={"Authorization": "Bearer test-key", "x-session-id": "setup-err"},
+                )
+    assert r_setup.status_code == 500
+    assert rm.sticky_qfn_router._inflight == {"x570": 0, "gx10": 0}
+
+    # 6. Cancellation during repin after failover_cooldown releases slot cleanly
+    rm.sticky_qfn_router.reset()
+    pin_key_2 = make_pin_session_key("repin-cancel")
+    assert pin_key_2 is not None
+    await rm.sticky_qfn_router.set_pin(None, "chat", pin_key_2, "x570")
+    rm.sticky_qfn_router.mark_transient_failure("x570")
+    http_cool_cancel = AsyncMock()
+    http_cool_cancel.post.return_value = _json_ok("ok")
+    with patch.dict(os.environ, {"LITELLM_MASTER_KEY": "test-key"}):
+        transport = ASGITransport(app=rm.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with (
+                patch("router.main.get_http_client", return_value=http_cool_cancel),
+                patch("router.main.get_redis", return_value=None),
+                patch("router.main.get_langfuse", return_value=None),
+                patch("router.main.save_persisted_stats", new=AsyncMock()),
+                patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
+                patch("router.main.record_tool_usage"),
+                patch.object(rm.sticky_qfn_router, "repin", side_effect=asyncio.CancelledError()),
+                pytest.raises(asyncio.CancelledError),
+            ):
+                await client.post(
+                    "/v1/chat/completions",
+                    json={"model": "strata-qwen", "messages": [{"role": "user", "content": "hi"}]},
+                    headers={"Authorization": "Bearer test-key", "x-session-id": "repin-cancel"},
+                )
+    assert rm.sticky_qfn_router._inflight == {"x570": 0, "gx10": 0}

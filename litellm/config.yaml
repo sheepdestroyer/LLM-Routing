@@ -81,8 +81,6 @@ litellm_settings:
     - openrouter-auto
   - local-qwen-hass:
     - strata-qwen-hass
-  - strata-qwen-hass:
-    - locallama-qwen-hass
   - agy-gemini:
     - strata-qwen
     - locallama-qwen
