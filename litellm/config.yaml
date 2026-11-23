@@ -57,6 +57,7 @@ litellm_settings:
     - strata-qwen
     - locallama-strata
     - gb10-strata
+    - strata-qwen-hass
     - strata-qwen-vl
   fallbacks:
   - llm-routing-agy:
@@ -75,9 +76,13 @@ litellm_settings:
     - ollama-deepseek-v4-pro
     - openrouter-auto
   - local-qwen:
-    - locallama-qwen
+    - gb10-strata
     - ollama-deepseek-v4-pro
     - openrouter-auto
+  - local-qwen-hass:
+    - strata-qwen-hass
+  - strata-qwen-hass:
+    - locallama-qwen-hass
   - agy-gemini:
     - strata-qwen
     - locallama-qwen
@@ -492,6 +497,32 @@ model_list:
     max_tokens: 262144
     max_input_tokens: 262144
     is_public_model_group: true
+
+- litellm_params:
+    api_base: STRATA_SERVER_URL_PLACEHOLDER
+    api_key: local-token
+    model: openai/strata-qwen
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    temperature: 0.7
+    top_p: 0.8
+    presence_penalty: 1.5
+    request_timeout: 600
+  model_name: strata-qwen-hass
+  model_info:
+    supports_vision: true
+    supports_reasoning: false
+    supports_function_calling: true
+    mode: chat
+    max_tokens: 262144
+    max_input_tokens: 262144
+    is_public_model_group: true
+    allowed_fails_policy:
+      InternalServerErrorAllowedFails: 1
+      TimeoutErrorAllowedFails: 1
+      RateLimitErrorAllowedFails: 1
+    cooldown_time: 60
 
 - litellm_params:
     api_base: STRATA_SERVER_URL_PLACEHOLDER

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,9 +36,16 @@ except ImportError:  # pragma: no cover
 try:
     from router.model_metadata import OpenRouterMetadataSync
     from router.model_sync import ModelRegistrySync
+    from router.sticky_qfn import CHAT_POOL_MODELS, HASS_POOL_MODEL, StickyQfnRouter, is_transient_status
 except ImportError:  # pragma: no cover
     from model_metadata import OpenRouterMetadataSync  # type: ignore[no-redef]
     from model_sync import ModelRegistrySync  # type: ignore[no-redef]
+    from sticky_qfn import (  # type: ignore[no-redef]
+        CHAT_POOL_MODELS,
+        HASS_POOL_MODEL,
+        StickyQfnRouter,
+        is_transient_status,
+    )
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
@@ -823,6 +831,8 @@ try:
 except (TypeError, ValueError) as e:
     logger.warning(f"Invalid OLLAMA_COOLDOWN_SECONDS value: {e}; defaulting to 300")
     OLLAMA_COOLDOWN_SECONDS = 300
+
+sticky_qfn_router = StickyQfnRouter()
 
 STATS_JSON_PATH = "/config/router_dir/router_stats.json"
 
@@ -2839,6 +2849,7 @@ ROUTER_CONTEXT_LIMITS: dict[str, int] = {
     "strata-qwen": 262144,
     "locallama-strata": 262144,
     "gb10-strata": 262144,
+    "strata-qwen-hass": 262144,
     "locallama-whisper": 32768,
     "whisper-1": 32768,
     "locallama-nomic-embed": 8192,
@@ -3623,7 +3634,12 @@ async def chat_completions(request: Request):
                     target_model = "ollama-deepseek-v4-flash"
             logger.info(f"Ollama route: proxying to LiteLLM as model={target_model}")
 
-        async def execute_proxy(model_name: str):
+        async def execute_proxy(
+            model_name: str,
+            *,
+            extra_response_headers: dict[str, str] | None = None,
+            on_release: Callable[[], None] | None = None,
+        ):
             """Executes a proxy request to a backend model."""
             nonlocal _non_streaming_finalized
             # Resolve backend connection parameters
@@ -3666,6 +3682,7 @@ async def chat_completions(request: Request):
                         pass
 
             client = get_http_client()
+            handoff_to_stream = False
             try:
                 headers = {"Authorization": f"Bearer {backend_api_key}"}
                 if _trace_session_id:
@@ -3845,13 +3862,19 @@ async def chat_completions(request: Request):
                                         output={"error": "cancelled", "route": "litellm_fallback", "stream": True},
                                     )
                                 await r.aclose()
+                                if on_release is not None:
+                                    on_release()
 
-                        resp_headers = {}
+                        resp_headers: dict[str, str] = {}
+                        if extra_response_headers:
+                            resp_headers.update(extra_response_headers)
                         if _trace_session_id:
                             resp_headers["X-Session-ID"] = _trace_session_id
-                        return StreamingResponse(
+                        resp = StreamingResponse(
                             stream_generator(), media_type="text/event-stream", headers=resp_headers
                         )
+                        handoff_to_stream = True
+                        return resp
                     else:
                         error_body = await r.aread() if r else b""
                         err_str = error_body[:300].decode("utf-8", errors="replace")
@@ -3922,9 +3945,14 @@ async def chat_completions(request: Request):
                         )
                         _close_prop_ctx(_prop_ctx)
                         _non_streaming_finalized = True
+                        non_stream_headers: dict[str, str] = {}
+                        if extra_response_headers:
+                            non_stream_headers.update(extra_response_headers)
+                        if _trace_session_id:
+                            non_stream_headers["X-Session-ID"] = _trace_session_id
                         return JSONResponse(
                             content=resp_json,
-                            headers={"X-Session-ID": _trace_session_id} if _trace_session_id else None,
+                            headers=non_stream_headers or None,
                         )
                     else:
                         logger.warning(f"LiteLLM failed ({response.status_code}): {response.text[:300]}")
@@ -3951,6 +3979,9 @@ async def chat_completions(request: Request):
                     metadata={"status": "failed"},
                 )
                 raise HTTPException(status_code=502, detail="Proxy call failed") from exc
+            finally:
+                if not handoff_to_stream and on_release is not None:
+                    on_release()
 
         if should_try_ollama:
             # Sync state from Valkey first
@@ -4064,6 +4095,56 @@ async def chat_completions(request: Request):
                     _close_prop_ctx(_prop_ctx)
                     _non_streaming_finalized = True
                     raise HTTPException(status_code=429, detail="Ollama backend rate limited/unavailable") from e
+        elif sticky_qfn_router.enabled and (target_model in CHAT_POOL_MODELS or target_model == HASS_POOL_MODEL):
+            is_chat_pool = target_model in CHAT_POOL_MODELS
+            if is_chat_pool:
+                decision, release_primary = await sticky_qfn_router.reserve_chat_route(get_redis(), _trace_session_id)
+            else:
+                decision = sticky_qfn_router.select_hass_route()
+                release_primary = sticky_qfn_router.acquire(decision.primary_host)
+            fb_reason = "failover" if is_chat_pool else "hass_failover"
+            try:
+                try:
+                    return await execute_proxy(
+                        decision.primary_model,
+                        extra_response_headers={
+                            "X-LLM-Backend": decision.primary_host,
+                            "X-LLM-Route-Reason": decision.reason,
+                        },
+                        on_release=release_primary,
+                    )
+                except HTTPException as primary_exc:
+                    release_primary()
+                    if not is_transient_status(primary_exc.status_code):
+                        raise
+                    sticky_qfn_router.mark_transient_failure(decision.primary_host)
+                    release_fallback = sticky_qfn_router.acquire(decision.fallback_host)
+                    try:
+                        resp = await execute_proxy(
+                            decision.fallback_model,
+                            extra_response_headers={
+                                "X-LLM-Backend": decision.fallback_host,
+                                "X-LLM-Route-Reason": fb_reason,
+                            },
+                            on_release=release_fallback,
+                        )
+                    except HTTPException as fb_exc:
+                        release_fallback()
+                        if is_transient_status(fb_exc.status_code):
+                            sticky_qfn_router.mark_transient_failure(decision.fallback_host)
+                            if target_model == "local-qwen":
+                                return await execute_proxy("ollama-deepseek-v4-pro")
+                        raise
+                    if is_chat_pool:
+                        await sticky_qfn_router.repin(get_redis(), "chat", _trace_session_id, decision.fallback_host)
+                    else:
+                        sticky_qfn_router.record_hass_failover()
+                    return resp
+            except HTTPException:
+                _end_parent_obs(parent_obs, output={"error": "all_backends_failed", "route": "sticky_qfn"})
+                _close_prop_ctx(_prop_ctx)
+                _non_streaming_finalized = True
+                raise
         else:
             try:
                 return await execute_proxy(target_model)
@@ -4162,6 +4243,8 @@ async def metrics():
     lines.append("# HELP ollama_cooldown_remaining_seconds Seconds remaining in Ollama cooldown")
     lines.append("# TYPE ollama_cooldown_remaining_seconds gauge")
     lines.append(f"ollama_cooldown_remaining_seconds {_ollama_remaining:.0f}")
+
+    lines.extend(sticky_qfn_router.prometheus_lines())
 
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 

@@ -1,8 +1,8 @@
 """Contract: every GX10 deployment asks the engine for one served name, strata-qwen.
 
 Strata accepts several aliases, Basalt only one (its --alias). The client-facing model groups
-(strata-qwen, locallama-strata, gb10-strata, strata-qwen-vl) stay; only the backend name is shared,
-so either engine can serve all four. config.yaml and model_sync.py must agree.
+(strata-qwen, locallama-strata, gb10-strata, strata-qwen-hass, strata-qwen-vl) stay; only the backend name is shared,
+so either engine can serve all five. config.yaml and model_sync.py must agree.
 """
 
 from pathlib import Path
@@ -12,7 +12,7 @@ import yaml
 
 from router.model_sync import ModelRegistrySync
 
-GX10_GROUPS = {"strata-qwen", "locallama-strata", "gb10-strata", "strata-qwen-vl"}
+GX10_GROUPS = {"strata-qwen", "locallama-strata", "gb10-strata", "strata-qwen-hass", "strata-qwen-vl"}
 SERVED = "openai/strata-qwen"
 
 
