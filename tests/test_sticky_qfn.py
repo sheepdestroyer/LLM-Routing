@@ -91,13 +91,14 @@ def test_env_helpers_and_transient_status(monkeypatch):
     for code in (200, 400, 401, 404):
         assert is_transient_status(code) is False
 
-    # Tenant-scoped opaque pin keys prevent cross-client session collisions
+    # Tenant-scoped URL-safe pin keys prevent cross-client session collisions and colon boundary ambiguity
     assert make_pin_session_key(None, "client-a") is None
+    assert make_pin_session_key("   ", "client-a") is None
     assert make_pin_session_key("shared-id", None) == make_pin_session_key("shared-id", "")
     key_a = make_pin_session_key("shared-id", "divorce-ia")
     key_b = make_pin_session_key("shared-id", "hermes")
     assert key_a is not None and key_b is not None and key_a != key_b
-    assert "shared-id" not in key_a and "divorce-ia" not in key_a
+    assert make_pin_session_key("c", "a:b") != make_pin_session_key("b:c", "a")
 
 
 def test_acquire_release_is_idempotent():

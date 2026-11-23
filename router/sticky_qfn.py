@@ -11,13 +11,13 @@ and fail over strictly within the LAN to x570 (``locallama-qwen-hass``).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 logger = logging.getLogger("sticky-qfn")
 
@@ -48,13 +48,16 @@ _ROUTE_REASONS: tuple[str, ...] = (
 
 
 def make_pin_session_key(session_id: str | None, tenant: object = None) -> str | None:
-    """Return a tenant-scoped opaque hash key for session pinning (never logs raw IDs)."""
+    """Return a tenant-scoped, Redis-safe key for session pinning."""
     if not session_id:
         return None
-    tenant_str = str(tenant).strip() if tenant is not None else ""
-    tenant_tag = hashlib.sha256(tenant_str.encode("utf-8")).hexdigest()[:12] if tenant_str else "anon"
-    sess_tag = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
-    return f"{tenant_tag}:{sess_tag}"
+    session_clean = session_id.strip()[:256]
+    if not session_clean:
+        return None
+    tenant_clean = str(tenant).strip()[:128] if tenant is not None else ""
+    tenant_part = quote(tenant_clean, safe="-_.") if tenant_clean else "anon"
+    session_part = quote(session_clean, safe="-_.")
+    return f"{tenant_part}:{session_part}"
 
 
 def is_transient_status(status_code: int) -> bool:
