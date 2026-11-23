@@ -159,7 +159,7 @@ async def test_a_changed_limit_is_applied(engine, mock_client):
     action, _ = await engine.upsert_model(new, _grouped(_listed(engine, old)))
     assert action == "updated"
     payload = _patch_payload(mock_client)
-    assert payload["model_info"]["max_input_tokens"] == 240896
+    assert payload["model_info"]["max_input_tokens"] == 262144
     assert payload["litellm_params"]["api_key"] == "local-token"
 
 

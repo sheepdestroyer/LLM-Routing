@@ -49,7 +49,7 @@ graph TD
         LiteLLM -->|Tier 2 - Paid Ollama| OllamaTier["ollama_chat Provider\n(deepseek-v4-pro)"]
         OpenRouter -.->|API Call| OpenRouterAPI["api.openrouter.ai"]
         OllamaTier -.->|API Call| OllamaAPI["api.ollama.com"]
-        LiteLLM -.->|"Local GPU Safety Net"| QwenLocal["Local Qwen\n(local-qwen)\n(llama.cpp :8083)"]
+        LiteLLM -.->|"Local GPU Safety Net"| QwenLocal["Local Qwen\n(local-qwen)\n(Strata x570 :8087)"]
     end
 
     subgraph Observability ["Observability Backend (Langfuse v3)"]
@@ -274,19 +274,19 @@ Exposes the entry endpoint (`http://localhost:5000/v1`) and evaluates prompt com
 | `llm-routing-auto-agy-ollama` | ✅ | agy → Ollama (gated: reasoning/advanced/complex) | LiteLLM with classified tier | 512K |
 | `llm-routing-agy` | ❌ | agy (Gemini/Claude) — unconditional | LiteLLM agent-advanced-core | 1M |
 | `llm-routing-ollama` | ✅ | Ollama (gated: reasoning & advanced → ollama-deepseek-v4-pro, complex & below → ollama-deepseek-v4-flash) | LiteLLM openrouter-auto | 512K |
-| `local-qwen` (aliases: `local-qwen-hass`, `gpt-4o-mini`, `gpt-4o`) | ❌ | Local GPU llama.cpp (`Qwen3.8-27B`) | Direct local llama-server | 240K (240,896 tok) |
+| `local-qwen` (aliases: `local-qwen-hass`, `gpt-4o-mini`, `gpt-4o`) | ❌ | Local GPU Strata (`Qwen3.8-Flash-Next` UD-Q4_K_XL on `strata-x570 :8087`) | Direct local Strata server | 262K (262,144 tok) |
 | `strata-qwen-vl` | ❌ | Strata on the GX10 (`Qwen3.8-Flash-Next`, vision) | LiteLLM `locallama-qwen-vl` only (never cloud) | 262K |
-| `local-qwen-vl` (alias: `locallama-qwen-vl`) | ❌ | Local GPU llama.cpp (`Qwen3.8-27B`, same instance as `local-qwen`, mmproj on; thinking on since 2026-11-09, with the vl sampling `temperature 1.0`, `top_p 0.95`, `seed 3407` sent by LiteLLM as request defaults; a client's own value wins) | None (direct local multimodal vision) | 64K (65,536 tok) |
+| `local-qwen-vl` (alias: `locallama-qwen-vl`) | ❌ | Local GPU Strata (`Qwen3.8-Flash-Next` on `strata-x570 :8087`, thinking on with vl sampling `temperature 1.0`, `top_p 0.95`, `seed 3407` sent by LiteLLM as request defaults; a client's own value wins) | None (direct local multimodal vision) | 64K (65,536 tok) |
 | `local-qwen-routing` | ❌ | Local CPU llama.cpp (`Qwen3.5-4B`) | Direct local classifier | 8K (8,192 tok) |
 | `openrouter-gpt-5.6-luna` (aliases: `openrouter-gpt-5.6-luna-max`, `gpt-5.6-luna`) | ❌ | OpenRouter (`openai/gpt-5.6-luna`, max reasoning) | Direct OpenRouter | 1.05M |
 | `ollama/GPT-5.6 Luna (max)` (aliases: `ollama-gpt-5.6-luna-max`, `ollama/gpt-5.6-luna`, `ollama-gpt-5.6-luna`) | ❌ | Ollama (`gpt-5.6-luna`, max reasoning) | Direct Ollama | 1.05M |
-| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen` → `llm-routing-ollama` → `openrouter-auto` | 240K |
-| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 240K |
-| `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 240K |
-| `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 240K |
+| `agent-advanced-core` | ❌ | — | LiteLLM `local-qwen` → `llm-routing-ollama` → `openrouter-auto` | 262K |
+| `agent-reasoning-core` | ❌ | — | LiteLLM fallback chain | 262K |
+| `agent-complex-core` | ❌ | — | LiteLLM fallback chain | 262K |
+| `agent-medium-core` | ❌ | — | LiteLLM fallback chain | 262K |
 | `agent-simple-core` | ❌ | — | LiteLLM fallback chain | 32K (32,768 tok) |
 
-The context lengths of the `agent-*-core` tiers are the router's own limits (`ROUTER_CONTEXT_LIMITS` in `router/main.py`): the completion pre-screen rejects a longer prompt with HTTP 400, and `/v1/models` never advertises more (v0.1.94). Each tier mixes the `config.yaml` bootstrap deployment (local Qwen, 240,896) with free OpenRouter models (65,536 to 1,000,000), and LiteLLM lists a group's widest *configured* limit, which said 1,048,576 while the roster sync wrote catalog limits and 240,896 since #738.
+The context lengths of the `agent-*-core` tiers are the router's own limits (`ROUTER_CONTEXT_LIMITS` in `router/main.py`): the completion pre-screen rejects a longer prompt with HTTP 400, and `/v1/models` never advertises more (v0.1.94). Each tier mixes the `config.yaml` bootstrap deployment (local Qwen, 262,144) with free OpenRouter models (65,536 to 1,000,000), and LiteLLM lists a group's widest *configured* limit, which said 1,048,576 while the roster sync wrote catalog limits and 262,144 since `strata-x570` cutover.
 
 > [!TIP]
 > Model capabilities, token limits, and costs are visible in LiteLLM's Model Hub Table at `http://localhost:4000/ui/?page=model-hub-table` (or port 4000 on the gateway host).
@@ -655,7 +655,8 @@ For convenient access, the unified stack binds all dashboard controls, status ch
 | **System Control Dashboard** | [http://localhost:5000/dashboard](http://localhost:5000/dashboard) | `5000` | Real-time health-checks, triage stats, cache hits, and navigation shortcuts. |
 | **Langfuse Monitoring UI** | [http://localhost:3001](http://localhost:3001) | `3001` | Nested spans, detailed trace logs, latency tracking, and cost analysis. |
 | **LiteLLM Admin Console** | [http://localhost:4000/ui](http://localhost:4000/ui) | `4000` | Gateway fallback configurations, models inventory, and active proxy stats. |
-| **Llama-Server GPU UI** | [http://localhost:8083](http://localhost:8083) | `8083` | Local llama.cpp GPU prompt sandbox, dynamic model stats, and API endpoint details. |
+| **Llama-Router GPU UI** | [http://localhost:8083](http://localhost:8083) | `8083` | On-demand llama.cpp GPU UI + live CPU `locallama-nomic-embed` embeddings endpoint. |
+| **Strata x570 API** | [http://localhost:8087/health](http://localhost:8087/health) | `8087` | Primary local GPU Strata endpoint (`Qwen3.8-Flash-Next` UD-Q4_K_XL, `local-qwen*` aliases). |
 | **Llama-Classifier API** | [http://localhost:8086/health](http://localhost:8086/health) | `8086` | Dedicated local CPU classifier endpoint (`local-qwen-routing`). |
 | **Minio S3 Console** | [http://localhost:9001](http://localhost:9001) | `9001` | S3-compatible object storage browser (Langfuse v3 event upload target). |
 | **ClickHouse HTTP** | [http://localhost:8123](http://localhost:8123) | `8123` | ClickHouse HTTP interface (Langfuse v3 trace/observation storage). |
@@ -973,7 +974,7 @@ Tests cover:
 | LiteLLM direct | 1 completion directly to LiteLLM |
 | Canonical URLs | 7 GET + 1 POST through public HTTPS (graceful DNS skip) |
 
-Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests (defaults to `https://llm-routing.vendeuvre.lan`). The router derives clean service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification (defaulting to `PUBLIC_BASE_URL="https://llm-routing.dev.vendeuvre.lan"`). The dev local-model safety net uses the host-networked local listener: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8086/v1` and `LLAMA_SERVER_URL=http://127.0.0.1:8083`; it must not depend on TLS-terminated dev or production hostnames.
+Requires `PUBLIC_BASE_URL` in `.env` for canonical URL tests (defaults to `https://llm-routing.vendeuvre.lan`). The router derives clean service URLs from its host: `https://litellm.<host>/ui/`, `https://langfuse.<host>/`, and `https://llama.<host>/health`. Dev `.env.dev` overlays the base `.env` during `--dev` verification (defaulting to `PUBLIC_BASE_URL="https://llm-routing.dev.vendeuvre.lan"`). The dev local-model safety net uses host-networked local listeners: `LLAMA_CLASSIFIER_URL=http://127.0.0.1:8086/v1`, `LLAMA_SERVER_URL=http://127.0.0.1:8083`, and `LOCAL_STRATA_URL=http://127.0.0.1:8087`; it must not depend on TLS-terminated dev or production hostnames.
 
 ## Environment-isolated Quadlet deployment
 

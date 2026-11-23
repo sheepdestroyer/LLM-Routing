@@ -756,6 +756,7 @@ def _resolve_llama_endpoints() -> tuple[str, str]:
 
 LLAMA_SERVER_URL, LLAMA_CLASSIFIER_URL = _resolve_llama_endpoints()
 STRATA_SERVER_URL = os.getenv("STRATA_SERVER_URL", "http://127.0.0.1:8087").rstrip("/")
+LOCAL_STRATA_URL = (os.getenv("LOCAL_STRATA_URL") or LLAMA_SERVER_URL).rstrip("/")
 router_api_base = LLAMA_CLASSIFIER_URL
 
 router_api_key = router_model_conf.get("api_key")
@@ -1674,6 +1675,7 @@ async def _periodic_model_sync():
                     whisper_server_url=whisper_url,
                     classifier_url=classifier_url,
                     strata_server_url=STRATA_SERVER_URL,
+                    local_strata_url=LOCAL_STRATA_URL,
                     client=get_http_client(),
                 )
                 await sync_engine.sync_all_models()
@@ -1732,6 +1734,7 @@ async def lifespan(app: FastAPI):
                 whisper_server_url=whisper_url,
                 classifier_url=classifier_url,
                 strata_server_url=STRATA_SERVER_URL,
+                local_strata_url=LOCAL_STRATA_URL,
                 client=get_http_client(),
             )
             sync_stats = await sync_engine.sync_all_models()
@@ -2825,10 +2828,10 @@ async def health():
 # up to 1,048,576 (stealth/crouton-alpha's catalog window) while the roster sync wrote catalog
 # limits, 240,896 (the bootstrap) since #738 stopped that.
 ROUTER_CONTEXT_LIMITS: dict[str, int] = {
-    "locallama-qwen": 240896,
-    "local-qwen": 240896,
-    "locallama-qwen-hass": 240896,
-    "local-qwen-hass": 240896,
+    "locallama-qwen": 262144,
+    "local-qwen": 262144,
+    "locallama-qwen-hass": 262144,
+    "local-qwen-hass": 262144,
     "locallama-qwen-routing": 8192,
     "local-qwen-routing": 8192,
     "locallama-qwen-vl": 65536,
@@ -2840,14 +2843,14 @@ ROUTER_CONTEXT_LIMITS: dict[str, int] = {
     "whisper-1": 32768,
     "locallama-nomic-embed": 8192,
     "local-nomic-embed": 8192,
-    "gpt-4o-mini": 240896,
-    "gpt-4o": 240896,
+    "gpt-4o-mini": 262144,
+    "gpt-4o": 262144,
     # agent-simple-core held 32K models when this was set; the smallest now is 65,536 (liquid/lfm-2.5).
     "agent-simple-core": 32768,
     "agent-medium-core": 262144,
     "agent-complex-core": 262144,
     "agent-reasoning-core": 262144,
-    "agent-advanced-core": 240896,
+    "agent-advanced-core": 262144,
     "ollama-deepseek-v4-pro": 524288,
     "ollama-deepseek-v4-flash": 524288,
     "openrouter-gpt-5.6-luna": 1050000,
@@ -4780,6 +4783,7 @@ async def admin_sync_models(
             whisper_server_url=whisper_url,
             classifier_url=classifier_url,
             strata_server_url=STRATA_SERVER_URL,
+            local_strata_url=LOCAL_STRATA_URL,
             client=get_http_client(),
         )
         res = await sync_engine.sync_all_models()
