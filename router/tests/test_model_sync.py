@@ -228,6 +228,7 @@ def test_build_model_suites(sync_engine):
     assert any(m["model_name"] == "strata-qwen" for m in strata)
     assert any(m["model_name"] == "locallama-strata" for m in strata)
     assert any(m["model_name"] == "gb10-strata" for m in strata)
+    assert any(m["model_name"] == "strata-qwen-hass" for m in strata)
     (vision,) = [m for m in strata if m["model_name"] == "strata-qwen-vl"]
     assert vision["litellm_params"]["model"] == "openai/strata-qwen"
     assert vision["litellm_params"]["request_timeout"] == 500  # = litellm/config.yaml

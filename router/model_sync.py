@@ -588,6 +588,26 @@ class ModelRegistrySync:
                 },
             },
             {
+                "model_name": "strata-qwen-hass",
+                "litellm_params": {
+                    "model": "openai/strata-qwen",
+                    "api_base": strata_base,
+                    "api_key": "local-token",
+                    "request_timeout": 600,
+                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    **HASS_SAMPLING,
+                },
+                "model_info": {
+                    "mode": "chat",
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
+                    "supports_vision": True,
+                    "supports_reasoning": False,
+                    "supports_function_calling": True,
+                    "is_public_model_group": True,
+                },
+            },
+            {
                 # Canonical vision/OCR route (TASK-353): Strata first; the local-only fallback
                 # (locallama-qwen-vl) and the deployment cooldown live in litellm/config.yaml.
                 "model_name": "strata-qwen-vl",

@@ -98,7 +98,7 @@ async def test_a_full_sync_of_unchanged_deployments_patches_nothing(engine, mock
     results = await engine.sync_all_models()
 
     assert results["updated"] == 0
-    assert results["unchanged"] == len(rows) == 32
+    assert results["unchanged"] == len(rows) == 33
     mock_client.patch.assert_not_called()
 
 

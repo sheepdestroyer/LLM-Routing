@@ -90,6 +90,7 @@ async def _chat(client_lf, *, stream, headers):
         patch("router.main._authenticate_client_request", side_effect=_as_hermes_key),
         patch("router.main.get_http_client", return_value=_litellm_client()),
         patch("router.main.get_langfuse", return_value=client_lf),
+        patch("router.main.get_redis", return_value=None),
         patch("router.main.save_persisted_stats", new=AsyncMock()),
         patch("router.main.sync_cooldowns_from_valkey", new=AsyncMock()),
         patch("router.main.record_tool_usage"),

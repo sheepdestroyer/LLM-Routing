@@ -20,6 +20,7 @@ THINKING_ON = {"chat_template_kwargs": {"enable_thinking": True}}
 EXPECTED = {
     "locallama-qwen-hass": (HASS_SAMPLING, THINKING_OFF, False),
     "local-qwen-hass": (HASS_SAMPLING, THINKING_OFF, False),
+    "strata-qwen-hass": (HASS_SAMPLING, THINKING_OFF, False),
     "locallama-qwen-vl": (VL_SAMPLING, THINKING_ON, True),
     "local-qwen-vl": (VL_SAMPLING, THINKING_ON, True),
 }
@@ -61,7 +62,7 @@ def test_model_sync_alias_params():
         classifier_url="http://test-classifier:8086",
         client=MagicMock(),
     )
-    deployments = {m["model_name"]: m for m in sync.build_locallama_models()}
+    deployments = {m["model_name"]: m for m in (sync.build_locallama_models() + sync.build_strata_models())}
     for name, expected in EXPECTED.items():
         _check(deployments[name], *expected)
     # Each deployment has its own extra_body: no shared mutable dict between aliases.
