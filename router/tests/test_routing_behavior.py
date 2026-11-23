@@ -530,7 +530,7 @@ def test_models_endpoint_dynamic_context_normalization():
         "data": [
             "not-a-dict",
             {"id": "strata-qwen", "max_input_tokens": 262144},
-            {"id": "locallama-qwen", "max_input_tokens": 240896},
+            {"id": "locallama-qwen", "max_input_tokens": 262144},
             {"id": "ollama-deepseek-v4-pro", "max_input_tokens": 524288},
             {"id": "local-qwen-vl", "context_length": 65536},
             {"id": "custom-model", "max_tokens": 32768},
@@ -555,9 +555,9 @@ def test_models_endpoint_dynamic_context_normalization():
         assert models_by_id["strata-qwen"]["max_tokens"] == 262144
         assert models_by_id["strata-qwen"]["max_input_tokens"] == 262144
 
-        assert models_by_id["locallama-qwen"]["context_length"] == 240896
-        assert models_by_id["locallama-qwen"]["max_tokens"] == 240896
-        assert models_by_id["locallama-qwen"]["max_input_tokens"] == 240896
+        assert models_by_id["locallama-qwen"]["context_length"] == 262144
+        assert models_by_id["locallama-qwen"]["max_tokens"] == 262144
+        assert models_by_id["locallama-qwen"]["max_input_tokens"] == 262144
 
         assert models_by_id["ollama-deepseek-v4-pro"]["context_length"] == 524288
         assert models_by_id["ollama-deepseek-v4-pro"]["max_tokens"] == 524288

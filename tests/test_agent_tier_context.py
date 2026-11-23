@@ -81,14 +81,14 @@ async def test_v0193_agent_tiers_as_clients_see_them():
 async def test_single_model_groups_keep_their_window():
     listed = await _listed(
         [
-            _litellm_entry("locallama-qwen", 240896),
+            _litellm_entry("locallama-qwen", 262144),
             _litellm_entry("agy-gemini", 1048576, output=65536),
             _litellm_entry("locallama-nomic-embed", 2048),
             _litellm_entry("litellm-divorce-ia", 1050000),  # no router limit: listed as is
             _litellm_entry("whisper-1", None),
         ]
     )
-    assert listed["locallama-qwen"]["context_length"] == 240896
+    assert listed["locallama-qwen"]["context_length"] == 262144
     assert listed["agy-gemini"]["context_length"] == 1048576
     assert listed["agy-gemini"]["max_output_tokens"] == 65536
     assert listed["locallama-nomic-embed"]["context_length"] == 2048

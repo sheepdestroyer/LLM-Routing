@@ -200,6 +200,30 @@ def test_build_model_suites(sync_engine):
     assert any(m["model_name"] == "locallama-nomic-embed" for m in locallama)
     assert any(m["model_name"] == "local-nomic-embed" for m in locallama)
 
+    # Separate local_strata_url routes local Qwen aliases to x570 Strata while keeping nomic-embed on llama_server_url
+    sync_split = ModelRegistrySync(
+        litellm_url="http://127.0.0.1:4000",
+        master_key="sk-test",
+        llama_server_url="http://127.0.0.1:8083",
+        local_strata_url="http://127.0.0.1:8087",
+    )
+    split_models = {m["model_name"]: m for m in sync_split.build_locallama_models()}
+    assert split_models["local-qwen"]["litellm_params"]["api_base"] == "http://127.0.0.1:8087/v1"
+    assert split_models["locallama-qwen-hass"]["litellm_params"]["api_base"] == "http://127.0.0.1:8087/v1"
+    assert split_models["local-qwen-vl"]["litellm_params"]["api_base"] == "http://127.0.0.1:8087/v1"
+    assert split_models["locallama-nomic-embed"]["litellm_params"]["api_base"] == "http://127.0.0.1:8083/v1"
+
+    # local_strata_url ending with /v1 is preserved without doubling /v1
+    sync_split_v1 = ModelRegistrySync(
+        litellm_url="http://127.0.0.1:4000",
+        master_key="sk-test",
+        llama_server_url="http://127.0.0.1:8083",
+        local_strata_url="http://127.0.0.1:8087/v1",
+    )
+    assert {m["model_name"]: m for m in sync_split_v1.build_locallama_models()}["local-qwen"]["litellm_params"][
+        "api_base"
+    ] == "http://127.0.0.1:8087/v1"
+
     strata = sync_engine.build_strata_models()
     assert any(m["model_name"] == "strata-qwen" for m in strata)
     assert any(m["model_name"] == "locallama-strata" for m in strata)

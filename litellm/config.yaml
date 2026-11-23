@@ -81,18 +81,18 @@ litellm_settings:
   - agy-gemini:
     - strata-qwen
     - locallama-qwen
-  # strata-qwen (GX10 LAN) falls back to the LOCAL llama-router only. locallama-qwen is the
-  # same llama-router preset as local-qwen (alias of [Qwen3.8-27B-spec], sampling from
-  # model_presets.ini) but, unlike local-qwen, has no fallbacks of its own: LiteLLM follows
-  # the fallbacks of a fallback target, and local-qwen escalates to Ollama/OpenRouter (cloud).
-  # Security-log analysis must never leave the LAN.
+  # strata-qwen (GX10 LAN) falls back to the LOCAL strata-x570 instance only. locallama-qwen is the
+  # same strata-x570 Qwen3.8-Flash-Next instance as local-qwen (served via LOCAL_STRATA_URL) but,
+  # unlike local-qwen, has no fallbacks of its own: LiteLLM follows the fallbacks of a fallback
+  # target, and local-qwen escalates to Ollama/OpenRouter (cloud). Security-log analysis must never
+  # leave the LAN.
   - strata-qwen:
     - locallama-qwen
   # strata-qwen-vl: the canonical vision/OCR route (TASK-353, owner decision 2026-10-30).
-  # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY locallama-qwen-vl: the vision alias of
-  # the single llama-router preset [Qwen3.8-27B-spec] (mmproj on), sent with thinking on and the
-  # vl sampling defaults set on that deployment (AGENTS.md L1 exception). Case pages must never
-  # leave the LAN: locallama-qwen-vl / local-qwen-vl have no fallbacks of their own.
+  # Qwen3.8-Flash-Next on Strata (GX10) first, then ONLY locallama-qwen-vl: the vision alias on
+  # x570 Strata (LOCAL_STRATA_URL), sent with thinking on and the vl sampling defaults set on that
+  # deployment (AGENTS.md L1 exception). Case pages must never leave the LAN: locallama-qwen-vl /
+  # local-qwen-vl have no fallbacks of their own.
   - strata-qwen-vl:
     - locallama-qwen-vl
   - agy-gemini-sse:
@@ -144,7 +144,7 @@ litellm_settings:
 # ================================================================================
 model_list:
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     extra_body:
@@ -157,12 +157,12 @@ model_list:
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     extra_body:
@@ -175,19 +175,19 @@ model_list:
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen-hass
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
-    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): llama-router serves every
-    # Qwen3.8-27B alias from one preset, so the hass profile lives here as request defaults.
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): x570 local inference serves every
+    # Qwen alias from one Strata instance (LOCAL_STRATA_URL), so the hass profile lives here as request defaults.
     temperature: 0.7
     top_p: 0.8
     presence_penalty: 1.5
@@ -198,19 +198,19 @@ model_list:
     supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen-hass
     extra_body:
       chat_template_kwargs:
         enable_thinking: false
-    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): llama-router serves every
-    # Qwen3.8-27B alias from one preset, so the hass profile lives here as request defaults.
+    # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): x570 local inference serves every
+    # Qwen alias from one Strata instance (LOCAL_STRATA_URL), so the hass profile lives here as request defaults.
     temperature: 0.7
     top_p: 0.8
     presence_penalty: 1.5
@@ -221,8 +221,8 @@ model_list:
     supports_reasoning: false
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - litellm_params:
@@ -276,17 +276,17 @@ model_list:
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen-vl
     extra_body:
       chat_template_kwargs:
         enable_thinking: true
     # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
-    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults. Thinking
-    # on since 2026-11-09 (owner decision, TASK-353 rebench): the model card's thinking-mode
-    # temperature 1.0 / top_p 0.95 (= the preset's), not the 0.7 / 0.8 of non-thinking mode.
-    # Kept explicit: model_sync PATCHes DB copies and a PATCH cannot remove a key.
+    # single x570 local Qwen instance, sent as request defaults. Thinking on since 2026-11-09
+    # (owner decision, TASK-353 rebench): the model card's thinking-mode temperature 1.0 / top_p 0.95,
+    # not the 0.7 / 0.8 of non-thinking mode. Kept explicit: model_sync PATCHes DB copies and a
+    # PATCH cannot remove a key.
     temperature: 1.0
     top_p: 0.95
     seed: 3407
@@ -302,17 +302,17 @@ model_list:
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/local-qwen-vl
     extra_body:
       chat_template_kwargs:
         enable_thinking: true
     # Per-alias sampling (AGENTS.md L1 amendment, 2026-10-30): the vision/OCR profile of the
-    # single Qwen3.8-27B llama-router instance (mmproj on), sent as request defaults. Thinking
-    # on since 2026-11-09 (owner decision, TASK-353 rebench): the model card's thinking-mode
-    # temperature 1.0 / top_p 0.95 (= the preset's), not the 0.7 / 0.8 of non-thinking mode.
-    # Kept explicit: model_sync PATCHes DB copies and a PATCH cannot remove a key.
+    # single x570 local Qwen instance, sent as request defaults. Thinking on since 2026-11-09
+    # (owner decision, TASK-353 rebench): the model card's thinking-mode temperature 1.0 / top_p 0.95,
+    # not the 0.7 / 0.8 of non-thinking mode. Kept explicit: model_sync PATCHes DB copies and a
+    # PATCH cannot remove a key.
     temperature: 1.0
     top_p: 0.95
     seed: 3407
@@ -328,7 +328,7 @@ model_list:
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 600
@@ -338,12 +338,12 @@ model_list:
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 600
@@ -353,20 +353,20 @@ model_list:
     supports_reasoning: true
     supports_function_calling: true
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     is_public_model_group: true
 
 - model_name: agent-advanced-core
   litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -374,14 +374,14 @@ model_list:
 
 - model_name: agent-reasoning-core
   litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -389,14 +389,14 @@ model_list:
 
 - model_name: agent-complex-core
   litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -404,14 +404,14 @@ model_list:
 
 - model_name: agent-medium-core
   litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true
@@ -419,14 +419,14 @@ model_list:
 
 - model_name: agent-simple-core
   litellm_params:
-    api_base: LLAMA_SERVER_URL_PLACEHOLDER
+    api_base: LOCAL_STRATA_URL_PLACEHOLDER
     api_key: local-token
     model: openai/locallama-qwen
     request_timeout: 120
   model_info:
     mode: chat
-    max_tokens: 240896
-    max_input_tokens: 240896
+    max_tokens: 262144
+    max_input_tokens: 262144
     supports_function_calling: true
     supports_reasoning: true
     supports_vision: true

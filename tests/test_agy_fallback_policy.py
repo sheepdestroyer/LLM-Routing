@@ -23,7 +23,7 @@ def test_agy_opus_fallbacks_are_gemini_then_local_only():
     assert "agy-opus" not in fallbacks["agy-gemini"]
 
 
-LOCAL_API_BASES = {"LLAMA_SERVER_URL_PLACEHOLDER", "STRATA_SERVER_URL_PLACEHOLDER"}
+LOCAL_API_BASES = {"LLAMA_SERVER_URL_PLACEHOLDER", "LOCAL_STRATA_URL_PLACEHOLDER", "STRATA_SERVER_URL_PLACEHOLDER"}
 
 
 def test_strata_qwen_fallback_closure_stays_local():
@@ -81,7 +81,7 @@ def test_strata_qwen_vl_vision_route_stays_on_the_lan():
     deployments = {d["model_name"]: d for d in config["model_list"]}
     assert deployments["strata-qwen-vl"]["litellm_params"]["api_base"] == "STRATA_SERVER_URL_PLACEHOLDER"
     for group in ("locallama-qwen-vl", "local-qwen-vl"):
-        assert deployments[group]["litellm_params"]["api_base"] == "LLAMA_SERVER_URL_PLACEHOLDER"
+        assert deployments[group]["litellm_params"]["api_base"] == "LOCAL_STRATA_URL_PLACEHOLDER"
     for group in ("strata-qwen-vl", "locallama-qwen-vl", "local-qwen-vl", "gb10-strata"):
         assert deployments[group]["model_info"]["supports_vision"] is True
     assert "strata-qwen-vl" in config["litellm_settings"]["public_model_groups"]

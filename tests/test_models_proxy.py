@@ -161,7 +161,7 @@ async def test_proxy_models_invalid_json():
 
 
 def test_litellm_config_local_model_context_limits():
-    """Verify local models in litellm/config.yaml have correct context limits (240896)."""
+    """Verify local models in litellm/config.yaml have correct context limits (262144)."""
     import yaml
     from pathlib import Path
 
@@ -172,18 +172,18 @@ def test_litellm_config_local_model_context_limits():
     models_by_name = {m["model_name"]: m for m in config.get("model_list", []) if "model_name" in m}
 
     assert "locallama-qwen" in models_by_name
-    assert models_by_name["locallama-qwen"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["locallama-qwen"]["model_info"]["max_input_tokens"] == 240896
+    assert models_by_name["locallama-qwen"]["model_info"]["max_tokens"] == 262144
+    assert models_by_name["locallama-qwen"]["model_info"]["max_input_tokens"] == 262144
 
     assert "locallama-qwen-hass" in models_by_name
-    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
+    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_tokens"] == 262144
+    assert models_by_name["locallama-qwen-hass"]["model_info"]["max_input_tokens"] == 262144
 
     assert "gpt-4o-mini" in models_by_name
-    assert models_by_name["gpt-4o-mini"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["gpt-4o-mini"]["model_info"]["max_tokens"] == 262144
 
     assert "gpt-4o" in models_by_name
-    assert models_by_name["gpt-4o"]["model_info"]["max_tokens"] == 240896
+    assert models_by_name["gpt-4o"]["model_info"]["max_tokens"] == 262144
 
     assert "locallama-qwen-routing" in models_by_name
     assert models_by_name["locallama-qwen-routing"]["model_info"]["max_tokens"] == 8192
@@ -193,12 +193,12 @@ def test_litellm_config_local_model_context_limits():
     assert models_by_name["locallama-qwen-vl"]["model_info"]["supports_vision"] is True
 
     assert "local-qwen" in models_by_name
-    assert models_by_name["local-qwen"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["local-qwen"]["model_info"]["max_input_tokens"] == 240896
+    assert models_by_name["local-qwen"]["model_info"]["max_tokens"] == 262144
+    assert models_by_name["local-qwen"]["model_info"]["max_input_tokens"] == 262144
 
     assert "local-qwen-hass" in models_by_name
-    assert models_by_name["local-qwen-hass"]["model_info"]["max_tokens"] == 240896
-    assert models_by_name["local-qwen-hass"]["model_info"]["max_input_tokens"] == 240896
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_tokens"] == 262144
+    assert models_by_name["local-qwen-hass"]["model_info"]["max_input_tokens"] == 262144
 
     assert "local-qwen-routing" in models_by_name
     assert models_by_name["local-qwen-routing"]["model_info"]["max_tokens"] == 8192

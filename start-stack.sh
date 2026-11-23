@@ -151,7 +151,7 @@ if [[ "$WORKDIR" =~ /dev/ ]] && [ "$QUADLET_NAMESPACE" = "llm-routing-prod" ] &&
     exit 1
 fi
 
-export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL
+export POD_NAME ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT MINIO_S3_PORT MINIO_CONSOLE_PORT ROUTER_IMAGE DATA_ROOT LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL LOCAL_STRATA_URL
 
 # Ensure local volume directories exist on the host for Podman mounts
 mkdir -p "${DATA_ROOT}/valkey-data" "${DATA_ROOT}/postgres-data" "${DATA_ROOT}/langfuse-data" "${DATA_ROOT}/clickhouse-data" "${DATA_ROOT}/redis-lf-data" "${DATA_ROOT}/minio-data" "${DATA_ROOT}/datasets"
@@ -509,7 +509,7 @@ APPLICATION_ENV = {
     "AGY_DAEMON_URL", "CLASSIFIER_INPUT_MAX_CHARS", "CLICKHOUSE_HTTP_PORT", "CLICKHOUSE_PASSWORD",
     "CLICKHOUSE_TCP_PORT", "DATA_ROOT", "LANGFUSE_INIT_USER_PASSWORD",
     "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_WEB_PORT",
-    "LANGFUSE_WORKER_PORT", "LLAMA_CLASSIFIER_URL", "LLAMA_SERVER_URL",
+    "LANGFUSE_WORKER_PORT", "LLAMA_CLASSIFIER_URL", "LLAMA_SERVER_URL", "LOCAL_STRATA_URL",
     "LITELLM_MASTER_KEY", "LITELLM_PORT", "MINIO_CONSOLE_PORT", "MINIO_ROOT_PASSWORD",
     "MINIO_ROOT_USER", "MINIO_S3_PORT", "NEXTAUTH_SECRET", "NEXTAUTH_URL",
     "OLLAMA_API_KEY", "OPENROUTER_API_KEY", "POD_NAME", "POSTGRES_PASSWORD",
@@ -1030,14 +1030,19 @@ render_litellm_config() {
     strata_url="${strata_url%/}"
     [[ "$strata_url" != */v1 ]] && strata_url="${strata_url}/v1"
 
+    local local_strata_url="${LOCAL_STRATA_URL:-$server_url}"
+    local_strata_url="${local_strata_url%/}"
+    [[ "$local_strata_url" != */v1 ]] && local_strata_url="${local_strata_url}/v1"
+
     sed -e "s/VALKEY_CACHE_PORT_PLACEHOLDER/${VALKEY_CACHE_PORT}/g" \
         -e "s/ROUTER_PORT_PLACEHOLDER/${ROUTER_PORT}/g" \
         -e "s|LLAMA_SERVER_URL_PLACEHOLDER|${server_url}|g" \
         -e "s|LLAMA_CLASSIFIER_URL_PLACEHOLDER|${classifier_url}|g" \
         -e "s|STRATA_SERVER_URL_PLACEHOLDER|${strata_url}|g" \
+        -e "s|LOCAL_STRATA_URL_PLACEHOLDER|${local_strata_url}|g" \
         "${WORKDIR}/litellm/config.yaml" > "${rendered_dir}/config.yaml"
     # Validate no unresolved placeholders remain
-    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_SERVER_URL_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER|STRATA_SERVER_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
+    if grep -E -q 'VALKEY_CACHE_PORT_PLACEHOLDER|ROUTER_PORT_PLACEHOLDER|LLAMA_SERVER_URL_PLACEHOLDER|LLAMA_CLASSIFIER_URL_PLACEHOLDER|STRATA_SERVER_URL_PLACEHOLDER|LOCAL_STRATA_URL_PLACEHOLDER' "${rendered_dir}/config.yaml"; then
         echo "❌ Error: Unresolved placeholders remain in ${rendered_dir}/config.yaml" >&2
         exit 1
     fi
@@ -1081,7 +1086,7 @@ render_quadlets() {
     export CLASSIFIER_INPUT_MAX_CHARS REDIS_AUTH CLICKHOUSE_PASSWORD
     export LITELLM_SALT_KEY LITELLM_MIGRATE_FROM_MASTER_KEY
     export PUBLIC_BASE_URL ROUTING_DOMAIN POD_NAME DATA_ROOT
-    export LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL
+    export LLAMA_CLASSIFIER_URL LLAMA_SERVER_URL LOCAL_STRATA_URL
     export ROUTER_IMAGE ROUTER_PORT LITELLM_PORT LANGFUSE_WEB_PORT
     export LANGFUSE_WORKER_PORT POSTGRES_PORT VALKEY_CACHE_PORT VALKEY_LF_PORT
     export CLICKHOUSE_HTTP_PORT CLICKHOUSE_TCP_PORT CLICKHOUSE_INTERSERVER_PORT
@@ -1118,6 +1123,7 @@ nextauth_url = os.environ.get("NEXTAUTH_URL_DERIVED") or os.environ.get("NEXTAUT
 llama_server_url = os.environ.get("LLAMA_SERVER_URL_DERIVED") or os.environ.get("LLAMA_SERVER_URL", "https://llama.vendeuvre.lan")
 llama_classifier_url = os.environ.get("LLAMA_CLASSIFIER_URL_DERIVED") or os.environ.get("LLAMA_CLASSIFIER_URL", "https://llama-classifier.vendeuvre.lan/v1")
 strata_server_url = os.environ.get("STRATA_SERVER_URL", "http://127.0.0.1:8087")
+local_strata_url = os.environ.get("LOCAL_STRATA_URL") or llama_server_url
 
 repl = {
     "WORKDIR_PLACEHOLDER": os.environ["WORKDIR"],
@@ -1149,6 +1155,7 @@ repl = {
     "LLAMA_CLASSIFIER_URL_PLACEHOLDER": llama_classifier_url,
     "LLAMA_SERVER_URL_PLACEHOLDER": llama_server_url,
     "STRATA_SERVER_URL_PLACEHOLDER": strata_server_url,
+    "LOCAL_STRATA_URL_PLACEHOLDER": local_strata_url,
     "POD_NAME_PLACEHOLDER": os.environ["POD_NAME"],
     "DATA_ROOT_PLACEHOLDER": os.environ["DATA_ROOT"],
     "EFFECTIVE_ENV_FILE_PLACEHOLDER": os.environ["EFFECTIVE_ENV_FILE"],

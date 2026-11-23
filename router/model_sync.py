@@ -125,6 +125,7 @@ class ModelRegistrySync:
         ollama_api_base: str = "https://api.ollama.com",
         openrouter_api_key: str | None = None,
         client: httpx.AsyncClient | None = None,
+        local_strata_url: str | None = None,
     ) -> None:
         self.litellm_url = litellm_url.rstrip("/")
         self.master_key = master_key
@@ -133,6 +134,7 @@ class ModelRegistrySync:
         self.whisper_server_url = whisper_server_url.rstrip("/")
         self.classifier_url = classifier_url.rstrip("/")
         self.strata_server_url = strata_server_url.rstrip("/")
+        self.local_strata_url = (local_strata_url or llama_server_url).rstrip("/")
         self.ollama_api_base = ollama_api_base.rstrip("/")
         self.openrouter_api_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY", "")
         self.ollama_api_key = os.getenv("OLLAMA_API_KEY", "")
@@ -307,8 +309,11 @@ class ModelRegistrySync:
         return fallback_model
 
     def build_locallama_models(self) -> list[dict[str, Any]]:
-        """Build model definitions for local host backends (llama-server & whisper-server)."""
+        """Build model definitions for local host backends (strata-x570, llama-server, whisper-server)."""
         llama_base = self.llama_server_url if self.llama_server_url.endswith("/v1") else f"{self.llama_server_url}/v1"
+        local_strata_base = (
+            self.local_strata_url if self.local_strata_url.endswith("/v1") else f"{self.local_strata_url}/v1"
+        )
         whisper_base = (
             self.whisper_server_url if self.whisper_server_url.endswith("/v1") else f"{self.whisper_server_url}/v1"
         )
@@ -317,15 +322,15 @@ class ModelRegistrySync:
                 "model_name": "locallama-qwen",
                 "litellm_params": {
                     "model": "openai/locallama-qwen",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"preserve_thinking": True}},
                 },
                 "model_info": {
                     "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
                     "supports_vision": True,
                     "supports_reasoning": True,
                     "supports_function_calling": True,
@@ -336,15 +341,15 @@ class ModelRegistrySync:
                 "model_name": "local-qwen",
                 "litellm_params": {
                     "model": "openai/local-qwen",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"preserve_thinking": True}},
                 },
                 "model_info": {
                     "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
                     "supports_vision": True,
                     "supports_reasoning": True,
                     "supports_function_calling": True,
@@ -355,7 +360,7 @@ class ModelRegistrySync:
                 "model_name": "locallama-qwen-hass",
                 "litellm_params": {
                     "model": "openai/locallama-qwen-hass",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
@@ -363,8 +368,8 @@ class ModelRegistrySync:
                 },
                 "model_info": {
                     "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
                     "supports_vision": True,
                     "supports_reasoning": False,
                     "supports_function_calling": True,
@@ -375,7 +380,7 @@ class ModelRegistrySync:
                 "model_name": "local-qwen-hass",
                 "litellm_params": {
                     "model": "openai/local-qwen-hass",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
@@ -383,8 +388,8 @@ class ModelRegistrySync:
                 },
                 "model_info": {
                     "mode": "chat",
-                    "max_tokens": 240896,
-                    "max_input_tokens": 240896,
+                    "max_tokens": 262144,
+                    "max_input_tokens": 262144,
                     "supports_vision": True,
                     "supports_reasoning": False,
                     "supports_function_calling": True,
@@ -431,7 +436,7 @@ class ModelRegistrySync:
                 "model_name": "locallama-qwen-vl",
                 "litellm_params": {
                     "model": "openai/locallama-qwen-vl",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
@@ -451,7 +456,7 @@ class ModelRegistrySync:
                 "model_name": "local-qwen-vl",
                 "litellm_params": {
                     "model": "openai/local-qwen-vl",
-                    "api_base": llama_base,
+                    "api_base": local_strata_base,
                     "api_key": "local-token",
                     "request_timeout": 600,
                     "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
