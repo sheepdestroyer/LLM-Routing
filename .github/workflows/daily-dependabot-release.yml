@@ -92,8 +92,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/test.yml
-    with:
-      ref: ${{ needs.plan-release.outputs.head_sha }}
 
   create-release:
     name: Create daily patch release

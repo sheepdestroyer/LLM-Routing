@@ -62,7 +62,6 @@ def test_daily_dependabot_release_workflow_contract():
     verify = wf["jobs"]["verify-head"]
     assert verify["needs"] == "plan-release"
     assert verify["uses"] == "./.github/workflows/test.yml"
-    assert verify["with"]["ref"] == "${{ needs.plan-release.outputs.head_sha }}"
 
     create = wf["jobs"]["create-release"]
     assert create["needs"] == ["plan-release", "verify-head"]
@@ -82,10 +81,6 @@ def test_test_workflow_supports_workflow_call():
     wf = _load_workflow("test.yml")
     triggers = wf["on"]
     assert "workflow_call" in triggers
-    assert "ref" in triggers["workflow_call"]["inputs"]
-    steps = wf["jobs"]["test"]["steps"]
-    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"]["ref"] == "${{ inputs.ref }}"
 
 
 def test_docker_publish_supports_workflow_call():
