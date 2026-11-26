@@ -1,20 +1,22 @@
-# Reference Compose manifest for Dependabot container dependency tracking
+# DEPRECATED: pod.yaml is the sole manifest of record used at runtime and tracked by Dependabot.
+# This file is retained synced for one transitional release only (so v0.1.100 upgrade-prod.sh does
+# not fail its pre-flight file check when upgrading to v0.1.101) and will be removed afterward.
 version: '3.8'
 
 services:
   valkey-cache:
-    image: valkey/valkey:9.1.2
+    image: valkey/valkey:9.2.0
   litellm-gateway:
-    image: ghcr.io/berriai/litellm:v1.100.1
+    image: ghcr.io/berriai/litellm:1.111.0
   postgres-db:
-    image: pgvector/pgvector:0.8.6-pg18
+    image: pgvector/pgvector:0.8.7-pg18
   clickhouse-db:
-    image: clickhouse/clickhouse-server:26.8.2.7-distroless
+    image: clickhouse/clickhouse-server:26.10.4.207-distroless
   valkey-lf:
-    image: valkey/valkey:9.1.2
+    image: valkey/valkey:9.2.0
   langfuse-web:
-    image: langfuse/langfuse:4.33.0
+    image: langfuse/langfuse:4.80.0
   langfuse-worker:
-    image: langfuse/langfuse-worker:4.33.0
+    image: langfuse/langfuse-worker:4.80.0
   minio-s3:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z

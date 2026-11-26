@@ -426,3 +426,11 @@ def test_every_host_unit_start_stack_writes_is_tracked():
     assert set(tracked) == written
     assert 'AGY_DAEMON_SCRIPT="${WORKDIR}/scripts/host_agy_daemon.py"' in start_stack
     assert tracked[UNIT] == DAEMON
+
+
+def test_upgrade_succeeds_without_docker_compose(upgrade):
+    (upgrade.prod / "docker-compose.yml").unlink()
+    (upgrade.release / "docker-compose.yml").unlink()
+    res = upgrade.run()
+    assert res.returncode == 0, res.stderr
+    assert not (upgrade.prod / "docker-compose.yml").exists()

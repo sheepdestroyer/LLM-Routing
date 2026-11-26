@@ -116,7 +116,7 @@ def test_upgrade_syncs_quadlets_before_quadlet_start_stack():
     script = (ROOT / "scripts" / "upgrade-prod.sh").read_text()
     assert "quadlets/" in script
     assert 'rsync -a --delete "$TEMP_DIR/quadlets/" "$PROD_DIR/quadlets/"' in script
-    assert "for f in pod.yaml docker-compose.yml start-stack.sh quadlets/" in script
+    assert "for f in pod.yaml start-stack.sh quadlets/" in script
 
 
 def test_rendered_quadlets_are_owner_only():

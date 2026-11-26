@@ -323,7 +323,7 @@ echo "📥 Cloning $REPO @ $TAG..."
 git clone -q --depth 1 --branch "$TAG" "https://github.com/$REPO.git" "$TEMP_DIR"
 
 # ── verify the tag has the files we need ──
-for f in pod.yaml docker-compose.yml start-stack.sh quadlets/ litellm/ router/ scripts/; do
+for f in pod.yaml start-stack.sh quadlets/ litellm/ router/ scripts/; do
     if [ ! -e "$TEMP_DIR/$f" ]; then
         echo "❌ Release $TAG is missing expected file/dir: $f"
         exit 1
@@ -335,7 +335,6 @@ if $DRY_RUN; then
     echo ""
     echo "── Dry run: files that would change ──"
     diff -rq "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml" 2>/dev/null || echo "  pod.yaml differs"
-    diff -rq "$TEMP_DIR/docker-compose.yml" "$PROD_DIR/docker-compose.yml" 2>/dev/null || echo "  docker-compose.yml differs"
     diff -rq "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh" 2>/dev/null || echo "  start-stack.sh differs"
     for dir in quadlets litellm router scripts; do
         diff -rq "$TEMP_DIR/$dir" "$PROD_DIR/$dir" 2>/dev/null || echo "  $dir/ differs"
@@ -353,7 +352,7 @@ fi
 # ── confirm ──
 echo ""
 echo "⚠️  This will OVERWRITE the following in $PROD_DIR:"
-echo "     pod.yaml  docker-compose.yml  start-stack.sh  quadlets/  litellm/  router/  scripts/"
+echo "     pod.yaml  start-stack.sh  quadlets/  litellm/  router/  scripts/"
 echo "     upgrade-prod.sh (root copy, if present)"
 echo "   .env and data/ are NEVER touched."
 echo ""
@@ -416,7 +415,6 @@ rsync -a --delete "$TEMP_DIR/router/" "$PROD_DIR/router/"
 rsync -a --delete "$TEMP_DIR/scripts/" "$PROD_DIR/scripts/"
 # Sync files without --delete (no risk to surrounding files)
 rsync -a "$TEMP_DIR/pod.yaml" "$PROD_DIR/pod.yaml"
-rsync -a "$TEMP_DIR/docker-compose.yml" "$PROD_DIR/docker-compose.yml"
 rsync -a "$TEMP_DIR/start-stack.sh" "$PROD_DIR/start-stack.sh"
 # Runbooks call the root copy (~/prod/LLM-Routing/upgrade-prod.sh): keep it in step with the release.
 if [ -f "$PROD_DIR/upgrade-prod.sh" ]; then
