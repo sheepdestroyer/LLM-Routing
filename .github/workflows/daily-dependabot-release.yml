@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Compute release plan without creating tag/release
+        description: Compute release plan and verify HEAD without creating tag/release
         required: false
         default: false
         type: boolean
@@ -24,16 +24,15 @@ permissions:
   contents: read
 
 jobs:
-  prepare-release:
-    name: Plan and create daily patch release
+  plan-release:
+    name: Evaluate commits and compute next patch tag
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      checks: read
-      actions: read
+      contents: read
     outputs:
-      released: ${{ steps.release.outputs.released || 'false' }}
+      should_release: ${{ steps.plan.outputs.should_release || 'false' }}
       tag: ${{ steps.plan.outputs.tag }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
     steps:
       - name: Checkout master
         uses: actions/checkout@v7.0.1
@@ -44,7 +43,6 @@ jobs:
       - name: Evaluate commits and compute next patch tag
         id: plan
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ inputs.force }}
         run: |
           LATEST_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
@@ -71,13 +69,6 @@ jobs:
             exit 0
           fi
 
-          PASS_COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
-            --jq '[.check_runs[] | select(.name == "test" and .status == "completed" and .conclusion == "success")] | length')
-          if [ "${PASS_COUNT:-0}" -eq 0 ]; then
-            echo "Error: required 'test' check run has not completed successfully on HEAD ($HEAD_SHA)." >&2
-            exit 1
-          fi
-
           if [[ ! "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             echo "Error: unexpected tag format '$LATEST_TAG'" >&2
             exit 1
@@ -94,25 +85,45 @@ jobs:
           echo "tag=${NEXT_TAG}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
 
+  verify-head:
+    name: Verify HEAD with full test suite
+    needs: plan-release
+    if: needs.plan-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.plan-release.outputs.head_sha }}
+
+  create-release:
+    name: Create daily patch release
+    needs: [plan-release, verify-head]
+    if: needs.plan-release.outputs.should_release == 'true' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released || 'false' }}
+    steps:
       - name: Create GitHub Release
         id: release
-        if: steps.plan.outputs.should_release == 'true' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT_TAG: ${{ steps.plan.outputs.tag }}
-          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          GH_REPO: ${{ github.repository }}
+          NEXT_TAG: ${{ needs.plan-release.outputs.tag }}
+          HEAD_SHA: ${{ needs.plan-release.outputs.head_sha }}
         run: |
-          gh release create "$NEXT_TAG" --target "$HEAD_SHA" --title "$NEXT_TAG" --generate-notes
+          gh release create "$NEXT_TAG" --repo "$GH_REPO" --target "$HEAD_SHA" --title "$NEXT_TAG" --generate-notes
           echo "released=true" >> "$GITHUB_OUTPUT"
 
   publish-release-artifacts:
     name: Build image and attach deployment bundle
-    needs: prepare-release
-    if: needs.prepare-release.outputs.released == 'true'
+    needs: [plan-release, create-release]
+    if: needs.create-release.outputs.released == 'true'
     permissions:
       contents: write
       packages: write
     uses: ./.github/workflows/docker-publish.yml
     with:
-      tag: ${{ needs.prepare-release.outputs.tag }}
+      tag: ${{ needs.plan-release.outputs.tag }}
     secrets: inherit

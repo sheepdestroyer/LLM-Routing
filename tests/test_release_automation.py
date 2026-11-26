@@ -32,9 +32,11 @@ def test_dependabot_automerge_workflow_contract():
 
     step_runs = "\n".join(step.get("run", "") for step in automerge["steps"])
     step_ifs = "\n".join(step.get("if", "") for step in automerge["steps"])
+    step_envs = str([step.get("env", {}) for step in automerge["steps"]])
     assert any(step.get("uses", "").startswith("dependabot/fetch-metadata@v3") for step in automerge["steps"])
     assert "version-update:semver-major" in step_ifs
     assert "gh pr merge --auto --squash" in step_runs
+    assert "DEPENDABOT_REBASE_TOKEN" in step_envs
     assert "actions/checkout" not in "\n".join(step.get("uses", "") for step in automerge["steps"])
 
     nudge = wf["jobs"]["nudge-behind-dependabot"]
@@ -51,21 +53,39 @@ def test_daily_dependabot_release_workflow_contract():
     assert triggers["schedule"] == [{"cron": "0 4 * * *"}]
     assert set(triggers["workflow_dispatch"]["inputs"]) == {"dry_run", "force"}
 
-    prep = wf["jobs"]["prepare-release"]
-    assert prep["permissions"]["contents"] == "write"
-    assert prep["permissions"]["checks"] == "read"
-    prep_runs = "\n".join(step.get("run", "") for step in prep["steps"])
-    assert "dependabot" in prep_runs
-    assert "check-runs" in prep_runs
-    assert "gh release create" in prep_runs
-    assert "BASH_REMATCH[3] + 1" in prep_runs
+    plan = wf["jobs"]["plan-release"]
+    assert plan["permissions"]["contents"] == "read"
+    plan_runs = "\n".join(step.get("run", "") for step in plan["steps"])
+    assert "dependabot" in plan_runs
+    assert "BASH_REMATCH[3] + 1" in plan_runs
+
+    verify = wf["jobs"]["verify-head"]
+    assert verify["needs"] == "plan-release"
+    assert verify["uses"] == "./.github/workflows/test.yml"
+    assert verify["with"]["ref"] == "${{ needs.plan-release.outputs.head_sha }}"
+
+    create = wf["jobs"]["create-release"]
+    assert create["needs"] == ["plan-release", "verify-head"]
+    assert create["permissions"]["contents"] == "write"
+    create_runs = "\n".join(step.get("run", "") for step in create["steps"])
+    assert "gh release create" in create_runs
 
     pub = wf["jobs"]["publish-release-artifacts"]
-    assert pub["needs"] == "prepare-release"
-    assert pub["if"] == "needs.prepare-release.outputs.released == 'true'"
+    assert pub["needs"] == ["plan-release", "create-release"]
+    assert pub["if"] == "needs.create-release.outputs.released == 'true'"
     assert pub["uses"] == "./.github/workflows/docker-publish.yml"
-    assert pub["with"]["tag"] == "${{ needs.prepare-release.outputs.tag }}"
+    assert pub["with"]["tag"] == "${{ needs.plan-release.outputs.tag }}"
     assert pub["secrets"] == "inherit"
+
+
+def test_test_workflow_supports_workflow_call():
+    wf = _load_workflow("test.yml")
+    triggers = wf["on"]
+    assert "workflow_call" in triggers
+    assert "ref" in triggers["workflow_call"]["inputs"]
+    steps = wf["jobs"]["test"]["steps"]
+    checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == "${{ inputs.ref }}"
 
 
 def test_docker_publish_supports_workflow_call():

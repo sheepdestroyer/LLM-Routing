@@ -4,6 +4,13 @@ on:
   push:
     branches: [ master ]
   pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: Optional git ref or SHA to test
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +22,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Set up Python
