@@ -39,8 +39,10 @@ def test_dependabot_automerge_workflow_contract():
 
     nudge = wf["jobs"]["nudge-behind-dependabot"]
     nudge_runs = "\n".join(step.get("run", "") for step in nudge["steps"])
+    nudge_envs = str([step.get("env", {}) for step in nudge["steps"]])
     assert "@dependabot rebase" in nudge_runs
     assert "mergeStateStatus" in nudge_runs
+    assert "DEPENDABOT_REBASE_TOKEN" in nudge_envs
 
 
 def test_daily_dependabot_release_workflow_contract():
@@ -87,13 +89,20 @@ def test_start_stack_and_compose_manifest_consistency():
     assert 'manifests = [os.path.join(workdir, "pod.yaml")]' not in start_stack
     assert 'manifest = os.path.join(workdir, "pod.yaml")' in start_stack
     assert "docker-compose.yml" not in (ROOT / "scripts" / "package_release.sh").read_text()
+    assert "DEPRECATED" in (ROOT / "docker-compose.yml").read_text()
 
-    pod_images = set(
+    pod_images = [
         m.group(1)
         for m in re.finditer(r"image:\s*([^\s]+)", (ROOT / "pod.yaml").read_text())
         if "ROUTER_IMAGE_PLACEHOLDER" not in m.group(1)
-    )
-    compose_images = set(
-        m.group(1) for m in re.finditer(r"image:\s*([^\s]+)", (ROOT / "docker-compose.yml").read_text())
-    )
-    assert pod_images == compose_images
+    ]
+    for prefix in (
+        "valkey/valkey:",
+        "ghcr.io/berriai/litellm:",
+        "pgvector/pgvector:",
+        "clickhouse/clickhouse-server:",
+        "langfuse/langfuse:",
+        "langfuse/langfuse-worker:",
+        "minio/minio:",
+    ):
+        assert any(img.startswith(prefix) for img in pod_images), f"missing {prefix} in pod.yaml"

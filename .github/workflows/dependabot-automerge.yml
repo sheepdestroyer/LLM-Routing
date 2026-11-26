@@ -51,6 +51,7 @@ jobs:
       - name: Check open Dependabot PRs and request rebase when behind
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REBASE_TOKEN: ${{ secrets.DEPENDABOT_REBASE_TOKEN }}
           GH_REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -82,6 +83,7 @@ jobs:
           prs = json.loads(raw)
           now = dt.datetime.now(dt.timezone.utc)
           is_dispatch = os.environ["EVENT_NAME"] == "workflow_dispatch"
+          rebase_token = (os.environ.get("REBASE_TOKEN") or "").strip()
           semver_re = re.compile(r"\bfrom\s+v?(\d+)\.\S*\s+to\s+v?(\d+)\.\S*", re.IGNORECASE)
 
           for pr in prs:
@@ -100,6 +102,12 @@ jobs:
                       continue
 
               if pr.get("mergeStateStatus") == "BEHIND" and (auto_merge or is_dispatch):
+                  if not rebase_token:
+                      print(
+                          f"PR #{num} is BEHIND; skipping @dependabot rebase because "
+                          "secrets.DEPENDABOT_REBASE_TOKEN is not configured (github-actions[bot] lacks push access)."
+                      )
+                      continue
                   recent_rebase = False
                   for comment in pr.get("comments") or []:
                       if "@dependabot rebase" in (comment.get("body") or ""):
@@ -113,8 +121,11 @@ jobs:
                       print(f"PR #{num} already nudged within 30 minutes; skipping.")
                       continue
                   print(f"Requesting @dependabot rebase on PR #{num}")
+                  comment_env = os.environ.copy()
+                  comment_env["GH_TOKEN"] = rebase_token
                   subprocess.run(
                       ["gh", "pr", "comment", num, "--repo", os.environ["GH_REPO"], "--body", "@dependabot rebase"],
+                      env=comment_env,
                       check=True,
                   )
           PY
