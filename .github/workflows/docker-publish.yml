@@ -6,6 +6,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and publish (e.g. v0.1.101)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,8 +21,22 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve release tag
+        id: rel
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          VER="${TAG#v}"
+          MINOR="${VER%.*}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+          echo "minor=${MINOR}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout Repository
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Downcase Repository Name
         run: |
@@ -41,9 +61,9 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.rel.outputs.tag }}
+            type=raw,value=${{ steps.rel.outputs.ver }}
+            type=raw,value=${{ steps.rel.outputs.minor }}
             type=sha
             type=raw,value=latest
 
@@ -57,13 +77,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Package deployment bundle and attach to release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'release' || github.event_name == 'workflow_call' || startsWith(github.ref, 'refs/tags/v')
         run: |
           chmod +x scripts/package_release.sh
           ./scripts/package_release.sh llm-routing-deploy.tar.gz
           gh release upload "$REF_NAME" llm-routing-deploy.tar.gz --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REF_NAME: ${{ github.ref_name }}
-
-
+          REF_NAME: ${{ steps.rel.outputs.tag }}

@@ -1,0 +1,120 @@
+name: Dependabot Auto-Merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  automerge:
+    name: Auto-merge minor and patch Dependabot PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Approve and enable auto-merge for minor/patch updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL" || true
+          gh pr merge --auto --squash "$PR_URL"
+
+      - name: Hold semver-major updates for manual review
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        run: |
+          echo "Holding semver-major Dependabot PR #${{ github.event.pull_request.number }} (${{ steps.metadata.outputs.dependency-names }}) for manual review."
+
+  nudge-behind-dependabot:
+    name: Rebase behind Dependabot PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check open Dependabot PRs and request rebase when behind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import re
+          import subprocess
+
+          raw = subprocess.check_output(
+              [
+                  "gh",
+                  "pr",
+                  "list",
+                  "--repo",
+                  os.environ["GH_REPO"],
+                  "--author",
+                  "app/dependabot",
+                  "--state",
+                  "open",
+                  "--limit",
+                  "50",
+                  "--json",
+                  "number,url,mergeStateStatus,autoMergeRequest,title,comments",
+              ],
+              text=True,
+          )
+          prs = json.loads(raw)
+          now = dt.datetime.now(dt.timezone.utc)
+          is_dispatch = os.environ["EVENT_NAME"] == "workflow_dispatch"
+          semver_re = re.compile(r"\bfrom\s+v?(\d+)\.\S*\s+to\s+v?(\d+)\.\S*", re.IGNORECASE)
+
+          for pr in prs:
+              num = str(pr["number"])
+              url = pr["url"]
+              auto_merge = pr.get("autoMergeRequest") is not None
+              if is_dispatch and not auto_merge:
+                  m = semver_re.search(pr.get("title") or "")
+                  if m and m.group(1) == m.group(2):
+                      subprocess.run(["gh", "pr", "review", "--approve", url], check=False)
+                      res = subprocess.run(["gh", "pr", "merge", "--auto", "--squash", url], check=False)
+                      if res.returncode == 0:
+                          auto_merge = True
+                  else:
+                      print(f"Skipping PR #{num}: not a matching major bump for manual dispatch ({pr.get('title')})")
+                      continue
+
+              if pr.get("mergeStateStatus") == "BEHIND" and (auto_merge or is_dispatch):
+                  recent_rebase = False
+                  for comment in pr.get("comments") or []:
+                      if "@dependabot rebase" in (comment.get("body") or ""):
+                          created = comment.get("createdAt")
+                          if created:
+                              ts = dt.datetime.fromisoformat(created.replace("Z", "+00:00"))
+                              if (now - ts) < dt.timedelta(minutes=30):
+                                  recent_rebase = True
+                                  break
+                  if recent_rebase:
+                      print(f"PR #{num} already nudged within 30 minutes; skipping.")
+                      continue
+                  print(f"Requesting @dependabot rebase on PR #{num}")
+                  subprocess.run(
+                      ["gh", "pr", "comment", num, "--repo", os.environ["GH_REPO"], "--body", "@dependabot rebase"],
+                      check=True,
+                  )
+          PY

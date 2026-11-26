@@ -1,0 +1,118 @@
+name: Daily Dependabot Patch Release
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Compute release plan without creating tag/release
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: Release even if no Dependabot commits landed since latest tag
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: daily-dependabot-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-release:
+    name: Plan and create daily patch release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: read
+      actions: read
+    outputs:
+      released: ${{ steps.release.outputs.released || 'false' }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Evaluate commits and compute next patch tag
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          LATEST_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "Error: no existing vMAJOR.MINOR.PATCH tag found." >&2
+            exit 1
+          fi
+
+          HEAD_SHA=$(git rev-parse HEAD)
+          COMMIT_COUNT=$(git rev-list --count "${LATEST_TAG}..HEAD")
+          echo "Latest tag: $LATEST_TAG | HEAD: $HEAD_SHA | Commits since tag: $COMMIT_COUNT"
+
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "No new commits since $LATEST_TAG; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DEP_COMMITS=$(git log "${LATEST_TAG}..HEAD" --format='%an|%ae|%s' | grep -cE 'dependabot\[bot\]|\|chore\(deps\)' || true)
+          echo "Dependabot commits since $LATEST_TAG: $DEP_COMMITS"
+          if [ "$DEP_COMMITS" -eq 0 ] && [ "$FORCE" != "true" ]; then
+            echo "No Dependabot commits since $LATEST_TAG and force!=true; skipping automatic release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PASS_COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "test" and .status == "completed" and .conclusion == "success")] | length')
+          if [ "${PASS_COUNT:-0}" -eq 0 ]; then
+            echo "Error: required 'test' check run has not completed successfully on HEAD ($HEAD_SHA)." >&2
+            exit 1
+          fi
+
+          if [[ ! "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Error: unexpected tag format '$LATEST_TAG'" >&2
+            exit 1
+          fi
+          NEXT_TAG="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+
+          if git rev-parse -q --verify "refs/tags/${NEXT_TAG}" >/dev/null; then
+            echo "Error: tag $NEXT_TAG already exists." >&2
+            exit 1
+          fi
+
+          echo "Planned release tag: $NEXT_TAG (target $HEAD_SHA)"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${NEXT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        id: release
+        if: steps.plan.outputs.should_release == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_TAG: ${{ steps.plan.outputs.tag }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+        run: |
+          gh release create "$NEXT_TAG" --target "$HEAD_SHA" --title "$NEXT_TAG" --generate-notes
+          echo "released=true" >> "$GITHUB_OUTPUT"
+
+  publish-release-artifacts:
+    name: Build image and attach deployment bundle
+    needs: prepare-release
+    if: needs.prepare-release.outputs.released == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      tag: ${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit

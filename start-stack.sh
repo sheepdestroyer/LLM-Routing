@@ -1178,35 +1178,31 @@ repl = {
 def extract_manifest_images():
     imgs = {}
     workdir = os.environ["WORKDIR"]
-    manifests = [os.path.join(workdir, "pod.yaml"), os.path.join(workdir, "docker-compose.yml")]
-    found_any = False
-    for manifest in manifests:
-        if os.path.exists(manifest):
-            found_any = True
-            with open(manifest, "r", encoding="utf-8") as f:
-                for line in f:
-                    m = re.search(r"image:\s*([^\s]+)", line)
-                    if m:
-                        val = m.group(1).strip("'\"")
-                        if "ROUTER_IMAGE_PLACEHOLDER" in val:
-                            continue
-                        if "litellm" in val and "LITELLM_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["LITELLM_IMAGE_PLACEHOLDER"] = val
-                        elif "langfuse-worker" in val and "LANGFUSE_WORKER_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["LANGFUSE_WORKER_IMAGE_PLACEHOLDER"] = val
-                        elif "langfuse" in val and "LANGFUSE_WEB_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["LANGFUSE_WEB_IMAGE_PLACEHOLDER"] = val
-                        elif "clickhouse" in val and "CLICKHOUSE_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["CLICKHOUSE_IMAGE_PLACEHOLDER"] = val
-                        elif "valkey" in val and "VALKEY_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["VALKEY_IMAGE_PLACEHOLDER"] = val
-                        elif "pgvector" in val and "POSTGRES_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["POSTGRES_IMAGE_PLACEHOLDER"] = val
-                        elif "minio" in val and "MINIO_IMAGE_PLACEHOLDER" not in imgs:
-                            imgs["MINIO_IMAGE_PLACEHOLDER"] = val
-    if not found_any:
-        sys.stderr.write(f"Error: Required manifest file (docker-compose.yml or pod.yaml) not found in WORKDIR ({workdir})\n")
+    manifest = os.path.join(workdir, "pod.yaml")
+    if not os.path.exists(manifest):
+        sys.stderr.write(f"Error: Required manifest file (pod.yaml) not found in WORKDIR ({workdir})\n")
         sys.exit(1)
+    with open(manifest, "r", encoding="utf-8") as f:
+        for line in f:
+            m = re.search(r"image:\s*([^\s]+)", line)
+            if m:
+                val = m.group(1).strip("'\"")
+                if "ROUTER_IMAGE_PLACEHOLDER" in val:
+                    continue
+                if "litellm" in val and "LITELLM_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["LITELLM_IMAGE_PLACEHOLDER"] = val
+                elif "langfuse-worker" in val and "LANGFUSE_WORKER_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["LANGFUSE_WORKER_IMAGE_PLACEHOLDER"] = val
+                elif "langfuse" in val and "LANGFUSE_WEB_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["LANGFUSE_WEB_IMAGE_PLACEHOLDER"] = val
+                elif "clickhouse" in val and "CLICKHOUSE_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["CLICKHOUSE_IMAGE_PLACEHOLDER"] = val
+                elif "valkey" in val and "VALKEY_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["VALKEY_IMAGE_PLACEHOLDER"] = val
+                elif "pgvector" in val and "POSTGRES_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["POSTGRES_IMAGE_PLACEHOLDER"] = val
+                elif "minio" in val and "MINIO_IMAGE_PLACEHOLDER" not in imgs:
+                    imgs["MINIO_IMAGE_PLACEHOLDER"] = val
     return imgs
 
 repl.update(extract_manifest_images())
